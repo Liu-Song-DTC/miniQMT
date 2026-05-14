@@ -15,6 +15,9 @@ permissions:
 
 jobs:
   deploy:
+    # 部署守门：当前仅本地预览（start_docs.bat），暂不公开发布。
+    # 未来需上线时，删除此 if 行或改为 true 即可。
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +27,8 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install MkDocs Material
-        run: pip install mkdocs-material
+      - name: Install docs deps
+        run: pip install -r utils/requirements-docs.txt
 
       - name: Build and deploy
         run: mkdocs gh-deploy --force

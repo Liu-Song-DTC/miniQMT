@@ -61,6 +61,9 @@ data/stock2buy.json.bak
 # 注意：account_config.json.example 应该被跟踪，作为配置模板
 !account_config.json.example
 
+# MkDocs 构建产物（site_dir 输出到根目录 /site/）
+/site/
+
 # 运行时数据文件
 stock_pool.json
 data/
