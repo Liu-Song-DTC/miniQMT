@@ -597,24 +597,47 @@ class TradingExecutor:
     def get_stock_positions(self):
         """
         获取股票持仓信息
-        
+
         返回:
         list: 持仓信息列表
         """
         try:
+            # 模拟模式下 QMT 不连接，从 PositionManager 内存 DB 取持仓，
+            # 让 web UI 主表能显示通过模拟买入产生的持仓（否则会一直为空）。
+            if getattr(config, 'ENABLE_SIMULATION_MODE', False):
+                try:
+                    df = self.position_manager.get_all_positions_with_all_fields()
+                    if df is None or df.empty:
+                        return []
+                    # 只保留 web 主表需要的字段，缺失字段补默认值，确保结构与 QMT 路径一致
+                    records = df.to_dict('records')
+                    out = []
+                    for r in records:
+                        out.append({
+                            'stock_code':    r.get('stock_code', ''),
+                            'stock_name':    r.get('stock_name', '') or '',
+                            'volume':        int(r.get('volume', 0) or 0),
+                            'available':    int(r.get('available', r.get('volume', 0) or 0) or 0),
+                            'cost_price':    float(r.get('cost_price', 0) or 0),
+                            'current_price': float(r.get('current_price', 0) or 0),
+                            'market_value':  float(r.get('market_value', 0) or 0),
+                            'profit_ratio':  float(r.get('profit_ratio', 0) or 0),
+                        })
+                    return out
+                except Exception as e:
+                    logger.warning(f"模拟模式下从 PositionManager 取持仓失败: {e}")
+                    return []
+
+            # 实盘：走 QMT API
             positions = None
-            
-            # 尝试不同的API调用方式获取持仓信息
             if self.trader and hasattr(self.trader, 'query_position'):
-                # 如果使用对象API
                 positions = self.trader.query_position()
             elif hasattr(xtt, 'query_position'):
-                # 如果使用函数式API
                 positions = xtt.query_position(self.account_id, self.account_type)
-                
+
             if not positions:
                 return []
-            
+
             position_list = []
             for pos in positions:
                 position_list.append({
@@ -627,9 +650,9 @@ class TradingExecutor:
                     'market_value': pos.m_dMarketValue,
                     'profit_ratio': pos.m_dProfitRate
                 })
-            
+
             return position_list
-            
+
         except Exception as e:
             logger.error(f"获取持仓信息时出错: {str(e)}")
             return []

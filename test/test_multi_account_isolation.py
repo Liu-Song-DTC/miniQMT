@@ -219,6 +219,80 @@ class TestMultiAccountIsolation(unittest.TestCase):
         self.assertEqual(r3["data_dir"], "data")
 
 
+class TestTradingExecutorSimulationPositions(unittest.TestCase):
+    """回归测试: 模拟模式下 trading_executor.get_stock_positions()
+    必须从 PositionManager 内存 DB 取数据，而非走 QMT API 返回空。
+
+    Bug 场景: 否则 /api/positions 的主 positions 字段在模拟模式下
+    永远是空，多账号 web UI 会显示"两个端口持仓一模一样地为空"。
+    """
+
+    def test_simulation_returns_positions_from_position_manager(self):
+        import sys, importlib
+        from unittest.mock import patch, MagicMock
+        import pandas as pd
+
+        sys.path.insert(0, str(PROJECT_ROOT))
+        config = importlib.import_module("config")
+        trading_executor_mod = importlib.import_module("trading_executor")
+
+        # 构造 PositionManager 桩，返回 2 条模拟持仓
+        fake_df = pd.DataFrame([
+            {"stock_code": "000001.SZ", "stock_name": "平安银行",
+             "volume": 1000, "available": 1000, "cost_price": 10.0,
+             "current_price": 10.5, "market_value": 10500, "profit_ratio": 0.05},
+            {"stock_code": "600519.SH", "stock_name": "贵州茅台",
+             "volume": 100, "available": 100, "cost_price": 1300.0,
+             "current_price": 1350.0, "market_value": 135000, "profit_ratio": 0.038},
+        ])
+        fake_pm = MagicMock()
+        fake_pm.get_all_positions_with_all_fields = MagicMock(return_value=fake_df)
+
+        with patch.object(config, "ENABLE_SIMULATION_MODE", True):
+            te = trading_executor_mod.TradingExecutor.__new__(
+                trading_executor_mod.TradingExecutor
+            )
+            te.position_manager = fake_pm
+            te.trader = None  # 模拟模式下 QMT 没连接
+
+            positions = te.get_stock_positions()
+
+        self.assertEqual(len(positions), 2,
+            "模拟模式下 get_stock_positions() 必须返回 PositionManager 内存 DB 的持仓")
+        codes = {p["stock_code"] for p in positions}
+        self.assertEqual(codes, {"000001.SZ", "600519.SH"})
+        # 字段完整性
+        p0 = positions[0]
+        for key in ("stock_code", "stock_name", "volume", "available",
+                    "cost_price", "current_price", "market_value", "profit_ratio"):
+            self.assertIn(key, p0, f"持仓字典缺少字段 {key}")
+        self.assertIsInstance(p0["volume"], int)
+        self.assertIsInstance(p0["cost_price"], float)
+
+    def test_simulation_returns_empty_when_no_positions(self):
+        import sys, importlib
+        from unittest.mock import patch, MagicMock
+        import pandas as pd
+
+        sys.path.insert(0, str(PROJECT_ROOT))
+        config = importlib.import_module("config")
+        trading_executor_mod = importlib.import_module("trading_executor")
+
+        fake_pm = MagicMock()
+        fake_pm.get_all_positions_with_all_fields = MagicMock(return_value=pd.DataFrame())
+
+        with patch.object(config, "ENABLE_SIMULATION_MODE", True):
+            te = trading_executor_mod.TradingExecutor.__new__(
+                trading_executor_mod.TradingExecutor
+            )
+            te.position_manager = fake_pm
+            te.trader = None
+
+            positions = te.get_stock_positions()
+
+        self.assertEqual(positions, [])
+
+
 class TestSimulationAccountIdInWebStatus(unittest.TestCase):
     """回归测试: 模拟模式下 /api/status 必须返回真实的 account_id，
     而非硬编码 'SIMULATION'，否则多账号 Web UI 无法区分两个窗口。
