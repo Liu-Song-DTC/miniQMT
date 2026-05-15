@@ -219,5 +219,66 @@ class TestMultiAccountIsolation(unittest.TestCase):
         self.assertEqual(r3["data_dir"], "data")
 
 
+class TestSimulationAccountIdInWebStatus(unittest.TestCase):
+    """回归测试: 模拟模式下 /api/status 必须返回真实的 account_id，
+    而非硬编码 'SIMULATION'，否则多账号 Web UI 无法区分两个窗口。
+    """
+
+    def test_simulation_returns_real_account_id_from_config(self):
+        # 用 mock 直接调用 PositionManager.get_account_info()
+        # 不走完整初始化，避免触发 QMT/数据库依赖
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT))
+        # 重新导入 config 模块（保证后续 monkeypatch 不污染）
+        from unittest.mock import patch, MagicMock
+        import importlib
+        config = importlib.import_module("config")
+        position_manager_mod = importlib.import_module("position_manager")
+
+        # 临时启用模拟模式 + 设置 ACCOUNT_CONFIG 真实账号
+        with patch.object(config, "ENABLE_SIMULATION_MODE", True), \
+             patch.object(config, "ACCOUNT_CONFIG",
+                          {"account_id": "12345678", "account_type": "STOCK"}), \
+             patch.object(config, "SIMULATION_BALANCE", 500000):
+
+            # 构造一个最小 mock 实例，跳过 __init__
+            pm = position_manager_mod.PositionManager.__new__(
+                position_manager_mod.PositionManager
+            )
+            # get_all_positions 必须返回空 DataFrame
+            import pandas as pd
+            pm.get_all_positions = MagicMock(return_value=pd.DataFrame())
+
+            info = pm.get_account_info()
+
+        self.assertEqual(info["account_id"], "12345678",
+                         "模拟模式下应返回真实 account_id，不能硬编码 'SIMULATION'")
+        self.assertEqual(info["account_type"], "STOCK")
+        self.assertEqual(info["available"], 500000.0)
+
+    def test_simulation_falls_back_when_account_id_missing(self):
+        """ACCOUNT_CONFIG 没有 account_id 时仍能正常工作（兜底为 SIMULATION）"""
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT))
+        from unittest.mock import patch, MagicMock
+        import importlib
+        config = importlib.import_module("config")
+        position_manager_mod = importlib.import_module("position_manager")
+
+        with patch.object(config, "ENABLE_SIMULATION_MODE", True), \
+             patch.object(config, "ACCOUNT_CONFIG", {}), \
+             patch.object(config, "SIMULATION_BALANCE", 100000):
+
+            pm = position_manager_mod.PositionManager.__new__(
+                position_manager_mod.PositionManager
+            )
+            import pandas as pd
+            pm.get_all_positions = MagicMock(return_value=pd.DataFrame())
+
+            info = pm.get_account_info()
+
+        self.assertEqual(info["account_id"], "SIMULATION")
+
+
 if __name__ == "__main__":
     unittest.main()

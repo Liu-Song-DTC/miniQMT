@@ -1690,14 +1690,19 @@ class PositionManager:
                             except (ValueError, TypeError):
                                 # 忽略无效值
                                 pass
-                
+
                 # 计算总资产
                 available = float(config.SIMULATION_BALANCE)
                 total_asset = available + market_value  # 可用资金 + 持仓市值
-                
+
+                # 多账号场景下需要返回真实的 account_id 才能在 Web UI 上区分不同窗口；
+                # 模拟身份由 /api/status 的 settings.simulationMode 字段独立表达。
+                real_account_id   = config.ACCOUNT_CONFIG.get('account_id') or 'SIMULATION'
+                real_account_type = config.ACCOUNT_CONFIG.get('account_type') or 'SIMULATION'
+
                 return {
-                    'account_id': 'SIMULATION',
-                    'account_type': 'SIMULATION',
+                    'account_id': real_account_id,
+                    'account_type': real_account_type,
                     'available': available,
                     'market_value': float(market_value),
                     'total_asset': total_asset,  # 添加总资产字段
