@@ -596,63 +596,43 @@ class TradingExecutor:
     
     def get_stock_positions(self):
         """
-        获取股票持仓信息
+        获取股票持仓信息 -- 统一从 PositionManager 内存 DB 取。
+
+        为什么不直接调用 xtt.query_position / self.trader.query_position?
+          xtquant.xttrader.create_trader() 不接受 path 参数，多账号场景下
+          两个进程都 import xtquant 后调用 xtt.query_position(account_id, ...)
+          可能取到错误账号的持仓（曾观测到 :5001 端口实盘模式显示 :5000
+          账号持仓的 bug，根因是 xtquant 模块级共享 trader 默认绑定某个 QMT）。
+
+          PositionManager.qmt_trader 是 easy_qmt_trader(path=config.QMT_PATH)
+          实例，带账号路径隔离；它在监控线程里把真实持仓同步到内存 DB。
+          从内存 DB 取数据：
+            - 模拟模式：唯一持仓来源（QMT 没连接）
+            - 实盘模式：经过 easy_qmt_trader 多账号隔离，最多 MONITOR_LOOP_INTERVAL
+              秒延迟（默认 3 秒）
 
         返回:
         list: 持仓信息列表
         """
         try:
-            # 模拟模式下 QMT 不连接，从 PositionManager 内存 DB 取持仓，
-            # 让 web UI 主表能显示通过模拟买入产生的持仓（否则会一直为空）。
-            if getattr(config, 'ENABLE_SIMULATION_MODE', False):
-                try:
-                    df = self.position_manager.get_all_positions_with_all_fields()
-                    if df is None or df.empty:
-                        return []
-                    # 只保留 web 主表需要的字段，缺失字段补默认值，确保结构与 QMT 路径一致
-                    records = df.to_dict('records')
-                    out = []
-                    for r in records:
-                        out.append({
-                            'stock_code':    r.get('stock_code', ''),
-                            'stock_name':    r.get('stock_name', '') or '',
-                            'volume':        int(r.get('volume', 0) or 0),
-                            'available':    int(r.get('available', r.get('volume', 0) or 0) or 0),
-                            'cost_price':    float(r.get('cost_price', 0) or 0),
-                            'current_price': float(r.get('current_price', 0) or 0),
-                            'market_value':  float(r.get('market_value', 0) or 0),
-                            'profit_ratio':  float(r.get('profit_ratio', 0) or 0),
-                        })
-                    return out
-                except Exception as e:
-                    logger.warning(f"模拟模式下从 PositionManager 取持仓失败: {e}")
-                    return []
-
-            # 实盘：走 QMT API
-            positions = None
-            if self.trader and hasattr(self.trader, 'query_position'):
-                positions = self.trader.query_position()
-            elif hasattr(xtt, 'query_position'):
-                positions = xtt.query_position(self.account_id, self.account_type)
-
-            if not positions:
+            df = self.position_manager.get_all_positions_with_all_fields()
+            if df is None or df.empty:
                 return []
-
-            position_list = []
-            for pos in positions:
-                position_list.append({
-                    'stock_code': pos.m_strInstrumentID,
-                    'stock_name': pos.m_strInstrumentName,
-                    'volume': pos.m_nVolume,
-                    'available': pos.m_nCanUseVolume,
-                    'cost_price': pos.m_dOpenPrice,
-                    'current_price': pos.m_dLastPrice,
-                    'market_value': pos.m_dMarketValue,
-                    'profit_ratio': pos.m_dProfitRate
+            # 只保留 web 主表需要的字段，缺失字段补默认值，
+            # 确保结构与原 QMT 路径返回一致，前端无需任何改动。
+            out = []
+            for r in df.to_dict('records'):
+                out.append({
+                    'stock_code':    r.get('stock_code', ''),
+                    'stock_name':    r.get('stock_name', '') or '',
+                    'volume':        int(r.get('volume', 0) or 0),
+                    'available':     int(r.get('available', r.get('volume', 0) or 0) or 0),
+                    'cost_price':    float(r.get('cost_price', 0) or 0),
+                    'current_price': float(r.get('current_price', 0) or 0),
+                    'market_value':  float(r.get('market_value', 0) or 0),
+                    'profit_ratio':  float(r.get('profit_ratio', 0) or 0),
                 })
-
-            return position_list
-
+            return out
         except Exception as e:
             logger.error(f"获取持仓信息时出错: {str(e)}")
             return []

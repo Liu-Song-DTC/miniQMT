@@ -292,6 +292,53 @@ class TestTradingExecutorSimulationPositions(unittest.TestCase):
 
         self.assertEqual(positions, [])
 
+    def test_live_mode_uses_position_manager_not_xtt_module(self):
+        """实盘模式下也必须从 PositionManager 取，而非走 xtt.query_position。
+
+        Bug 场景: xtt.create_trader() 不接受 path，多账号下两个进程都
+        通过 xtt.query_position(account_id, ...) 可能拿到错账号持仓（曾观测
+        :5001 实盘显示 :5000 持仓）。此测试用一个会爆 RuntimeError 的桩
+        监控 xtt.query_position 是否被调用，若被调用即视为回归。
+        """
+        import sys, importlib
+        from unittest.mock import patch, MagicMock
+        import pandas as pd
+
+        sys.path.insert(0, str(PROJECT_ROOT))
+        config = importlib.import_module("config")
+        trading_executor_mod = importlib.import_module("trading_executor")
+
+        fake_df = pd.DataFrame([
+            {"stock_code": "600519.SH", "stock_name": "贵州茅台",
+             "volume": 100, "available": 100, "cost_price": 1300.0,
+             "current_price": 1350.0, "market_value": 135000, "profit_ratio": 0.038},
+        ])
+        fake_pm = MagicMock()
+        fake_pm.get_all_positions_with_all_fields = MagicMock(return_value=fake_df)
+
+        # 任何对 xtt.query_position 或 trader.query_position 的调用都让测试失败
+        xtt_module = trading_executor_mod.xtt
+        guard = MagicMock(side_effect=AssertionError(
+            "trading_executor 不应再调用 xtt.query_position；"
+            "多账号下该路径会取到错账号持仓"
+        ))
+
+        with patch.object(config, "ENABLE_SIMULATION_MODE", False), \
+             patch.object(xtt_module, "query_position", guard, create=True):
+            te = trading_executor_mod.TradingExecutor.__new__(
+                trading_executor_mod.TradingExecutor
+            )
+            te.position_manager = fake_pm
+            # self.trader 设成会爆错的 mock：哪怕走到 trader 分支也会暴露
+            te.trader = MagicMock()
+            te.trader.query_position = guard
+
+            positions = te.get_stock_positions()
+
+        guard.assert_not_called()
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["stock_code"], "600519.SH")
+
 
 class TestSimulationAccountIdInWebStatus(unittest.TestCase):
     """回归测试: 模拟模式下 /api/status 必须返回真实的 account_id，
