@@ -38,6 +38,8 @@
     let isSimulationMode = false; // 模拟交易模式
     let isPageActive = true; // 页面活跃状态
     let userMonitoringIntent = null; // 用户监控意图（点击按钮后）
+    let userSimulationModeIntent = null; // 用户模拟/实盘切换意图
+    let userAutoTradingIntent = null; // 用户自动交易开关意图
     let isApiConnected = true; // API连接状态，初始假设已连接
     
     // 为不同类型的数据设置不同的刷新频率
@@ -412,6 +414,7 @@
         // 模拟交易模式切换监听
         elements.simulationMode.addEventListener('change', (event) => {
             isSimulationMode = event.target.checked;
+            userSimulationModeIntent = event.target.checked;  // 记录用户意图，防 fetchStatus 覆盖
             updateSimulationModeUI();
             throttledSyncParameter('simulationMode', event.target.checked);
         });
@@ -421,7 +424,8 @@
             // 明确：这里只影响自动交易状态，不影响监控UI状态
             const autoTradingEnabled = event.target.checked;
             isAutoTradingEnabled = autoTradingEnabled; // 更新本地状态
-            
+            userAutoTradingIntent = autoTradingEnabled; // 记录用户意图，防 fetchStatus 覆盖
+
             apiRequest(API_ENDPOINTS.saveConfig, {
                 method: 'POST',
                 body: JSON.stringify({ globalAllowBuySell: autoTradingEnabled })
@@ -431,9 +435,10 @@
             })
             .catch(error => {
                 console.error("更新自动交易状态失败:", error);
-                // 可选：回滚UI状态
+                // 回滚状态
                 event.target.checked = !autoTradingEnabled;
                 isAutoTradingEnabled = !autoTradingEnabled;
+                userAutoTradingIntent = null;
             });
         });
         
@@ -722,9 +727,15 @@
         const backendMonitoring = statusData.isMonitoring ?? false;
         const backendAutoTrading = statusData.settings?.enableAutoTrading ?? false;
     
-        // 更新自动交易状态 - 只更新全局监控总开关，不影响监控状态
-        isAutoTradingEnabled = backendAutoTrading;
-        elements.globalAllowBuySell.checked = isAutoTradingEnabled;
+        // 更新自动交易状态 - 用户意图优先，防 fetchStatus 覆盖用户操作
+        if (userAutoTradingIntent !== null) {
+            isAutoTradingEnabled = userAutoTradingIntent;
+            elements.globalAllowBuySell.checked = userAutoTradingIntent;
+            userAutoTradingIntent = null;
+        } else {
+            isAutoTradingEnabled = backendAutoTrading;
+            elements.globalAllowBuySell.checked = isAutoTradingEnabled;
+        }
         
         // 核心修改：用户明确的监控意图优先，用户操作后不再让后端状态覆盖前端状态
         if (userMonitoringIntent !== null) {
@@ -759,14 +770,20 @@
         
         // 更新系统设置
         if (statusData.settings) {
-            // 同步模拟交易模式状态
-            isSimulationMode = statusData.settings.simulationMode || false;
-            elements.simulationMode.checked = isSimulationMode;
-            
+            // 同步模拟交易模式状态 - 用户意图优先，防 fetchStatus 覆盖用户操作
+            if (userSimulationModeIntent !== null) {
+                isSimulationMode = userSimulationModeIntent;
+                elements.simulationMode.checked = userSimulationModeIntent;
+                userSimulationModeIntent = null;
+            } else {
+                isSimulationMode = statusData.settings.simulationMode || false;
+                elements.simulationMode.checked = isSimulationMode;
+            }
+
             // 同步允许买卖设置
             elements.allowBuy.checked = statusData.settings.allowBuy || false;
             elements.allowSell.checked = statusData.settings.allowSell || false;
-            
+
             // 更新模拟交易模式UI
             updateSimulationModeUI();
         }
@@ -832,12 +849,14 @@
         if (!monitoringInfo) return;
 
         // 只更新全局监控总开关状态，不影响监控开关状态
+        // 用户意图优先：SSE 推送也不能覆盖用户正在进行的切换操作
         if (monitoringInfo.autoTradingEnabled !== undefined) {
-            const wasAutoTrading = isAutoTradingEnabled;
-            isAutoTradingEnabled = monitoringInfo.autoTradingEnabled;
-            
-            // 只有状态有变化时才更新UI
-            if (wasAutoTrading !== isAutoTradingEnabled) {
+            if (userAutoTradingIntent !== null) {
+                isAutoTradingEnabled = userAutoTradingIntent;
+                elements.globalAllowBuySell.checked = userAutoTradingIntent;
+                userAutoTradingIntent = null;
+            } else {
+                isAutoTradingEnabled = monitoringInfo.autoTradingEnabled;
                 elements.globalAllowBuySell.checked = isAutoTradingEnabled;
             }
         }
@@ -851,11 +870,16 @@
             elements.allowSell.checked = monitoringInfo.allowSell;
         }
 
-        // 更新模拟交易模式
+        // 更新模拟交易模式 (SSE) - 用户意图优先
         if (monitoringInfo.simulationMode !== undefined) {
-            const wasSimulationMode = isSimulationMode;
-            isSimulationMode = monitoringInfo.simulationMode;
-            elements.simulationMode.checked = isSimulationMode;
+            if (userSimulationModeIntent !== null) {
+                isSimulationMode = userSimulationModeIntent;
+                elements.simulationMode.checked = userSimulationModeIntent;
+                userSimulationModeIntent = null;
+            } else {
+                isSimulationMode = monitoringInfo.simulationMode;
+                elements.simulationMode.checked = isSimulationMode;
+            }
             
             // 只有状态有变化时才更新UI
             if (wasSimulationMode !== isSimulationMode) {
