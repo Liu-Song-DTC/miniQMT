@@ -571,6 +571,17 @@ class easy_qmt_trader:
             asset = self.xt_trader.query_stock_asset(account=self.acc)
             df=pd.DataFrame()
             if asset:
+                # Fail-Safe: 校验返回的 asset.account_id 与本实例 self.account 一致，
+                # 防止 xtquant 多进程串账号导致 web UI 显示错账号资产。
+                expected_account = str(self.account).strip() if self.account is not None else ""
+                asset_account    = str(getattr(asset, 'account_id', '')).strip()
+                if expected_account and asset_account and asset_account != expected_account:
+                    logger.error(
+                        f"[ACCOUNT_GUARD] query_stock_asset 返回非本账号资产: "
+                        f"期望 {expected_account}，实际 {asset_account}。已丢弃，"
+                        f"请检查 config.QMT_PATH 与多账号配置。"
+                    )
+                    return df  # 返回空 DataFrame
                 df['账号类型']=[asset.account_type]
                 df['资金账户']=[asset.account_id]
                 df['可用金额']=[asset.cash]
@@ -887,7 +898,27 @@ class easy_qmt_trader:
 
             positions = self.xt_trader.query_stock_positions(self.acc)
             # print("easy_qmt_trader.position-持仓数量:", len(positions))
-            
+
+            # Fail-Safe 账号过滤：多账号场景下曾观测到 :5001 进程的 web 显示
+            # :5000 账号的持仓 —— xtquant 在多进程时可能共享某些状态/路由错乱。
+            # 按每条持仓自带的 account_id 强制过滤，仅保留本实例 self.account 的数据。
+            expected_account = str(self.account).strip() if self.account is not None else ""
+            filtered = []
+            wrong_account_count = 0
+            for pos in positions:
+                pos_account = str(getattr(pos, 'account_id', '')).strip()
+                if expected_account and pos_account and pos_account != expected_account:
+                    wrong_account_count += 1
+                    continue
+                filtered.append(pos)
+            if wrong_account_count:
+                logger.error(
+                    f"[ACCOUNT_GUARD] query_stock_positions 返回了 {wrong_account_count} "
+                    f"条非本账号({expected_account})的持仓，已丢弃。可能是 xtquant 多进程"
+                    f"状态共享 / QMT_PATH 错配，请检查 config.QMT_PATH 与多账号配置。"
+                )
+            positions = filtered
+
             # 一次性构建数据列表，再创建DataFrame
             if len(positions) > 0:
                 data_list = []
@@ -902,7 +933,7 @@ class easy_qmt_trader:
                         '参考成本价': pos.open_price,
                         '市值': pos.market_value
                     })
-                
+
                 # 一次性创建DataFrame
                 return pd.DataFrame(data_list)
             else:

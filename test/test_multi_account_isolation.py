@@ -340,6 +340,96 @@ class TestTradingExecutorSimulationPositions(unittest.TestCase):
         self.assertEqual(positions[0]["stock_code"], "600519.SH")
 
 
+class TestEasyQmtTraderAccountGuard(unittest.TestCase):
+    """回归测试: easy_qmt_trader.position() / balance() 必须按 self.account
+    过滤返回的条目。多账号下 xtquant 共享/串账号时，这是兜底防线。
+    """
+
+    def _make_trader_stub(self, account):
+        """构造一个不走真实 xtquant 的 easy_qmt_trader 实例。"""
+        import sys, importlib
+        from unittest.mock import MagicMock
+        sys.path.insert(0, str(PROJECT_ROOT))
+        eqt = importlib.import_module("easy_qmt_trader")
+
+        t = eqt.easy_qmt_trader.__new__(eqt.easy_qmt_trader)
+        t.account     = account
+        t.account_type = "STOCK"
+        t.path        = "C:/QMT/userdata_mini"
+        t._connecting = False
+        t.xt_trader   = MagicMock()
+        t.acc         = MagicMock()
+        return t, eqt
+
+    def _make_pos(self, account_id, stock_code, volume=100):
+        from unittest.mock import MagicMock
+        m = MagicMock()
+        m.account_id     = account_id
+        m.account_type   = "STOCK"
+        m.stock_code     = stock_code
+        m.volume         = volume
+        m.can_use_volume = volume
+        m.open_price     = 10.0
+        m.market_value   = volume * 10
+        return m
+
+    def test_position_filters_wrong_account(self):
+        """query_stock_positions 返回了 A、B 两个账号的持仓时，position()
+        只能返回 self.account 对应的那一个账号的条目。"""
+        t, _ = self._make_trader_stub("25106531")
+        t.xt_trader.query_stock_positions.return_value = [
+            self._make_pos("25105132", "000001.SZ"),  # 错账号 - 应被丢弃
+            self._make_pos("25106531", "600519.SH"),  # 本账号 - 保留
+            self._make_pos("25105132", "600036.SH"),  # 错账号 - 应被丢弃
+        ]
+        df = t.position()
+        self.assertEqual(len(df), 1, f"错账号持仓未被过滤: {df}")
+        self.assertEqual(df.iloc[0]['资金账号'], "25106531")
+        self.assertEqual(df.iloc[0]['证券代码'], "600519")
+
+    def test_position_keeps_all_when_account_id_missing(self):
+        """若 pos.account_id 为空（早期 QMT/兼容），不应误杀，全部保留。"""
+        t, _ = self._make_trader_stub("25106531")
+        t.xt_trader.query_stock_positions.return_value = [
+            self._make_pos("", "000001.SZ"),
+            self._make_pos("25106531", "600519.SH"),
+        ]
+        df = t.position()
+        self.assertEqual(len(df), 2)
+
+    def test_balance_rejects_wrong_account(self):
+        """query_stock_asset 返回了错账号资产时，balance() 必须返回空 DataFrame。"""
+        from unittest.mock import MagicMock
+        t, _ = self._make_trader_stub("25106531")
+        asset = MagicMock()
+        asset.account_id   = "25105132"     # 错账号
+        asset.account_type = "STOCK"
+        asset.cash         = 1000000
+        asset.frozen_cash  = 0
+        asset.market_value = 200000
+        asset.total_asset  = 1200000
+        t.xt_trader.query_stock_asset.return_value = asset
+
+        df = t.balance()
+        self.assertTrue(df.empty, "错账号资产应被丢弃，返回空 DataFrame")
+
+    def test_balance_accepts_matching_account(self):
+        from unittest.mock import MagicMock
+        t, _ = self._make_trader_stub("25106531")
+        asset = MagicMock()
+        asset.account_id   = "25106531"
+        asset.account_type = "STOCK"
+        asset.cash         = 1000000
+        asset.frozen_cash  = 0
+        asset.market_value = 200000
+        asset.total_asset  = 1200000
+        t.xt_trader.query_stock_asset.return_value = asset
+
+        df = t.balance()
+        self.assertEqual(len(df), 1)
+        self.assertEqual(df.iloc[0]['资金账户'], "25106531")
+
+
 class TestSimulationAccountIdInWebStatus(unittest.TestCase):
     """回归测试: 模拟模式下 /api/status 必须返回真实的 account_id，
     而非硬编码 'SIMULATION'，否则多账号 Web UI 无法区分两个窗口。

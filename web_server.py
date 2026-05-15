@@ -949,8 +949,29 @@ def stop_monitor():
 
 @app.route('/api/debug/status', methods=['GET'])
 def debug_status():
-    """返回详细的系统状态，用于调试"""
+    """返回详细的系统状态 + 多账号诊断字段。
+
+    多账号诊断:两个端口同时访问此接口，对比 multi_account_diagnostics
+    可立即判断 QMT_PATH / account_id / easy_qmt_trader.path 是否真正隔离。
+    """
     try:
+        def _safe(v):
+            """只允许 JSON 原生类型，否则转 str。
+            目的:防止 MagicMock / 未知对象导致 jsonify 500。"""
+            if v is None or isinstance(v, (str, int, float, bool)):
+                return v
+            return str(v)
+
+        pm = get_position_manager_instance()
+        qmt_trader = getattr(pm, 'qmt_trader', None)
+        qmt_info = {
+            'qmt_trader_is_none': qmt_trader is None,
+            'qmt_trader_class':   type(qmt_trader).__name__ if qmt_trader else None,
+            'qmt_trader_path':    _safe(getattr(qmt_trader, 'path', None)),
+            'qmt_trader_account': _safe(getattr(qmt_trader, 'account', None)),
+            'qmt_acc_account_id': _safe(getattr(getattr(qmt_trader, 'acc', None), 'account_id', None)),
+            'qmt_connected':      _safe(getattr(pm, 'qmt_connected', None)),
+        }
         return jsonify({
             'status': 'success',
             'system_status': {
@@ -960,6 +981,17 @@ def debug_status():
                 'ENABLE_ALLOW_BUY': getattr(config, 'ENABLE_ALLOW_BUY', True),
                 'ENABLE_ALLOW_SELL': getattr(config, 'ENABLE_ALLOW_SELL', True),
                 'ENABLE_SIMULATION_MODE': getattr(config, 'ENABLE_SIMULATION_MODE', False),
+            },
+            'multi_account_diagnostics': {
+                'env_QMT_ACCOUNT_ID': os.environ.get('QMT_ACCOUNT_ID', ''),
+                'env_QMT_PATH':       os.environ.get('QMT_PATH', ''),
+                'config_QMT_PATH':    config.QMT_PATH,
+                'config_account_id':  config.ACCOUNT_CONFIG.get('account_id', ''),
+                'config_DATA_DIR':    config.DATA_DIR,
+                'config_DB_PATH':     config.DB_PATH,
+                'config_WEB_PORT':    config.WEB_SERVER_PORT,
+                'config_LOG_FILE':    config.LOG_FILE,
+                **qmt_info,
             },
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
