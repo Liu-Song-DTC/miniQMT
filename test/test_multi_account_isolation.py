@@ -340,6 +340,56 @@ class TestTradingExecutorSimulationPositions(unittest.TestCase):
         self.assertEqual(positions[0]["stock_code"], "600519.SH")
 
 
+class TestSimulationModeViaEnv(unittest.TestCase):
+    """回归测试: ENABLE_SIMULATION_MODE 必须能被环境变量覆写。
+
+    Bug 场景: 之前 _launcher.py 菜单 [7] 启动"实盘"时不设环境变量，
+    config.py 默认 ENABLE_SIMULATION_MODE=True，结果两个进程都是模拟，
+    需用户在每个 web UI 单独切换。一旦只切了 5000 没切 5001，就出现
+    "5000 实盘 / 5001 模拟混搭"的状态混乱。
+    """
+
+    def _run_in_subprocess(self, env_value):
+        """子进程里 import config，回报 ENABLE_SIMULATION_MODE 实际值。"""
+        env = os.environ.copy()
+        env.pop("ENABLE_SIMULATION_MODE", None)
+        if env_value is not None:
+            env["ENABLE_SIMULATION_MODE"] = env_value
+        env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+
+        # 切到一个临时空目录避免污染当前 cwd
+        with tempfile.TemporaryDirectory() as tmp:
+            # 临时账户配置（任意有效内容即可）
+            with open(os.path.join(tmp, "account_config.json"), "w", encoding="utf-8") as f:
+                json.dump({"account_id": "TEST", "qmt_path": tmp}, f)
+            result = subprocess.run(
+                [sys.executable, "-c",
+                 "import config; print('VAL=' + str(config.ENABLE_SIMULATION_MODE))"],
+                cwd=tmp, env=env, capture_output=True, text=True, timeout=20,
+            )
+        for line in result.stdout.splitlines():
+            if line.startswith("VAL="):
+                return line[4:].strip()
+        raise RuntimeError(f"无法解析 ENABLE_SIMULATION_MODE: {result.stdout!r}\n{result.stderr}")
+
+    def test_env_false_disables_simulation(self):
+        """env=false → 实盘"""
+        self.assertEqual(self._run_in_subprocess("false"), "False")
+        self.assertEqual(self._run_in_subprocess("FALSE"), "False")
+        self.assertEqual(self._run_in_subprocess("0"),     "False")
+        self.assertEqual(self._run_in_subprocess(""),      "True")  # 空字符串视为未设置 → 默认 True
+
+    def test_env_true_enables_simulation(self):
+        """env=true → 模拟"""
+        self.assertEqual(self._run_in_subprocess("true"), "True")
+        self.assertEqual(self._run_in_subprocess("1"),    "True")
+        self.assertEqual(self._run_in_subprocess("Yes"),  "True")
+
+    def test_no_env_keeps_default(self):
+        """未设置环境变量 → 保持 config.py 源码默认值 True（安全）"""
+        self.assertEqual(self._run_in_subprocess(None), "True")
+
+
 class TestEasyQmtTraderAccountGuard(unittest.TestCase):
     """回归测试: easy_qmt_trader.position() / balance() 必须按 self.account
     过滤返回的条目。多账号下 xtquant 共享/串账号时，这是兜底防线。

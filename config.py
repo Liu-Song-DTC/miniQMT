@@ -27,7 +27,20 @@ ENABLE_HEARTBEAT_LOG = True   # 是否启用系统心跳日志（定期输出运
 HEARTBEAT_INTERVAL = 1800      # 心跳日志间隔（秒，默认1800=30分钟）
 
 # ======================= 功能开关 =======================
-ENABLE_SIMULATION_MODE = True   # 模拟交易模式开关（True=模拟，False=实盘）
+def _env_bool(name: str, default: bool) -> bool:
+    """从环境变量读 bool 开关；未设置或值非法时返回 default。
+    用于让 miniqmt.bat / scripts/_launcher.py 在启动时显式控制模式，
+    避免菜单 [7](实盘)启动后进程默认仍是模拟，需要用户在 web UI
+    手动切换的尴尬。
+    """
+    v = os.environ.get(name)
+    if v is None or v == "":
+        return default
+    return str(v).strip().lower() in ("1", "true", "yes", "on", "y", "t")
+
+# 模拟交易模式开关：环境变量 ENABLE_SIMULATION_MODE 优先（启动器控制），
+# 否则用源码默认 True（避免开发者本地误连实盘）。
+ENABLE_SIMULATION_MODE = _env_bool("ENABLE_SIMULATION_MODE", True)
 ENABLE_MONITORING = False       # 控制前端UI监控状态
 ENABLE_AUTO_TRADING = False     # 动态止盈止损自动执行开关（不影响网格交易）
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作

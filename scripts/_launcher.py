@@ -149,8 +149,10 @@ def cmd_start(args) -> int:
         env = os.environ.copy()
         env["QMT_ACCOUNT_ID"] = acc_id
         env["QMT_PATH"]       = qmt_path
-        if args.simulation:
-            env["ENABLE_SIMULATION_MODE"] = "true"
+        # 显式锁定模式：菜单 [7] 启动 = 实盘 (false)，菜单 [8] 启动 = 模拟 (true)。
+        # 避免 config.py 默认值在两个进程"不一致"——以前曾出现 5000 实盘 / 5001
+        # 模拟混搭的局面（用户在 5000 web UI 切换了实盘，5001 没切）。
+        env["ENABLE_SIMULATION_MODE"] = "true" if args.simulation else "false"
 
         creationflags = 0x00000010  # CREATE_NEW_CONSOLE
         try:
