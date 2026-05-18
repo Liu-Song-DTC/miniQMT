@@ -295,9 +295,9 @@ class DataManager:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS positions (
             stock_code TEXT PRIMARY KEY,
-            stock_name TEXT,            
+            stock_name TEXT,
             volume INTEGER,
-            available REAL,           
+            available REAL,
             cost_price REAL,
             base_cost_price REAL,
             current_price REAL,
@@ -307,10 +307,12 @@ class DataManager:
             open_date TIMESTAMP,
             profit_triggered BOOLEAN DEFAULT FALSE,
             highest_price REAL,
-            stop_loss_price REAL                      
+            stop_loss_price REAL,
+            profit_breakout_triggered BOOLEAN DEFAULT FALSE,
+            breakout_highest_price REAL
         )
         ''')
-        
+
         # 创建网格交易表
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS grid_trades (
@@ -325,12 +327,69 @@ class DataManager:
             update_time TIMESTAMP
         )
         ''')
-        
+
+        # 盘前同步调度持久化（premarket_sync.PreMarketSyncScheduler 读写）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS premarket_schedule (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            next_sync_time TIMESTAMP NOT NULL,
+            last_sync_time TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+        # 盘前同步历史（premarket_sync.record_sync_history 写入）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS premarket_sync_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sync_time TIMESTAMP NOT NULL,
+            configs_synced INTEGER DEFAULT 0,
+            switches_synced INTEGER DEFAULT 0,
+            xtdata_reconnected BOOLEAN DEFAULT 0,
+            xttrader_reconnected BOOLEAN DEFAULT 0,
+            connection_status TEXT,
+            positions_synced BOOLEAN DEFAULT 0,
+            errors TEXT,
+            execution_time_ms INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
         self.conn.commit()
         logger.info("数据表结构已创建")
 
+        # 兼容老 DB：缺失列幂等补齐（CREATE TABLE IF NOT EXISTS 不会改已有表的 schema）
+        self._migrate_legacy_schema()
+
         # 启动时修复可能损坏的索引（机器强制重启后可能出现索引损坏）
         self._repair_indexes_if_needed()
+
+    def _migrate_legacy_schema(self):
+        """幂等地为旧版 DB 补齐缺失字段。
+
+        历史上 positions 表分批添加过 profit_breakout_triggered /
+        breakout_highest_price，多账号下新建 data_<account_id>/trading.db
+        如果首次创建时代码已有这两列就 OK；但已经在更早版本上创建过的
+        老 DB（包括用户在跑的两个账号 DB），仍缺这两列，会导致
+        position_manager 同步线程持续报 "no such column" 错误。
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("PRAGMA table_info(positions)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+
+            migrations = [
+                ('profit_breakout_triggered', 'BOOLEAN DEFAULT FALSE'),
+                ('breakout_highest_price',    'REAL'),
+            ]
+            for col, typedef in migrations:
+                if col not in existing_cols:
+                    cursor.execute(f"ALTER TABLE positions ADD COLUMN {col} {typedef}")
+                    logger.info(f"DB迁移: positions 表已补齐字段 {col}")
+
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"DB迁移失败（不影响运行,但会持续报字段缺失）: {e}")
 
     def _repair_indexes_if_needed(self):
         """检查并修复损坏的数据库索引（快速完整性检查）"""
