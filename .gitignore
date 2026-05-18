@@ -67,6 +67,8 @@ data/stock2buy.json.bak
 # 运行时数据文件
 stock_pool.json
 data/
+# 多账号模式下 data_<account_id>/ 目录,包含 pid.txt 与各账号独立 DB
+data_*/
 logs/
 
 # 临时测试报告(根目录)
