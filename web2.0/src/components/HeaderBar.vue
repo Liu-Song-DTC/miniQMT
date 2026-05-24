@@ -55,11 +55,11 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       <div class="flex items-center gap-2">
         <span :class="['badge text-[11px]', system.isMonitoring ? 'badge-green' : 'badge-red']">
           <span :class="system.isMonitoring ? 'dot-green' : 'dot-red'"></span>
-          {{ system.statusText }}
+          监控: {{ system.isMonitoring ? 'ON' : 'OFF' }}
         </span>
         <span :class="['badge text-[11px]', system.connected ? 'badge-green' : 'badge-amber']">
           <span :class="system.connected ? 'dot-green' : 'dot-amber'"></span>
-          {{ system.connected ? '已连接' : '未连接' }}
+          QMT: {{ system.connected ? '已连接' : '未连接' }}
         </span>
       </div>
 

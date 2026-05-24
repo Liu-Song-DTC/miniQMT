@@ -72,21 +72,21 @@ watch(() => system.currentAccountId, () => {
             :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
               system.isMonitoring ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-blue-50 text-blue-700 hover:bg-blue-100']">
             <span :class="system.isMonitoring ? 'dot-red' : 'dot-green'"></span>
-            {{ system.isMonitoring ? '停止更新' : '开启更新' }}
+            {{ system.isMonitoring ? '监控 OFF' : '监控 ON' }}
           </button>
           <button @click="toggleStopProfit" :disabled="stopProfitLoading"
             :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
               stopProfitEnabled ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100']">
             <span :class="stopProfitEnabled ? 'dot-amber' : 'dot-green'"></span>
-            {{ stopProfitLoading ? '...' : stopProfitEnabled ? '止盈止损 ON' : '止盈止损 OFF' }}
+            {{ stopProfitLoading ? '...' : stopProfitEnabled ? '止盈止损 OFF' : '止盈止损 ON' }}
           </button>
         </div>
 
         <div class="flex items-center gap-2 ml-auto text-[11px]">
-          <span class="flex items-center gap-1.5 text-slate-500">
-            <span :class="['w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold',
+          <span class="flex items-center gap-1.5 text-slate-500" :title="sseHealthy ? 'Server-Sent Events 实时推送正常，数据自动刷新' : 'SSE 断开，使用轮询方式刷新数据（功能不受影响）'">
+            <span :class="['w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-bold',
               sseHealthy ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600']">SSE</span>
-            {{ sseHealthy ? '实时连接正常' : '实时连接断开' }}
+            {{ sseHealthy ? '推送正常' : '推送断开(轮询中)' }}
           </span>
         </div>
       </div>

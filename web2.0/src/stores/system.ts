@@ -21,7 +21,7 @@ export const useSystemStore = defineStore('system', () => {
   const currentAccount = computed(() =>
     accounts.value.find(a => a.id === currentAccountId.value) || accounts.value[0]
   )
-  const statusText = computed(() => isMonitoring.value ? '运行中' : '已停止')
+  const statusText = computed(() => isMonitoring.value ? '监控 ON' : '监控 OFF')
 
   function switchAccount(accountId: string) {
     currentAccountId.value = accountId
