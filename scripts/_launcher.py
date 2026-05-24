@@ -517,6 +517,58 @@ def _xqm_config_path() -> Path:
     return PROJECT_ROOT / "xtquant_manager" / "standalone_config.py"
 
 
+def _ensure_xqm_config() -> Path | None:
+    """从 account_config.json 自动生成 xtquant_manager_config.json。
+    账号列表从 account_config.json 读取，其他参数使用默认值。
+    """
+    config_path = CONFIG_PATH  # account_config.json
+    if not config_path.exists():
+        return None
+
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    accounts = cfg.get("accounts") or []
+    if not accounts:
+        # 单账号兼容
+        acc_id = cfg.get("account_id", "")
+        if acc_id:
+            accounts = [{
+                "account_id": acc_id,
+                "account_type": cfg.get("account_type", "STOCK"),
+                "qmt_path": cfg.get("qmt_path", ""),
+            }]
+
+    if not accounts:
+        return None
+
+    # 构建 xtquant_manager 配置
+    xqm_cfg = {
+        "host": "127.0.0.1",
+        "port": 8888,
+        "api_token": "",
+        "rate_limit": 600,
+        "enable_stop_profit": True,
+        "accounts": [
+            {
+                "account_id": a["account_id"],
+                "qmt_path": a.get("qmt_path", ""),
+                "account_type": a.get("account_type", "STOCK"),
+            }
+            for a in accounts
+            if a.get("account_id")
+        ],
+    }
+
+    out_path = PROJECT_ROOT / "xtquant_manager_config.json"
+    out_path.write_text(json.dumps(xqm_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  ✓ 已从 account_config.json 自动生成配置: {out_path}")
+    print(f"    共 {len(xqm_cfg['accounts'])} 个账号")
+    return out_path
+
+
 def _xqm_pid_file() -> Path:
     return PROJECT_ROOT / "data" / ".xqm_manager.pid"
 
@@ -567,7 +619,15 @@ def cmd_xqm_start(_args) -> int:
                 time.sleep(1)
 
     config_path = _xqm_config_path()
-    config_arg = f"--config {config_path}" if config_path.name == "xtquant_manager_config.json" else ""
+
+    # 如果配置文件不存在，从 account_config.json 自动生成
+    if not config_path.exists() or config_path.name != "xtquant_manager_config.json":
+        config_path = _ensure_xqm_config()
+        if config_path is None:
+            print("  ✗ 无法生成 xtquant_manager 配置: account_config.json 不存在或无有效账号")
+            return 1
+
+    config_arg = f"--config {config_path}"
 
     data_dir = PROJECT_ROOT / "data"
     data_dir.mkdir(exist_ok=True)
