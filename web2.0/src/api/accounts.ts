@@ -55,10 +55,10 @@ export function loadAccounts(): AccountEntry[] {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
     if (raw) return JSON.parse(raw)
   } catch { /* ignore */ }
-  // 默认双账号
+  // 默认双账号（占位 ID，用户需在设置中填入真实账号）
   return [
-    { id: '', label: '账户A', flaskUrl: 'http://127.0.0.1:5000' },
-    { id: '', label: '账户B', flaskUrl: 'http://127.0.0.1:5001' },
+    { id: '_account_a', label: '账户A', flaskUrl: 'http://127.0.0.1:5000' },
+    { id: '_account_b', label: '账户B', flaskUrl: 'http://127.0.0.1:5001' },
   ]
 }
 
@@ -67,7 +67,10 @@ export function saveAccounts(accounts: AccountEntry[]): void {
 }
 
 export function getCurrentAccountId(): string {
-  return localStorage.getItem(CURRENT_KEY) || ''
+  const stored = localStorage.getItem(CURRENT_KEY)
+  if (stored) return stored
+  const accounts = loadAccounts()
+  return accounts.length > 0 ? accounts[0].id : ''
 }
 
 export function setCurrentAccountId(id: string): void {

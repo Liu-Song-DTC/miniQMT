@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 import type { AccountEntry } from '../api/accounts'
 import ConnectionSettings from './ConnectionSettings.vue'
@@ -7,15 +7,33 @@ import ConnectionSettings from './ConnectionSettings.vue'
 const system = useSystemStore()
 const showAccountDialog = ref(false)
 const showConnSettings = ref(false)
+const showDropdown = ref(false)
 const editForm = ref<AccountEntry>({ id: '', label: '', flaskUrl: '' })
+const dropdownRef = ref<HTMLElement | null>(null)
 
-function openAdd() { editForm.value = { id: '', label: '', flaskUrl: '' }; showAccountDialog.value = true }
-function openEdit(acc: AccountEntry) { editForm.value = { ...acc }; showAccountDialog.value = true }
+function toggleDropdown() { showDropdown.value = !showDropdown.value }
+function closeDropdown() { showDropdown.value = false }
+
+function onSwitchAccount(accId: string) {
+  system.switchAccount(accId)
+  closeDropdown()
+}
+
+function openAdd() { editForm.value = { id: '', label: '', flaskUrl: '' }; showAccountDialog.value = true; closeDropdown() }
+function openEdit(acc: AccountEntry) { editForm.value = { ...acc }; showAccountDialog.value = true; closeDropdown() }
 function saveAccount() {
   if (!editForm.value.id || !editForm.value.label) return
   system.addAccount({ ...editForm.value }); showAccountDialog.value = false
 }
 function onConnectionChanged() { system.fetchStatus(); system.fetchConnection() }
+
+function onClickOutside(e: MouseEvent) {
+  if (dropdownRef.value && !dropdownRef.value.contains(e.target as Node)) {
+    closeDropdown()
+  }
+}
+onMounted(() => document.addEventListener('click', onClickOutside))
+onUnmounted(() => document.removeEventListener('click', onClickOutside))
 </script>
 
 <template>
@@ -46,20 +64,18 @@ function onConnectionChanged() { system.fetchStatus(); system.fetchConnection() 
       </div>
 
       <!-- Account switcher -->
-      <div class="relative group">
-        <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
+      <div class="relative" ref="dropdownRef">
+        <button @click="toggleDropdown" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
                        bg-blue-50 text-blue-700 border border-blue-200/60
                        hover:bg-blue-100 hover:border-blue-300 transition-all duration-150">
           <span class="dot-green"></span>
           {{ system.currentAccount.label || system.currentAccount.id }}
-          <svg class="w-3 h-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          <svg class="w-3 h-3 opacity-40 transition-transform" :class="showDropdown ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </button>
-        <div class="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-lg border border-slate-200/80
-                    opacity-0 invisible group-hover:opacity-100 group-hover:visible
-                    transition-all duration-200 z-50 translate-y-1 group-hover:translate-y-0">
+        <div v-show="showDropdown" class="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-lg border border-slate-200/80 z-50">
           <div class="p-2">
             <button v-for="acc in system.accounts" :key="acc.id"
-              @click="system.switchAccount(acc.id)"
+              @click="onSwitchAccount(acc.id)"
               :class="['w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all flex items-center justify-between',
                 acc.id === system.currentAccountId ? 'bg-blue-50 text-blue-700 shadow-sm' : 'hover:bg-slate-50 text-slate-600']">
               <div class="flex items-center gap-2">
