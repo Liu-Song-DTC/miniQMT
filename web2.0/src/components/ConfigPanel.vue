@@ -51,7 +51,7 @@ function onFieldChange(field: FieldDef, raw: string) {
               :value="displayValue(f)"
               @input="onFieldChange(f, ($event.target as HTMLInputElement).value)"
               :step="f.step"
-              class="input-field flex-1 min-w-0"
+              class="input-field flex-1 min-w-0 !text-xs"
             />
             <span v-if="f.suffix" class="text-[11px] text-slate-400 flex-shrink-0 w-6 text-right">{{ f.suffix }}</span>
           </div>
