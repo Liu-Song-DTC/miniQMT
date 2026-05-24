@@ -43,28 +43,28 @@ function onBoolChange(key: string, checked: boolean) {
   <div class="card">
     <div class="card-header flex items-center justify-between">
       <span>参数设置</span>
-      <button class="btn-primary text-xs px-3 py-1" @click="store.saveConfig()" :disabled="store.saving">
+      <button class="btn-primary text-xs px-3 py-1.5" @click="store.saveConfig()" :disabled="store.saving">
         {{ store.saving ? '保存中...' : '保存配置' }}
       </button>
     </div>
     <div class="card-body">
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
         <div v-for="f in NUMERIC_FIELDS" :key="f.key" class="space-y-1">
           <label class="label-text">{{ f.label }}</label>
-          <div class="flex items-center gap-1">
+          <div class="flex items-center gap-1.5">
             <input v-if="f.checkboxKey"
               type="checkbox"
               :checked="(store.config as any)[f.checkboxKey]"
               @change="onBoolChange(f.checkboxKey, ($event.target as HTMLInputElement).checked)"
-              class="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500" />
+              class="w-3.5 h-3.5 rounded border-slate-300 text-primary-600 focus:ring-primary-500 flex-shrink-0" />
             <input
               type="number"
               :value="displayValue(f)"
               @input="onFieldChange(f, ($event.target as HTMLInputElement).value)"
               :step="f.step"
-              class="input-field w-20"
+              class="input-field flex-1 min-w-0"
             />
-            <span v-if="f.suffix" class="text-xs text-slate-400">{{ f.suffix }}</span>
+            <span v-if="f.suffix" class="text-[11px] text-slate-400 flex-shrink-0 w-6 text-right">{{ f.suffix }}</span>
           </div>
         </div>
       </div>

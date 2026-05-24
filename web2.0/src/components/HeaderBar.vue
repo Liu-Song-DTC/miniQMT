@@ -100,22 +100,22 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     </div>
 
     <!-- Row 2: Controls (left) + Status badges (right) -->
-    <div class="px-4 md:px-6 pb-2 flex items-center justify-between gap-1.5 flex-wrap text-[11px]">
+    <div class="px-4 md:px-6 pb-2 flex items-center justify-between gap-2 flex-wrap">
       <!-- Control toggles -->
-      <div class="flex items-center gap-1 flex-wrap">
-        <button @click="toggleMonitoring" :class="['px-2 py-1 rounded-md font-semibold transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
-        <button @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2 py-1 rounded-md font-semibold transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
-        <span class="text-slate-300 hidden sm:inline">|</span>
-        <label class="flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer hover:bg-slate-100 transition-colors"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" /><span :class="config.config.allowBuy ? 'text-slate-700' : 'text-slate-400'">买</span></label>
-        <label class="flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer hover:bg-slate-100 transition-colors"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" /><span :class="config.config.allowSell ? 'text-slate-700' : 'text-slate-400'">卖</span></label>
-        <label class="flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer hover:bg-slate-100 transition-colors"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : 'text-slate-400'">模拟</span></label>
-        <label class="flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer hover:bg-slate-100 transition-colors"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" /><span :class="config.config.globalAllowBuySell ? 'text-slate-700' : 'text-slate-400'">总开关</span></label>
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <button @click="toggleMonitoring" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
+        <button @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
+        <span class="w-px h-4 bg-slate-200 mx-0.5 hidden sm:inline"></span>
+        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
+        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
+        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
+        <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />总开关</label>
       </div>
 
       <!-- Status badges (right) -->
       <div class="flex items-center gap-1.5 ml-auto flex-shrink-0">
-        <span :class="['badge text-[10px]', system.isMonitoring ? 'badge-green' : 'badge-red']"><span :class="system.isMonitoring ? 'dot-green' : 'dot-red'"></span>监控:{{ system.isMonitoring ? 'ON' : 'OFF' }}</span>
-        <span :class="['badge text-[10px]', system.connected ? 'badge-green' : 'badge-amber']"><span :class="system.connected ? 'dot-green' : 'dot-amber'"></span>QMT:{{ system.connected ? 'OK' : '未连接' }}</span>
+        <span :class="['badge text-[10px]', system.isMonitoring ? 'badge-green' : 'badge-red']"><span :class="system.isMonitoring ? 'dot-green' : 'dot-red'"></span>{{ system.isMonitoring ? '监控ON' : '监控OFF' }}</span>
+        <span :class="['badge text-[10px]', system.connected ? 'badge-green' : 'badge-amber']"><span :class="system.connected ? 'dot-green' : 'dot-amber'"></span>QMT{{ system.connected ? '·OK' : '·断' }}</span>
         <span class="hidden sm:inline" :class="['badge text-[10px]', sseHealthy ? 'badge-green' : 'badge-amber']" :title="sseHealthy ? 'SSE实时推送正常' : 'SSE断开, 使用轮询(功能不受影响)'">SSE</span>
         <span v-if="system.lastUpdateTime" class="text-[10px] text-slate-400 font-mono hidden sm:inline">{{ system.lastUpdateTime }}</span>
       </div>
