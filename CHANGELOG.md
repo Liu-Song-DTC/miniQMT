@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-05-24
+
 ### Added
 - **XtQuantManager 动态止盈止损**: 网关模式下独立运行的止盈止损后台监控 (`xtquant_manager/stop_profit.py`)
   - 直接复用 `position_manager.py` 中已验证的止损/首次止盈/动态止盈算法
