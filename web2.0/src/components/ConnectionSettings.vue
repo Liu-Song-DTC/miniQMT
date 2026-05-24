@@ -22,7 +22,7 @@ async function testConnection() {
     let url: string
     if (mode === 'flask') {
       const acc = getCurrentAccount()
-      const base = acc.flaskUrl || form.value.xtquantUrl || window.location.origin
+      const base = acc.flaskUrl || window.location.origin
       url = `${base}/api/status`
     } else {
       const base = form.value.xtquantUrl || window.location.origin
@@ -96,13 +96,12 @@ async function testConnection() {
           </div>
 
           <div>
-            <label class="label-text">{{ form.mode === 'flask' ? 'Flask 地址 (默认)' : '网关地址' }}</label>
-            <input v-model="form.xtquantUrl" type="url"
-              :placeholder="form.mode === 'flask' ? 'http://127.0.0.1:5000' : 'http://127.0.0.1:8888'"
-              class="input-field font-mono" />
+            <label class="label-text">{{ form.mode === 'flask' ? 'Flask 地址' : '网关地址' }}</label>
+            <input v-if="form.mode === 'xtquant'" v-model="form.xtquantUrl" type="url" placeholder="http://127.0.0.1:8888" class="input-field font-mono" />
+            <input v-else :value="form.xtquantUrl" disabled type="url" class="input-field font-mono text-slate-300 bg-slate-50 cursor-not-allowed" />
             <p class="text-[10px] text-slate-400 mt-1">
-              <template v-if="form.mode === 'xtquant'">xtquant_manager 网关地址，多账号共用同一入口</template>
-              <template v-else>默认 Flask 地址，各账户可单独覆盖（在账户编辑中设置）</template>
+              <template v-if="form.mode === 'xtquant'">所有账户共用此网关地址</template>
+              <template v-else>直连模式下每个账户独立设置地址，请在账户下拉菜单中点击 ✎ 编辑</template>
             </p>
           </div>
 
