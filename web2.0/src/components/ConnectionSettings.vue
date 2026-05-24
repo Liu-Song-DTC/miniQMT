@@ -2,6 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { loadConnection, saveConnection, checkSecurityWarning, isSecureContext, getCurrentAccount } from '../api/accounts'
 import type { ConnectionSettings } from '../api/accounts'
+import { useSystemStore } from '../stores/system'
+
+const system = useSystemStore()
 
 const emit = defineEmits<{ close: []; changed: [] }>()
 const form = ref<ConnectionSettings>({ mode: 'auto', xtquantUrl: '', apiToken: '' })
@@ -98,7 +101,7 @@ async function testConnection() {
           <div>
             <label class="label-text">{{ form.mode === 'flask' ? 'Flask 地址' : '网关地址' }}</label>
             <input v-if="form.mode === 'xtquant'" v-model="form.xtquantUrl" type="url" placeholder="http://127.0.0.1:8888" class="input-field font-mono" />
-            <input v-else :value="form.xtquantUrl" disabled type="url" class="input-field font-mono text-slate-300 bg-slate-50 cursor-not-allowed" />
+            <input v-else :value="system.currentAccount.flaskUrl || '(未设置)'" disabled type="url" class="input-field font-mono text-slate-400 bg-slate-50 cursor-not-allowed" />
             <p class="text-[10px] text-slate-400 mt-1">
               <template v-if="form.mode === 'xtquant'">所有账户共用此网关地址</template>
               <template v-else>直连模式下每个账户独立设置地址，请在账户下拉菜单中点击 ✎ 编辑</template>
