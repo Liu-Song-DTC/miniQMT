@@ -3,33 +3,25 @@ import { useConfigStore } from '../stores/config'
 
 const store = useConfigStore()
 
-interface FieldDef {
-  label: string
-  key: string
-  suffix?: string
-  step?: number
-  decimals?: number
-}
-
-const NUMERIC_FIELDS: FieldDef[] = [
+const FIELDS = [
   { label: '单次买入金额', key: 'singleBuyAmount', suffix: '元', step: 1, decimals: 0 },
-  { label: '首次止盈阈值', key: 'firstProfitSell', suffix: '%', step: 0.01, decimals: 2 },
-  { label: '首次卖出比例', key: 'stockGainSellPencent', suffix: '%', step: 0.01, decimals: 2 },
-  { label: '补仓跌幅阈值', key: 'stopLossBuy', suffix: '%', step: 0.01, decimals: 2 },
-  { label: '止损比例', key: 'stockStopLoss', suffix: '%', step: 0.01, decimals: 2 },
   { label: '单股最大持仓', key: 'singleStockMaxPosition', suffix: '元', step: 1, decimals: 0 },
   { label: '最大总持仓', key: 'totalMaxPosition', suffix: '元', step: 1, decimals: 0 },
+  { label: '止损比例', key: 'stockStopLoss', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '补仓跌幅阈值', key: 'stopLossBuy', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '首次止盈阈值', key: 'firstProfitSell', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '首次卖出比例', key: 'stockGainSellPencent', suffix: '%', step: 0.01, decimals: 2 },
 ]
 
-function displayValue(field: FieldDef): string | number {
-  const raw = (store.config as any)[field.key]
+function displayValue(key: string): string {
+  const raw = (store.config as any)[key]
   if (raw == null || isNaN(raw)) return ''
-  return Number(raw).toFixed(field.decimals ?? 0)
+  return Number(raw).toFixed(FIELDS.find(f => f.key === key)?.decimals ?? 0)
 }
 
-function onFieldChange(field: FieldDef, raw: string) {
+function onChange(key: string, raw: string) {
   const v = parseFloat(raw)
-  ;(store.config as any)[field.key] = isNaN(v) ? 0 : v
+  ;(store.config as any)[key] = isNaN(v) ? 0 : v
 }
 </script>
 
@@ -42,18 +34,17 @@ function onFieldChange(field: FieldDef, raw: string) {
       </button>
     </div>
     <div class="card-body !py-3">
-      <div class="flex flex-wrap gap-x-5 gap-y-2">
-        <div v-for="f in NUMERIC_FIELDS" :key="f.key" class="flex items-center gap-1.5 text-xs">
-          <span class="text-slate-500 whitespace-nowrap">{{ f.label }}</span>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2">
+        <div v-for="f in FIELDS" :key="f.key" class="flex items-center gap-1.5">
+          <label class="text-[11px] text-slate-500 whitespace-nowrap w-[84px] text-right flex-shrink-0">{{ f.label }}</label>
           <input
             type="number"
-            :value="displayValue(f)"
-            @input="onFieldChange(f, ($event.target as HTMLInputElement).value)"
+            :value="displayValue(f.key)"
+            @input="onChange(f.key, ($event.target as HTMLInputElement).value)"
             :step="f.step"
-            class="input-field !py-1 !text-xs min-w-[60px]"
-            :class="f.decimals === 0 ? 'min-w-[80px]' : 'min-w-[60px]'"
+            class="input-field !py-1 !text-xs w-full"
           />
-          <span v-if="f.suffix" class="text-[11px] text-slate-400">{{ f.suffix }}</span>
+          <span class="text-[11px] text-slate-400 w-5 flex-shrink-0">{{ f.suffix }}</span>
         </div>
       </div>
     </div>
