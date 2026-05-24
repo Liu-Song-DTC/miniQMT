@@ -1,6 +1,7 @@
 """用来创建公用的方法，方便程序进行调用"""
 
 # from stockquant.quant import *
+import os
 import pandas as pd
 import baostock as bs
 import datetime
@@ -142,7 +143,9 @@ def calmacd(df):
 
 
 def WX_send(msg):
-    token = "65a7ae6c776c4881899e36aace47d491"
+    token = os.environ.get("PUSHPLUS_TOKEN", "")
+    if not token:
+        return  # 未配置则不发送
     title = "Stockquant"
     # 在pushplus推送加微信公众号-功能-个人中心-渠道配置-新增-webhook编码为“stockquant”， 请求地址为企微机器人的webhook地址 
     # webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxxxxxxxxxxxxxxx"

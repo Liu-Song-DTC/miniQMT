@@ -10,9 +10,15 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🔄 双层存储架构(内存数据库 + SQLite持久化)
 - 🎯 信号检测与执行分离设计
 - 🧵 多线程协同工作 + 线程自愈机制
-- 📈 动态止盈止损策略
-- 🌐 Web前端实时监控界面
+- 📈 动态止盈止损策略（含 xtquant_manager 独立运行模式）
+- 🌐 Web前端实时监控界面（Flask web1.0 + Vue3 web2.0 双版本）
+- 🚪 XtQuantManager HTTP 网关（多账号统一管理、远程 API、PWA 支持）
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
+
+**隐私安全提醒**:
+- ⚠️ **绝不硬编码任何 Token/密码/账号ID** — 一律使用环境变量或配置文件
+- `account_config.json` 已在 `.gitignore` 中排除
+- Pushplus Token 使用 `PUSHPLUS_TOKEN` 环境变量
 
 **环境要求**:
 - Python 3.8+ (推荐 3.9)，例如用户目录下的Anaconda3/envs/python39
@@ -114,6 +120,33 @@ python test/run_all_grid_tests.py
 
 ### Web前端
 浏览器访问: `http://localhost:5000`
+- **web1.0**: Flask 模板渲染 (`web1.0/`), 自动运行
+- **web2.0**: Vue3 + Vite + TypeScript + PWA (`web2.0/`), 需构建后使用
+
+#### web2.0 开发与构建
+```bash
+cd web2.0
+npm install                          # 安装依赖（仅首次）
+npm run dev                          # 开发模式 (http://localhost:5173, 热更新)
+npm run build                        # 生产构建 → dist/
+```
+构建产物 `dist/` 可直接部署到 Vercel 或由 Flask web_server 托管。
+详见 [web2.0/VERCEL_DEPLOY.md](web2.0/VERCEL_DEPLOY.md)。
+
+### miniqmt.bat 总控制台
+```bash
+miniqmt.bat                         # 打开交互式菜单
+python scripts/_launcher.py menu    # 等效命令
+```
+
+**菜单功能一览**:
+| 分区 | 选项 | 功能 |
+|------|------|------|
+| 部署/环境 | [1]-[4] | 检查Python环境、安装依赖、校验配置、git pull |
+| 查看 | [5]-[6] | 查看账号配置、运行状态 |
+| 启动 | [7]-[9] | 启动所有/指定账号（实盘/模拟） |
+| 停止 | [a]-[c] | 优雅停止/强制停止 |
+| **XtQuantManager** | **[d]-[i]** | **启动/停止/状态/UI/重启/日志** |
 
 ### 系统诊断工具
 ```bash
@@ -181,6 +214,8 @@ grid_trading_manager.py # 网格交易会话管理(独立线程)
 grid_database.py       # 网格交易数据持久化(SQLite)
 grid_validation.py     # 网格交易参数校验
 xtquant_manager/       # XtQuantManager HTTP网关(多账户管理，可选)
+xtquant_manager/stop_profit.py  # 网关模式动态止盈止损(后台线程，复用 position_manager 算法)
+web2.0/                # Vue3+Vite+TS+PWA 新版Web界面
 ```
 
 ### 线程架构

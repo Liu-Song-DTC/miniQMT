@@ -61,6 +61,11 @@ data/stock2buy.json.bak
 # 注意：account_config.json.example 应该被跟踪，作为配置模板
 !account_config.json.example
 
+# web2.0 构建产物和依赖
+web2.0/dist/
+web2.0/node_modules/
+package-lock.json
+
 # MkDocs 构建产物（site_dir 输出到根目录 /site/）
 /site/
 

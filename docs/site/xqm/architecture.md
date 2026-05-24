@@ -21,6 +21,10 @@
 │  · 超时保护                  · 指数退避重连               │
 │  · 指标收集                  · 断连回调（<1s 感知）        │
 ├──────────────────────────────────────────────────────────┤
+│  StopProfitMonitor           · 动态止盈止损后台线程       │
+│  · 止损检测（复刻 position_manager.check_trading_signals）│
+│  · 首次止盈回撤监控           · 动态止盈档位计算          │
+├──────────────────────────────────────────────────────────┤
 │  xtquant API (xttrader + xtdata，本机 QMT 客户端)         │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -58,9 +62,15 @@ Level 2         reconnect()       指数退避重连（60s → 120s → ... → 
 | `account.py` | 单账号封装（`XtQuantAccount`）：连接、超时、指标收集 |
 | `manager.py` | 多账号注册表（`XtQuantManager` 单例） |
 | `health_monitor.py` | 后台健康检查线程（三级策略 + 指数退避） |
-| `server.py` | FastAPI 路由定义（所有 `/api/v1/` 端点） |
-| `server_runner.py` | 启动入口（uvicorn + 信号处理） |
+| `stop_profit.py` | **动态止盈止损监控** — 后台线程，复用 `position_manager.py` 算法 |
+| `server.py` | FastAPI 路由定义（所有 `/api/v1/` 端点，含止盈止损 API） |
+| `server_runner.py` | 启动入口（uvicorn + 信号处理 + StopProfitMonitor 启停） |
+| `standalone.py` | 独立运行应用（StandaloneApplication） |
+| `standalone_config.py` | 独立运行配置加载器（含止盈止损参数） |
 | `client.py` | HTTP 客户端（`XtQuantClient` + `XtDataAdapter`） |
 | `security.py` | 安全中间件（IP 白名单、Token 验证、HMAC、速率限制） |
 | `models.py` | Pydantic 请求/响应模型 |
 | `exceptions.py` | 自定义异常类型 |
+| `watchdog.py` | HTTP 服务看门狗（崩溃自动重启） |
+| `metrics.py` | 调用指标收集器 |
+| `timeout.py` | 统一超时保护 |

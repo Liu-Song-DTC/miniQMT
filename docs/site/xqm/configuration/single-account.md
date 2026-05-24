@@ -13,7 +13,7 @@
   "api_token": "",
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "55009640",
       "qmt_path": "C:/QMT/userdata_mini",
       "account_type": "STOCK"
     }
@@ -49,7 +49,7 @@
 
     manager = XtQuantManager.get_instance()
     manager.register_account(AccountConfig(
-        account_id="25105132",
+        account_id="55009640",
         qmt_path="C:/QMT/userdata_mini",
     ))
     ```
@@ -61,7 +61,7 @@
 curl http://127.0.0.1:8888/api/v1/health
 
 # 注册成功后查看账号状态
-curl http://127.0.0.1:8888/api/v1/accounts/25105132/status
+curl http://127.0.0.1:8888/api/v1/accounts/55009640/status
 ```
 
 !!! note "账号注册时机"

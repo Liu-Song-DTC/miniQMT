@@ -83,3 +83,38 @@ headers = generate_hmac_headers(
 | 局域网（受控内网） | ✓ | ✓ | — | — |
 | 局域网（严格） | ✓ | ✓ | ✓ | — |
 | 公网 | ✓ | ✓ | ✓ | ✓ |
+
+---
+
+## 隐私安全最佳实践
+
+### 不硬编码凭证
+
+所有 Token、密码、账号 ID 一律使用环境变量或配置文件，绝不写入源代码：
+
+```python
+# ✅ 正确：环境变量
+token = os.environ.get("PUSHPLUS_TOKEN", "")
+
+# ❌ 错误：硬编码
+token = "65a7ae6c776c4881899e36aace47d491"
+```
+
+### 敏感文件保护
+
+| 文件 | 保护方式 |
+|------|---------|
+| `account_config.json` | `.gitignore` 已排除，不提交到 Git |
+| `xtquant_manager_config.json` | 包含 `api_token`，应加入 `.gitignore` |
+| `web2.0/dist/` | 构建产物含编译后的前端代码，已加入 `.gitignore` |
+| `web2.0/node_modules/` | 第三方依赖，已加入 `.gitignore` |
+
+### 构建产物隐私
+
+`web2.0/dist/` 中的 JavaScript bundle 会内联所有 `VITE_*` 环境变量。
+不要将真实 Token 写入 `.env.production` 中提交。
+改为在 UI 连接设置面板中运行时配置（保存到 localStorage）。
+
+### 文档示例
+
+文档中的示例账号 ID 统一使用虚构 ID（如 `55009640`），不使用真实账号。

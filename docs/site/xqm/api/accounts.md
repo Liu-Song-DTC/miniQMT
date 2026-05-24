@@ -21,7 +21,7 @@ X-API-Token: <token>
 
 ```json
 {
-  "account_id": "25105132",
+  "account_id": "55009640",
   "qmt_path": "C:/QMT/userdata_mini",
   "account_type": "STOCK",
   "call_timeout": 3.0,
@@ -36,7 +36,7 @@ X-API-Token: <token>
 {
   "success": true,
   "data": {
-    "account_id": "25105132",
+    "account_id": "55009640",
     "connected": true,
     "message": "注册成功"
   }
@@ -58,7 +58,7 @@ X-API-Token: <token>
 **响应（HTTP 200）：**
 
 ```json
-{"success": true, "data": {"account_id": "25105132"}}
+{"success": true, "data": {"account_id": "55009640"}}
 ```
 
 账号不存在时返回 `404`。
@@ -78,7 +78,7 @@ X-API-Token: <token>
 {
   "success": true,
   "data": {
-    "accounts": ["25105132", "25105133"]
+    "accounts": ["55009640", "55009641"]
   }
 }
 ```
@@ -98,7 +98,7 @@ X-API-Token: <token>
 {
   "success": true,
   "data": {
-    "account_id": "25105132",
+    "account_id": "55009640",
     "connected": true,
     "reconnecting": false,
     "reconnect_attempts": 0,

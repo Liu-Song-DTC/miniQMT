@@ -18,6 +18,13 @@
   "watchdog_interval": 10.0,
   "watchdog_restart_cooldown": 30.0,
   "heartbeat_interval": 1800.0,
+  "enable_stop_profit": true,
+  "stop_loss_ratio": -0.075,
+  "initial_take_profit_ratio": 0.06,
+  "initial_take_profit_pullback_ratio": 0.005,
+  "initial_take_profit_sell_ratio": 0.6,
+  "stop_profit_interval": 3.0,
+  "stop_profit_dedup_seconds": 60.0,
   "accounts": [
     {
       "account_id": "必填",
@@ -52,6 +59,13 @@
 | `watchdog_interval` | float | `10.0` | 服务线程存活检查间隔（秒） |
 | `watchdog_restart_cooldown` | float | `30.0` | 看门狗重启冷却（秒） |
 | `heartbeat_interval` | float | `1800.0` | 心跳日志间隔（秒） |
+| `enable_stop_profit` | bool | `true` | **启用止盈止损后台监控** |
+| `stop_loss_ratio` | float | `-0.075` | 固定止损比例（成本价下跌 7.5% 触发） |
+| `initial_take_profit_ratio` | float | `0.06` | 首次止盈触发阈值（盈利 6%） |
+| `initial_take_profit_pullback_ratio` | float | `0.005` | 首次止盈回撤触发比例（0.5%） |
+| `initial_take_profit_sell_ratio` | float | `0.6` | 首次止盈卖出比例（60%） |
+| `stop_profit_interval` | float | `3.0` | 止盈止损检测间隔（秒） |
+| `stop_profit_dedup_seconds` | float | `60.0` | 同信号去重窗口（秒） |
 
 ## AccountConfig 参数
 

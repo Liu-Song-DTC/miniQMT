@@ -44,7 +44,7 @@ curl -s -I -X OPTIONS "http://127.0.0.1:8888/api/v1/accounts" \
 ```bash
 curl -X POST http://127.0.0.1:8888/api/v1/accounts \
   -H "Content-Type: application/json" \
-  -d '{"account_id":"25105133","qmt_path":"C:/QMT1/userdata_mini"}'
+  -d '{"account_id":"55009641","qmt_path":"C:/QMT1/userdata_mini"}'
 ```
 
 ---

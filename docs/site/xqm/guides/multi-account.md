@@ -2,18 +2,18 @@
 
 ## 实例一：双账号独立交易
 
-账号 A（25105132）做网格交易，账号 B（25105133）做止盈止损，互不干扰。
+账号 A（55009640）做网格交易，账号 B（55009641）做止盈止损，互不干扰。
 
 ```python
 from xtquant_manager.client import XtQuantClient, ClientConfig
 
 client_a = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105132",
+    account_id="55009640",
 ))
 client_b = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105133",
+    account_id="55009641",
 ))
 
 pos_a = client_a.position()
@@ -35,21 +35,21 @@ print(f"账号B总资产: {balance_b['总资产'].iloc[0]:,.2f}")
 ```bash
 # 当前只有账号 A
 curl http://127.0.0.1:8888/api/v1/accounts
-# {"data":{"accounts":["25105132"]}}
+# {"data":{"accounts":["55009640"]}}
 
 # 动态注册账号 B
 curl -X POST http://127.0.0.1:8888/api/v1/accounts \
   -H "Content-Type: application/json" \
   -d '{
-    "account_id": "25105133",
+    "account_id": "55009641",
     "qmt_path": "C:/QMT1/userdata_mini",
     "account_type": "STOCK"
   }'
-# {"data":{"account_id":"25105133","connected":true,"message":"注册成功"}}
+# {"data":{"account_id":"55009641","connected":true,"message":"注册成功"}}
 
 # 确认两个账号
 curl http://127.0.0.1:8888/api/v1/accounts
-# {"data":{"accounts":["25105132","25105133"]}}
+# {"data":{"accounts":["55009640","55009641"]}}
 ```
 
 ---
@@ -108,8 +108,8 @@ def place_order(account_id, stock_code, order_type, volume, price):
 
 # 两账号同时买入同一只股票
 orders = [
-    ("25105132", "000001.SZ", 23, 100, 10.50),
-    ("25105133", "000001.SZ", 23, 200, 10.50),
+    ("55009640", "000001.SZ", 23, 100, 10.50),
+    ("55009641", "000001.SZ", 23, 200, 10.50),
 ]
 
 with concurrent.futures.ThreadPoolExecutor() as pool:

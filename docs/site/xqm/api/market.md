@@ -3,7 +3,7 @@
 ## 实时 Tick
 
 ```http
-GET /api/v1/market/tick?stock_codes=000001.SZ,600036.SH&account_id=25105132
+GET /api/v1/market/tick?stock_codes=000001.SZ,600036.SH&account_id=55009640
 X-API-Token: <token>
 ```
 
@@ -41,7 +41,7 @@ X-API-Token: <token>
 ```http
 GET /api/v1/market/history
   ?stock_code=000001.SZ
-  &account_id=25105132
+  &account_id=55009640
   &period=1d
   &start_time=20260101
   &end_time=20260411
@@ -93,7 +93,7 @@ X-API-Token: <token>
 
 ```json
 {
-  "account_id": "25105132",
+  "account_id": "55009640",
   "stock_code": "000001.SZ",
   "period": "1d",
   "start_time": "20260101",

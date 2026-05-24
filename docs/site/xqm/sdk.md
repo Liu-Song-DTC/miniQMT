@@ -11,7 +11,7 @@ from xtquant_manager.client import XtQuantClient, ClientConfig, XtDataAdapter
 ```python
 client = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105132",
+    account_id="55009640",
     api_token="",          # 无 Token 时留空
     timeout=5.0,
     max_retries=2,

@@ -18,7 +18,7 @@
   "ssl_keyfile": "certs/server.key",
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "55009640",
       "qmt_path": "C:/QMT/userdata_mini"
     }
   ]
@@ -41,7 +41,7 @@ from xtquant_manager.client import XtQuantClient, ClientConfig
 
 client = XtQuantClient(config=ClientConfig(
     base_url="https://192.168.1.100:8888",
-    account_id="25105132",
+    account_id="55009640",
     api_token="your-secret-token-here",
     verify_ssl=False,        # 自签证书跳过验证
     # ca_cert="certs/ca.crt" # 或指定 CA 证书验证
@@ -58,5 +58,5 @@ TOKEN="your-secret-token-here"
 
 # 跳过自签证书验证
 curl -k -H "X-API-Token: $TOKEN" $BASE/health
-curl -k -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/positions
+curl -k -H "X-API-Token: $TOKEN" $BASE/accounts/55009640/positions
 ```

@@ -15,6 +15,7 @@ from .manager import XtQuantManager
 from .health_monitor import HealthMonitor
 from .security import SecurityConfig
 from .server import create_app
+from .stop_profit import StopProfitMonitor, StopProfitConfig
 
 try:
     from logger import get_logger
@@ -43,6 +44,9 @@ class XtQuantServerConfig:
         # 健康监控配置
         health_check_interval: float = 30.0,
         reconnect_cooldown: float = 60.0,
+        # 止盈止损监控配置
+        enable_stop_profit: bool = True,
+        stop_loss_ratio: float = -0.075,
     ):
         self.host = host
         self.port = port
@@ -57,6 +61,9 @@ class XtQuantServerConfig:
             enable_hmac=enable_hmac,
             hmac_secret=hmac_secret,
         )
+        # 止盈止损配置
+        self.enable_stop_profit = enable_stop_profit
+        self.stop_loss_ratio = stop_loss_ratio
 
     @property
     def use_tls(self) -> bool:
@@ -87,6 +94,7 @@ class XtQuantServer:
         self._server = None
         self._server_thread: Optional[threading.Thread] = None
         self._health_monitor: Optional[HealthMonitor] = None
+        self._stop_profit_monitor: Optional[StopProfitMonitor] = None
         self._running = False
 
     def start(self, blocking: bool = False) -> None:
@@ -107,6 +115,18 @@ class XtQuantServer:
             reconnect_cooldown=self.config.reconnect_cooldown,
         )
         self._health_monitor.start()
+
+        # 启动止盈止损监控
+        if self.config.enable_stop_profit:
+            sp_cfg = StopProfitConfig(
+                enabled=True,
+                stop_loss_ratio=self.config.stop_loss_ratio,
+            )
+            self._stop_profit_monitor = StopProfitMonitor(manager, sp_cfg)
+            self._stop_profit_monitor.start()
+            # 存入 app.state 供路由访问
+            if self._app is not None:
+                self._app.state.stop_profit_monitor = self._stop_profit_monitor
 
         self._running = True
 
@@ -131,6 +151,10 @@ class XtQuantServer:
         """优雅停止服务"""
         self._running = False
 
+        # 停止止盈止损监控
+        if self._stop_profit_monitor is not None:
+            self._stop_profit_monitor.stop(timeout=timeout)
+
         # 停止健康监控
         if self._health_monitor is not None:
             self._health_monitor.stop(timeout=timeout)
@@ -154,6 +178,10 @@ class XtQuantServer:
             and self._server_thread is not None
             and self._server_thread.is_alive()
         )
+
+    @property
+    def stop_profit_monitor(self) -> Optional[StopProfitMonitor]:
+        return self._stop_profit_monitor
 
     def _run_uvicorn(self) -> None:
         """在当前线程中运行 uvicorn"""

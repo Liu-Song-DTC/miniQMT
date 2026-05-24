@@ -1,6 +1,6 @@
 # XtQuantManager
 
-**miniQMT xtquant 接口统一管理层** — 将迅投 QMT 的交易接口（xttrader）和行情接口（xtdata）封装为 HTTP RESTful API，支持多账号、自动重连和可观测性。
+**miniQMT xtquant 接口统一管理层** — 将迅投 QMT 的交易接口（xttrader）和行情接口（xtdata）封装为 HTTP RESTful API，支持多账号、自动重连、可观测性和独立止盈止损。
 
 | 痛点 | 解决方案 |
 |------|---------|
@@ -8,6 +8,7 @@
 | 断线无法自动重连 | 三级健康监控 + 指数退避自动重连 |
 | 超时保护不统一 | 全接口统一超时保护（默认 3 秒） |
 | 无可观测性 | 实时指标（延迟、错误率、P95）+ HTTP 查询 |
+| 远程部署无策略保护 | **动态止盈止损后台线程**，独立于 main.py 运行 |
 | xtquant 硬耦合 | HTTP 抽象层 + 开关，零侵入切换 |
 
 ---
@@ -42,7 +43,7 @@
 
     manager = XtQuantManager.get_instance()
     manager.register_account(AccountConfig(
-        account_id="25105132",
+        account_id="55009640",
         qmt_path="C:/QMT/userdata_mini",
     ))
     ```
@@ -61,7 +62,7 @@
   "port": 8888,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "55009640",
       "qmt_path": "C:/QMT/userdata_mini",
       "account_type": "STOCK"
     }

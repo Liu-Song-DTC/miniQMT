@@ -1,0 +1,172 @@
+// ===== 持仓相关 =====
+export interface Position {
+  stock_code: string
+  stock_name?: string
+  volume: number
+  available: number
+  cost_price: number
+  current_price: number
+  market_value: number
+  profit_ratio: number
+  profit_amount?: number
+  profit_triggered: boolean
+  highest_price: number
+  stop_loss_price: number
+  open_date: string
+  grid_session_active: boolean
+}
+
+export interface PositionMetrics {
+  total_market_value: number
+  total_profit: number
+  total_profit_ratio: number
+  position_count: number
+  stock_count: number
+}
+
+// ===== 账户相关 =====
+export interface AccountInfo {
+  id: string
+  availableBalance: number
+  maxHoldingValue: number
+  totalAssets: number
+  timestamp: string
+}
+
+// ===== 系统状态 =====
+export interface SystemStatus {
+  isMonitoring: boolean
+  enableAutoTrading: boolean
+  positionMonitorRunning: boolean
+  allowBuy: boolean
+  allowSell: boolean
+  simulationMode: boolean
+  connected: boolean
+}
+
+// ===== 配置 =====
+export interface ConfigData {
+  singleBuyAmount: number
+  firstProfitSell: number
+  firstProfitSellEnabled: boolean
+  stockGainSellPencent: number
+  firstProfitSellPencent: boolean
+  allowBuy: boolean
+  allowSell: boolean
+  stopLossBuy: number
+  stopLossBuyEnabled: boolean
+  stockStopLoss: number
+  StopLossEnabled: boolean
+  singleStockMaxPosition: number
+  totalMaxPosition: number
+  globalAllowBuySell: boolean
+  simulationMode: boolean
+}
+
+export interface ParamRange {
+  min: number
+  max: number
+}
+
+// ===== 交易记录 =====
+export interface TradeRecord {
+  stock_code: string
+  stock_name: string
+  trade_type: 'BUY' | 'SELL'
+  price: number
+  volume: number
+  trade_time: string
+  trade_id: string
+  strategy: string
+}
+
+// ===== 买卖操作 =====
+export type BuyStrategy = 'random_pool' | 'custom_stock'
+
+export interface BuyRequest {
+  strategy: BuyStrategy
+  quantity: number
+  stocks: string[]
+}
+
+// ===== 网格交易 =====
+export type RiskLevel = 'aggressive' | 'moderate' | 'conservative'
+
+export interface GridConfig {
+  stock_code: string
+  center_price: number
+  price_interval: number
+  position_ratio: number
+  callback_ratio: number
+  max_investment: number
+  max_deviation: number
+  target_profit: number
+  stop_loss: number
+  duration_days: number
+}
+
+export interface GridSession {
+  session_id: number
+  stock_code: string
+  status: 'active' | 'stopped' | 'completed'
+  center_price: number
+  current_center_price: number
+  trade_count: number
+  buy_count: number
+  sell_count: number
+  profit_ratio: number
+  deviation_ratio: number
+  start_time: string
+  end_time: string
+  stop_time?: string
+  stop_reason?: string
+}
+
+export interface RiskTemplate {
+  template_name: string
+  price_interval: number
+  position_ratio: number
+  callback_ratio: number
+  max_deviation: number
+  target_profit: number
+  stop_loss: number
+  duration_days: number
+  max_investment_ratio: number
+  description: string
+}
+
+// ===== SSE 事件 =====
+export interface SSEMessage {
+  timestamp: string
+  account_info?: {
+    available: number
+    market_value: number
+    total_asset: number
+  }
+  monitoring?: {
+    isMonitoring: boolean
+    autoTradingEnabled: boolean
+    allowBuy: boolean
+    allowSell: boolean
+    simulationMode: boolean
+  }
+  positions_update?: {
+    version: number
+    changed: boolean
+  }
+  error?: string
+}
+
+// ===== API 响应包装 =====
+export interface ApiResponse<T = any> {
+  status?: string
+  success?: boolean
+  data?: T
+  message?: string
+  error?: string
+  no_change?: boolean
+  data_version?: number
+}
+
+// ===== 后端类型 =====
+export type BackendType = 'flask' | 'xtquant' | 'auto'

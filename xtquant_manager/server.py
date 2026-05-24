@@ -465,3 +465,79 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return ApiResponse(success=True, data=m)
         except AccountNotFoundError:
             raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    # ------------------------------------------------------------------
+    # 止盈止损策略 API
+    # ------------------------------------------------------------------
+
+    @app.get(
+        "/api/v1/stop-profit/status",
+        response_model=ApiResponse,
+        tags=["止盈止损"],
+    )
+    async def stop_profit_status(request: Request):
+        """获取止盈止损监控状态和各持仓跟踪数据"""
+        mon = getattr(request.app.state, "stop_profit_monitor", None)
+        if mon is None:
+            return ApiResponse(success=True, data={"running": False, "reason": "未启用"})
+        cfg = mon.get_config()
+        return ApiResponse(success=True, data={
+            "running": mon.is_running,
+            "config": {
+                "enabled": cfg.enabled,
+                "stop_loss_ratio": cfg.stop_loss_ratio,
+                "initial_take_profit_ratio": cfg.initial_take_profit_ratio,
+                "initial_take_profit_pullback_ratio": cfg.initial_take_profit_pullback_ratio,
+                "initial_take_profit_sell_ratio": cfg.initial_take_profit_sell_ratio,
+                "monitor_interval": cfg.monitor_interval,
+                "signal_dedup_seconds": cfg.signal_dedup_seconds,
+            },
+            "positions": mon.get_states(),
+        })
+
+    @app.post(
+        "/api/v1/stop-profit/config",
+        response_model=ApiResponse,
+        tags=["止盈止损"],
+    )
+    async def stop_profit_config(request: Request):
+        """更新止盈止损配置（JSON body）"""
+        mon = getattr(request.app.state, "stop_profit_monitor", None)
+        if mon is None:
+            raise HTTPException(status_code=400, detail="止盈止损监控未启动")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        cfg = mon.get_config()
+        if "enabled" in body:
+            cfg.enabled = bool(body["enabled"])
+        if "stop_loss_ratio" in body:
+            cfg.stop_loss_ratio = float(body["stop_loss_ratio"])
+        if "initial_take_profit_ratio" in body:
+            cfg.initial_take_profit_ratio = float(body["initial_take_profit_ratio"])
+        if "initial_take_profit_pullback_ratio" in body:
+            cfg.initial_take_profit_pullback_ratio = float(body["initial_take_profit_pullback_ratio"])
+        if "initial_take_profit_sell_ratio" in body:
+            cfg.initial_take_profit_sell_ratio = float(body["initial_take_profit_sell_ratio"])
+        if "monitor_interval" in body:
+            cfg.monitor_interval = float(body["monitor_interval"])
+        mon.update_config(cfg)
+        return ApiResponse(success=True, data={"message": "配置已更新"})
+
+    @app.post(
+        "/api/v1/stop-profit/toggle",
+        response_model=ApiResponse,
+        tags=["止盈止损"],
+    )
+    async def stop_profit_toggle(request: Request, enabled: bool = True):
+        """启用/停止止盈止损监控"""
+        mon = getattr(request.app.state, "stop_profit_monitor", None)
+        if mon is None:
+            raise HTTPException(status_code=400, detail="止盈止损监控未启动，请在配置中设置 enable_stop_profit=true 并重启服务。")
+        cfg = mon.get_config()
+        cfg.enabled = enabled
+        mon.update_config(cfg)
+        return ApiResponse(success=True, data={"enabled": enabled, "message": "已启用" if enabled else "已暂停"})

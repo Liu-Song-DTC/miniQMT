@@ -7,12 +7,32 @@
 ## [Unreleased]
 
 ### Added
+- **XtQuantManager 动态止盈止损**: 网关模式下独立运行的止盈止损后台监控 (`xtquant_manager/stop_profit.py`)
+  - 直接复用 `position_manager.py` 中已验证的止损/首次止盈/动态止盈算法
+  - 信号去重（60s 窗口）+ 自动下单（实盘 xttrader 接口）
+  - API 端点：`/api/v1/stop-profit/status`、`/config`、`/toggle`
+- **web2.0 Vue3 前端**: 全新的持仓管理 Web 界面 (`web2.0/`)
+  - Vue3 + Vite + TypeScript + Tailwind CSS + Pinia 状态管理
+  - PWA 支持 (vite-plugin-pwa)，可安装到桌面离线使用
+  - 双后端兼容：Flask (web1.0 API) + xtquant_manager (v1 API)
+  - 多账户切换、连接设置面板、SSE 实时推送 + 智能轮询
+  - 止盈止损开关（与 web1.0 `firstProfitSellEnabled` 对齐）
+  - Vercel 一键部署支持 (见 `web2.0/VERCEL_DEPLOY.md`)
+- **miniqmt.bat 新增 XtQuantManager 菜单**: [d] 启动 [e] 停止 [f] 状态 [g] UI [h] 重启 [i] 日志
 - 统一文档体系：MkDocs + mkdocstrings（docstring 自动抽取）+ include-markdown（CHANGELOG 引用）+ 本地热重载 `start_docs.bat`
 - 文档构建依赖独立到 `utils/requirements-docs.txt`，不污染运行环境
 - GitHub Actions 部署工作流加 `if: false` 守门，未来开启只需删除一行
 
 ### Changed
 - `docs/site/` 作为唯一 markdown 源，根目录 `CHANGELOG.md` 作为变更日志唯一真源
+- web2.0 配置百分比字段统一精度到 2 位小数，金额字段整数显示
+- 界面全面视觉升级：渐变背景、毛玻璃顶栏、分层阴影卡片、动画模态框、盈亏色条
+
+### Security
+- **隐私安全加固**: `Methods.py` 硬编码 Pushplus Token 改为 `PUSHPLUS_TOKEN` 环境变量
+- `web2.0/src/api/accounts.ts` 默认账户去真实 ID，改为空占位符
+- `.gitignore` 新增 `web2.0/dist/` 和 `web2.0/node_modules/`
+- 文档示例中的真实账号 ID 替换为 `55009640` 等虚构 ID
 
 ---
 

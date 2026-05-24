@@ -11,6 +11,10 @@ miniQMT 总控制台后端（被 miniqmt.bat 调用）。
   install-deps               运行 pip install -r utils/requirements.txt
   check-config               校验 account_config.json 的合法性与 qmt_path 存在性
   git-pull                   拉取最新代码
+  xqm-start                  启动 xtquant_manager 网关
+  xqm-stop                   停止 xtquant_manager 网关
+  xqm-status                 查看 xtquant_manager 运行状态
+  xqm-ui                     在浏览器打开 web2.0/1.0 界面
 
 进程跟踪:
   main.py 启动时自己把 PID 写到 data_<account_id>/pid.txt；
@@ -496,6 +500,216 @@ def cmd_git_pull(_args) -> int:
     return rc
 
 
+# ============================================================================
+# XtQuantManager 网关管理
+# ============================================================================
+XQM_DEFAULT_HOST = "127.0.0.1"
+XQM_DEFAULT_PORT = 8888
+XQM_MODULE = "xtquant_manager"
+
+
+def _xqm_config_path() -> Path:
+    local = PROJECT_ROOT / "xtquant_manager_config.json"
+    if local.exists():
+        return local
+    return PROJECT_ROOT / "xtquant_manager" / "standalone_config.py"
+
+
+def _xqm_pid_file() -> Path:
+    return PROJECT_ROOT / "data" / ".xqm_manager.pid"
+
+
+def _xqm_read_pid() -> int | None:
+    p = _xqm_pid_file()
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text(encoding="ascii").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def _xqm_is_port_in_use(port: int = XQM_DEFAULT_PORT) -> bool:
+    try:
+        r = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+        )
+        return any(f":{port} " in line and "LISTENING" in line for line in r.stdout.splitlines())
+    except Exception:
+        return False
+
+
+def _xqm_health_check(host: str = XQM_DEFAULT_HOST, port: int = XQM_DEFAULT_PORT) -> bool:
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://{host}:{port}/api/v1/health", method="GET")
+        resp = urllib.request.urlopen(req, timeout=3)
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def cmd_xqm_start(_args) -> int:
+    host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
+    port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
+
+    if _xqm_is_port_in_use(port):
+        if _xqm_health_check(host, port):
+            print(f"  ✓ xtquant_manager 已在运行: http://{host}:{port}")
+            return 0
+        else:
+            print(f"  ⚠ 端口 {port} 被占用但健康检查失败，尝试清理...")
+            pid = _xqm_read_pid()
+            if pid and pid_alive(pid):
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+                time.sleep(1)
+
+    config_path = _xqm_config_path()
+    config_arg = f"--config {config_path}" if config_path.name == "xtquant_manager_config.json" else ""
+
+    data_dir = PROJECT_ROOT / "data"
+    data_dir.mkdir(exist_ok=True)
+
+    creationflags = 0x00000010
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", XQM_MODULE, "--host", host, "--port", str(port)]
+            + (["--config", str(config_path)] if config_arg else []),
+            cwd=str(PROJECT_ROOT),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    except OSError as e:
+        print(f"  ✗ 启动 xtquant_manager 失败: {e}")
+        return 1
+
+    try:
+        _xqm_pid_file().write_text(str(proc.pid), encoding="ascii")
+    except OSError:
+        pass
+
+    print(f"  启动中 (PID={proc.pid})，等待服务就绪...")
+    for _ in range(15):
+        time.sleep(1)
+        if _xqm_health_check(host, port):
+            print(f"  ✓ xtquant_manager 已启动: http://{host}:{port}")
+            return 0
+    print(f"  ⚠ 服务已启动但健康检查超时，稍后请访问 http://{host}:{port}/api/v1/health 确认")
+    return 0
+
+
+def cmd_xqm_stop(_args) -> int:
+    host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
+    port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
+
+    pid = _xqm_read_pid()
+    if pid and pid_alive(pid):
+        print(f"  停止 xtquant_manager (PID={pid})...")
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+        time.sleep(0.5)
+
+    if _xqm_is_port_in_use(port):
+        print(f"  清理端口 {port} 上的残留进程...")
+        r = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            if f":{port} " in line and "LISTENING" in line:
+                parts = line.split()
+                if len(parts) >= 5:
+                    subprocess.run(["taskkill", "/PID", parts[-1], "/F"], capture_output=True)
+
+    _xqm_pid_file().unlink(missing_ok=True)
+
+    if not _xqm_is_port_in_use(port):
+        print("  ✓ xtquant_manager 已停止")
+    else:
+        print("  ⚠ 停止失败，请手动检查")
+    return 0
+
+
+def cmd_xqm_status(_args) -> int:
+    host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
+    port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
+
+    print("=" * 48)
+    print("  XtQuantManager 状态")
+    print("=" * 48)
+    print()
+
+    pid = _xqm_read_pid()
+    port_used = _xqm_is_port_in_use(port)
+    healthy = _xqm_health_check(host, port)
+
+    if pid:
+        print(f"  PID      : {pid} {'(存活)' if pid_alive(pid) else '(已失效)'}")
+    else:
+        print("  PID      : (未记录)")
+    print(f"  端口     : {port} {'(监听中)' if port_used else '(空闲)'}")
+    print(f"  健康检查 : {'✓ 通过' if healthy else ('✗ 失败' if port_used else '—')}")
+    print(f"  地址     : http://{host}:{port}")
+
+    if healthy:
+        import urllib.request, json
+        try:
+            req = urllib.request.Request(f"http://{host}:{port}/api/v1/health")
+            data = json.loads(urllib.request.urlopen(req, timeout=3).read())
+            acc_info = data.get("data", {})
+            total = acc_info.get("total", 0)
+            h_count = acc_info.get("healthy", 0)
+            print(f"  账号     : {total} 个注册, {h_count} 个健康")
+        except Exception:
+            pass
+
+    config_path = _xqm_config_path()
+    print(f"  配置文件 : {config_path} {'(存在)' if config_path.exists() else '(缺失)'}")
+    return 0
+
+
+def cmd_xqm_ui(_args) -> int:
+    import webbrowser
+
+    host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
+    port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
+
+    web2_dist = PROJECT_ROOT / "web2.0" / "dist" / "index.html"
+    web1_index = PROJECT_ROOT / "web1.0" / "index.html"
+
+    if web2_dist.exists():
+        url = web2_dist.as_uri()
+        print(f"  打开 web2.0: {url}")
+        webbrowser.open(url)
+        print()
+        print("  提示: 如需连接远程 QMT 服务，请在页面中点击齿轮 ⚙ 图标设置后端地址。")
+        print(f"  本地 xtquant_manager 网关: http://{host}:{port}")
+    elif web1_index.exists():
+        url = web1_index.as_uri()
+        print(f"  web2.0 未构建，打开 web1.0: {url}")
+        webbrowser.open(url)
+    else:
+        print("  未找到 web 界面文件。请先构建 web2.0: cd web2.0 && npm run build")
+
+    return 0
+
+
+def cmd_xqm_logs(_args) -> int:
+    """查看 xtquant_manager 最近日志（读取 logs/xqm_manager.log 尾部）。"""
+    log_file = PROJECT_ROOT / "logs" / "xqm_manager.log"
+    if not log_file.exists():
+        print("  日志文件不存在: logs/xqm_manager.log")
+        print("  启动 xtquant_manager 服务后会自动生成日志")
+        return 0
+    try:
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        tail = lines[-40:]  # 最后 40 行
+        print(f"  日志文件: {log_file}")
+        print(f"  共 {len(lines)} 行, 显示最后 {len(tail)} 行")
+        print("=" * 64)
+        for line in tail:
+            print(f"  {line}")
+    except Exception as e:
+        print(f"  读取日志失败: {e}")
+    return 0
+
+
 def cmd_menu(_args) -> int:
     """交互式中文菜单循环（由 miniqmt.bat 启动）。
 
@@ -544,11 +758,19 @@ def cmd_menu(_args) -> int:
         print("   [a] 停止所有账号 (优雅, 30s 超时)")
         print("   [b] 停止指定账号 (优雅)")
         print("   [c] 强制停止所有账号 (立即 taskkill)")
+        print()
+        print("  [XtQuantManager 网关]")
+        print("   [d] 启动 xtquant_manager 服务")
+        print("   [e] 停止 xtquant_manager 服务")
+        print("   [f] 查看 xtquant_manager 状态")
+        print("   [g] 打开 web2.0 UI")
+        print("   [h] 重启 xtquant_manager 服务")
+        print("   [i] 查看 xtquant_manager 实时日志")
         print(DASH)
         print("   [0] 退出")
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-c]: ").lower()
+        choice = ask("请选择 [0-9, a-i]: ").lower()
 
         if choice == "0":
             print("\n再见!")
@@ -637,6 +859,39 @@ def cmd_menu(_args) -> int:
                 print("已取消。")
             pause_return()
 
+        # ---- XtQuantManager 网关 ----
+        elif choice == "d":
+            print()
+            cmd_xqm_start(None)
+            pause_return()
+
+        elif choice == "e":
+            print()
+            cmd_xqm_stop(None)
+            pause_return()
+
+        elif choice == "f":
+            print()
+            cmd_xqm_status(None)
+            pause_return()
+
+        elif choice == "g":
+            print()
+            cmd_xqm_ui(None)
+            pause_return()
+
+        elif choice == "h":
+            print("\n[重启 xtquant_manager]\n")
+            cmd_xqm_stop(None)
+            time.sleep(2)
+            cmd_xqm_start(None)
+            pause_return()
+
+        elif choice == "i":
+            print()
+            cmd_xqm_logs(None)
+            pause_return()
+
         else:
             print(f"\n[警告] 无效选择: {choice!r}")
             time.sleep(1)
@@ -686,6 +941,11 @@ def main() -> int:
     sub.add_parser("install-deps")
     sub.add_parser("check-config")
     sub.add_parser("git-pull")
+    sub.add_parser("xqm-start")
+    sub.add_parser("xqm-stop")
+    sub.add_parser("xqm-status")
+    sub.add_parser("xqm-ui")
+    sub.add_parser("xqm-log")
 
     args = parser.parse_args()
     return {
@@ -698,6 +958,11 @@ def main() -> int:
         "install-deps":  cmd_install_deps,
         "check-config":  cmd_check_config,
         "git-pull":      cmd_git_pull,
+        "xqm-start":     cmd_xqm_start,
+        "xqm-stop":      cmd_xqm_stop,
+        "xqm-status":    cmd_xqm_status,
+        "xqm-ui":        cmd_xqm_ui,
+        "xqm-log":       cmd_xqm_logs,
     }[args.cmd](args)
 
 

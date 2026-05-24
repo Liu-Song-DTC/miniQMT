@@ -1,0 +1,127 @@
+import { apiGet, apiPost } from './adapter'
+
+export async function getStatus() {
+  const r = await apiGet('/api/status')
+  if (!r || r.status !== 'success') return null
+  return { account: r.account, settings: r.settings, isMonitoring: r.isMonitoring }
+}
+
+export async function getConfig() {
+  const r = await apiGet('/api/config')
+  if (!r || r.status !== 'success') return null
+  return { data: r.data, ranges: r.ranges }
+}
+
+export async function getPositions(version = -1) {
+  const r = await apiGet(`/api/positions?version=${version}`)
+  if (!r || r.status !== 'success') return null
+  return {
+    positions: r.data?.positions || [],
+    metrics: r.data?.metrics || {},
+    positionsAll: r.data?.positions_all || [],
+    version: r.data_version || 0,
+    noChange: r.no_change || false,
+  }
+}
+
+export async function getPositionsAll(version = 0) {
+  const r = await apiGet(`/api/positions-all?version=${version}`)
+  if (!r || r.status !== 'success') return null
+  return { data: r.data || [], version: r.data_version || 0, noChange: r.no_change || false }
+}
+
+export async function getTradeRecords() {
+  const r = await apiGet('/api/trade-records')
+  if (!r || r.status !== 'success') return []
+  return r.data || []
+}
+
+export async function getStockPool() {
+  const r = await apiGet('/api/stock_pool/list')
+  if (!r || r.status !== 'success') return []
+  return r.data || []
+}
+
+export async function getConnectionStatus() {
+  const r = await apiGet('/api/connection/status')
+  if (!r || r.status !== 'success') return false
+  return r.connected
+}
+
+export async function saveConfig(data: any) {
+  const r = await apiPost('/api/config/save', data)
+  return r?.status === 'success'
+}
+
+export async function toggleMonitor(start: boolean) {
+  const r = await apiPost(start ? '/api/monitor/start' : '/api/monitor/stop')
+  return r?.status === 'success'
+}
+
+export async function executeBuy(strategy: string, quantity: number, stocks: string[], configData?: any) {
+  const r = await apiPost('/api/actions/execute_buy', { strategy, quantity, stocks, ...(configData || {}) })
+  return { success: r?.status === 'success', message: r?.message || r?.error || '' }
+}
+
+export async function clearLogs() {
+  const r = await apiPost('/api/logs/clear')
+  return r?.status === 'success'
+}
+
+export async function clearBuySellData() {
+  const r = await apiPost('/api/data/clear_buysell')
+  return r?.status === 'success'
+}
+
+export async function importData() {
+  const r = await apiPost('/api/data/import')
+  return r?.status === 'success'
+}
+
+export async function initHoldings(configData?: any) {
+  const r = await apiPost('/api/holdings/init', configData || {})
+  return r?.status === 'success'
+}
+
+// ---- 网格交易 API ----
+
+export async function getGridSession(stockCode: string) {
+  return apiGet(`/api/grid/session/${stockCode}`)
+}
+
+export async function getAllGridSessions() {
+  const r = await apiGet('/api/grid/sessions')
+  if (!r?.success) return []
+  return r.sessions || []
+}
+
+export async function startGrid(params: any) {
+  const { stock_code, duration_days, risk_level, ...config } = params
+  return apiPost('/api/grid/start', {
+    stock_code,
+    center_price: params.center_price,
+    duration_days,
+    risk_level: risk_level || 'moderate',
+    config,
+  })
+}
+
+export async function stopGrid(sessionId: number) {
+  return apiPost(`/api/grid/stop/${sessionId}`)
+}
+
+export async function getGridRiskTemplates() {
+  const r = await apiGet('/api/grid/risk-templates')
+  if (!r?.success) return {}
+  return r.templates || {}
+}
+
+export async function getGridCheckboxState(stockCode: string) {
+  return apiGet(`/api/grid/checkbox-state/${stockCode}`)
+}
+
+export async function getGridTemplates() {
+  const r = await apiGet('/api/grid/templates')
+  if (!r?.success) return []
+  return r.templates || []
+}

@@ -29,7 +29,7 @@ X-API-Token: your-secret-token
 {
   "success": false,
   "data": null,
-  "error": "账号不存在: 25105132"
+  "error": "账号不存在: 55009640"
 }
 ```
 
@@ -55,3 +55,4 @@ X-API-Token: your-secret-token
 | [交易操作](trading.md) | `/api/v1/accounts/{id}/orders` | 下单、撤单、持仓、资产、委托、成交 |
 | [行情接口](market.md) | `/api/v1/market` | 实时 Tick、历史行情、下载数据 |
 | [可观测性](observability.md) | `/api/v1/health` `/api/v1/metrics` | 健康检查、调用指标 |
+| **止盈止损** | `/api/v1/stop-profit` | **状态查询、配置更新、启停切换** |

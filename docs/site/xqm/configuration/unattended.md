@@ -15,7 +15,7 @@
   "heartbeat_interval": 1800.0,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "55009640",
       "qmt_path": "C:/QMT/userdata_mini",
       "reconnect_base_wait": 60.0,
       "max_reconnect_attempts": 5

@@ -19,7 +19,7 @@ curl -s http://127.0.0.1:8888/api/v1/health | python -m json.tool
 
 # 查看延迟分布
 curl -s -H "X-API-Token: $TOKEN" \
-  http://127.0.0.1:8888/api/v1/metrics/25105132 \
+  http://127.0.0.1:8888/api/v1/metrics/55009640 \
   | python -c "
 import sys, json
 d = json.load(sys.stdin)['data']

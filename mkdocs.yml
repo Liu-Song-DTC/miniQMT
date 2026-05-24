@@ -61,6 +61,7 @@ watch:
   - grid_validation.py
   - position_manager.py
   - xtquant_manager
+  - xtquant_manager/stop_profit.py
   - CHANGELOG.md
 
 markdown_extensions:
@@ -138,6 +139,7 @@ nav:
       - manager: api/xqm-manager.md
       - health_monitor: api/xqm-health.md
       - server: api/xqm-server.md
+      - stop_profit: api/xqm-stop-profit.md
 
   - 变更日志: changelog.md
 

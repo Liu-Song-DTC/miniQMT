@@ -71,6 +71,14 @@ class StandaloneConfig:
     # 服务看门狗
     watchdog_interval: float = 10.0
     watchdog_restart_cooldown: float = 30.0
+    # 止盈止损监控（默认启用，参数与 config.py 保持一致）
+    enable_stop_profit: bool = True
+    stop_loss_ratio: float = -0.075
+    initial_take_profit_ratio: float = 0.06
+    initial_take_profit_pullback_ratio: float = 0.005
+    initial_take_profit_sell_ratio: float = 0.6
+    stop_profit_interval: float = 3.0
+    stop_profit_dedup_seconds: float = 60.0
     # 心跳日志
     heartbeat_interval: float = 1800.0
     # 账号列表
@@ -151,6 +159,13 @@ def _parse_config(data: Dict[str, Any]) -> StandaloneConfig:
         reconnect_cooldown=data.get("reconnect_cooldown", defaults.reconnect_cooldown),
         watchdog_interval=data.get("watchdog_interval", defaults.watchdog_interval),
         watchdog_restart_cooldown=data.get("watchdog_restart_cooldown", defaults.watchdog_restart_cooldown),
+        enable_stop_profit=data.get("enable_stop_profit", defaults.enable_stop_profit),
+        stop_loss_ratio=data.get("stop_loss_ratio", defaults.stop_loss_ratio),
+        initial_take_profit_ratio=data.get("initial_take_profit_ratio", defaults.initial_take_profit_ratio),
+        initial_take_profit_pullback_ratio=data.get("initial_take_profit_pullback_ratio", defaults.initial_take_profit_pullback_ratio),
+        initial_take_profit_sell_ratio=data.get("initial_take_profit_sell_ratio", defaults.initial_take_profit_sell_ratio),
+        stop_profit_interval=data.get("stop_profit_interval", defaults.stop_profit_interval),
+        stop_profit_dedup_seconds=data.get("stop_profit_dedup_seconds", defaults.stop_profit_dedup_seconds),
         heartbeat_interval=data.get("heartbeat_interval", defaults.heartbeat_interval),
         accounts=accounts,
     )
