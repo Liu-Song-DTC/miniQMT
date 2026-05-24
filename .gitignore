@@ -82,6 +82,10 @@ logs/
 /*_TEST_REPORT.md
 /test_*.py
 
+# 测试报告（自动生成）
+test/*_report.json
+test/*_report.md
+
 # 中间过程的临时文档(不纳入版本管理)
 docs/*
 !docs/plans/
