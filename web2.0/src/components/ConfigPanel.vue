@@ -7,17 +7,16 @@ interface FieldDef {
   label: string
   key: string
   suffix?: string
-  checkboxKey?: string
   step?: number
   decimals?: number
 }
 
 const NUMERIC_FIELDS: FieldDef[] = [
   { label: '单次买入金额', key: 'singleBuyAmount', suffix: '元', step: 1, decimals: 0 },
-  { label: '首次止盈阈值', key: 'firstProfitSell', suffix: '%', checkboxKey: 'firstProfitSellEnabled', step: 0.01, decimals: 2 },
-  { label: '首次卖出比例', key: 'stockGainSellPencent', suffix: '%', checkboxKey: 'firstProfitSellPencent', step: 0.01, decimals: 2 },
-  { label: '补仓跌幅阈值', key: 'stopLossBuy', suffix: '%', checkboxKey: 'stopLossBuyEnabled', step: 0.01, decimals: 2 },
-  { label: '止损比例', key: 'stockStopLoss', suffix: '%', checkboxKey: 'StopLossEnabled', step: 0.01, decimals: 2 },
+  { label: '首次止盈阈值', key: 'firstProfitSell', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '首次卖出比例', key: 'stockGainSellPencent', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '补仓跌幅阈值', key: 'stopLossBuy', suffix: '%', step: 0.01, decimals: 2 },
+  { label: '止损比例', key: 'stockStopLoss', suffix: '%', step: 0.01, decimals: 2 },
   { label: '单股最大持仓', key: 'singleStockMaxPosition', suffix: '元', step: 1, decimals: 0 },
   { label: '最大总持仓', key: 'totalMaxPosition', suffix: '元', step: 1, decimals: 0 },
 ]
@@ -31,11 +30,6 @@ function displayValue(field: FieldDef): string | number {
 function onFieldChange(field: FieldDef, raw: string) {
   const v = parseFloat(raw)
   ;(store.config as any)[field.key] = isNaN(v) ? 0 : v
-}
-
-function onBoolChange(key: string, checked: boolean) {
-  ;(store.config as any)[key] = checked
-  store.saveConfig({ [key]: checked } as any)
 }
 </script>
 
@@ -52,11 +46,6 @@ function onBoolChange(key: string, checked: boolean) {
         <div v-for="f in NUMERIC_FIELDS" :key="f.key" class="space-y-1">
           <label class="label-text">{{ f.label }}</label>
           <div class="flex items-center gap-1.5">
-            <input v-if="f.checkboxKey"
-              type="checkbox"
-              :checked="(store.config as any)[f.checkboxKey]"
-              @change="onBoolChange(f.checkboxKey, ($event.target as HTMLInputElement).checked)"
-              class="w-3.5 h-3.5 rounded border-slate-300 text-primary-600 focus:ring-primary-500 flex-shrink-0" />
             <input
               type="number"
               :value="displayValue(f)"
