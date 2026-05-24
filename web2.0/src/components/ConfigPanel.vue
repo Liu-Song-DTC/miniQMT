@@ -42,7 +42,7 @@ function onChange(key: string, raw: string) {
             :value="displayValue(f.key)"
             @input="onChange(f.key, ($event.target as HTMLInputElement).value)"
             :step="f.step"
-            class="input-field !py-1 !text-xs w-full"
+            class="input-field !py-1 !text-xs w-[90px] flex-shrink-0"
           />
           <span class="text-[11px] text-slate-400 w-5 flex-shrink-0">{{ f.suffix }}</span>
         </div>
