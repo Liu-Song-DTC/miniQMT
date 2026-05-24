@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/site/**"
       - "mkdocs.yml"
+      - "CHANGELOG.md"
   release:
     types: [published]
   workflow_dispatch:
