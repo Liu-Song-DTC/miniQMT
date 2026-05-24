@@ -116,7 +116,7 @@ def cmd_list(_args) -> int:
     return 0
 
 
-def cmd_start(args) -> int:
+def cmd_start(args, web2: bool = False) -> int:
     accounts = filter_accounts(load_accounts(), args.accounts)
     if not accounts:
         print("[错误] 没有可启动的账号")
@@ -731,6 +731,44 @@ def cmd_menu(_args) -> int:
         except (KeyboardInterrupt, EOFError):
             return ""
 
+    def _start_with_web_mode(simulation: bool, all_accounts: bool):
+        """启动账号，先询问 Web 模式。"""
+        mode_label = "实盘" if not simulation else "模拟"
+        scope_label = "所有账号" if all_accounts else "指定账号"
+        print(f"\n[启动{scope_label} - {mode_label}模式]\n")
+        web2 = ask("Web 界面 [1=web1.0 (Flask :5000起), 2=web2.0 (xtquant_manager :8880)] (默认 1): ") == "2"
+        print()
+        _do_start(None, simulation=simulation, web2=web2)
+
+    def _do_start(accounts_str: str | None, simulation: bool, web2: bool):
+        """实际启动逻辑。web2 模式下先启动 xtquant_manager。"""
+        if web2:
+            print("—— 步骤 1/2: 启动 xtquant_manager (web2.0 界面) ——")
+            # 如果已经在运行就跳过启动
+            if not _xqm_is_port_in_use(8880):
+                cmd_xqm_start(argparse.Namespace())
+            else:
+                if _xqm_health_check("127.0.0.1", 8880):
+                    print("  ✓ xtquant_manager 已在运行")
+                else:
+                    print("  ⚠ xtquant_manager 端口被占用但健康检查失败，尝试重启...")
+                    cmd_xqm_stop(argparse.Namespace())
+                    time.sleep(1)
+                    cmd_xqm_start(argparse.Namespace())
+            print()
+            print("—— 步骤 2/2: 启动交易策略 (main.py) ——")
+
+        cmd_start(argparse.Namespace(accounts=accounts_str, simulation=simulation))
+
+        if web2:
+            print()
+            print("=" * 48)
+            print("  web2.0 访问地址: http://127.0.0.1:8880")
+            print("  API 文档:        http://127.0.0.1:8880/docs")
+            print("=" * 48)
+
+        pause_return()
+
     while True:
         os.system("cls" if sys.platform == "win32" else "clear")
         print(SEPARATOR)
@@ -750,9 +788,9 @@ def cmd_menu(_args) -> int:
         print("   [6] 查看运行状态")
         print()
         print("  [日常运行 - 启动]")
-        print("   [7] 启动所有账号 (实盘模式)")
-        print("   [8] 启动所有账号 (模拟模式)")
-        print("   [9] 启动指定账号")
+        print("   [7] 启动所有账号 (实盘，启动时选择 web1.0/web2.0)")
+        print("   [8] 启动所有账号 (模拟，启动时选择 web1.0/web2.0)")
+        print("   [9] 启动指定账号 (选择实盘/模拟 + web1.0/web2.0)")
         print()
         print("  [日常运行 - 停止]")
         print("   [a] 停止所有账号 (优雅, 30s 超时)")
@@ -810,14 +848,12 @@ def cmd_menu(_args) -> int:
 
         # ---- 启动 ----
         elif choice == "7":
-            print("\n[启动所有账号 - 实盘模式]\n")
-            cmd_start(argparse.Namespace(accounts=None, simulation=False))
-            pause_return()
+            print()
+            _start_with_web_mode(simulation=False, all_accounts=True)
 
         elif choice == "8":
-            print("\n[启动所有账号 - 模拟模式]\n")
-            cmd_start(argparse.Namespace(accounts=None, simulation=True))
-            pause_return()
+            print()
+            _start_with_web_mode(simulation=True, all_accounts=True)
 
         elif choice == "9":
             print()
@@ -826,11 +862,10 @@ def cmd_menu(_args) -> int:
             acc = ask("请输入要启动的账号 ID (多个用英文逗号分隔): ")
             if not acc:
                 continue
-            mode = ask("模式 [1=实盘, 2=模拟] (默认 1): ")
-            sim = (mode == "2")
+            sim = ask("模式 [1=实盘, 2=模拟] (默认 1): ") == "2"
+            web2 = ask("Web 界面 [1=web1.0 (Flask), 2=web2.0 (xtquant_manager)] (默认 1): ") == "2"
             print()
-            cmd_start(argparse.Namespace(accounts=acc, simulation=sim))
-            pause_return()
+            _do_start(acc, simulation=sim, web2=web2)
 
         # ---- 停止 ----
         elif choice == "a":
