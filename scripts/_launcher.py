@@ -736,7 +736,7 @@ def cmd_menu(_args) -> int:
         mode_label = "实盘" if not simulation else "模拟"
         scope_label = "所有账号" if all_accounts else "指定账号"
         print(f"\n[启动{scope_label} - {mode_label}模式]\n")
-        web2 = ask("Web 界面 [1=web1.0 (Flask :5000起), 2=web2.0 (xtquant_manager :8880)] (默认 1): ") == "2"
+        web2 = ask("Web 界面 [1=web1.0 (Flask :5000起), 2=web2.0 (xtquant_manager :8888)] (默认 1): ") == "2"
         print()
         _do_start(None, simulation=simulation, web2=web2)
 
@@ -745,10 +745,10 @@ def cmd_menu(_args) -> int:
         if web2:
             print("—— 步骤 1/2: 启动 xtquant_manager (web2.0 界面) ——")
             # 如果已经在运行就跳过启动
-            if not _xqm_is_port_in_use(8880):
+            if not _xqm_is_port_in_use(XQM_DEFAULT_PORT):
                 cmd_xqm_start(argparse.Namespace())
             else:
-                if _xqm_health_check("127.0.0.1", 8880):
+                if _xqm_health_check(XQM_DEFAULT_HOST, XQM_DEFAULT_PORT):
                     print("  ✓ xtquant_manager 已在运行")
                 else:
                     print("  ⚠ xtquant_manager 端口被占用但健康检查失败，尝试重启...")
@@ -763,8 +763,8 @@ def cmd_menu(_args) -> int:
         if web2:
             print()
             print("=" * 48)
-            print("  web2.0 访问地址: http://127.0.0.1:8880")
-            print("  API 文档:        http://127.0.0.1:8880/docs")
+            print(f"  web2.0 访问地址: http://{XQM_DEFAULT_HOST}:{XQM_DEFAULT_PORT}")
+            print(f"  API 文档:        http://{XQM_DEFAULT_HOST}:{XQM_DEFAULT_PORT}/docs")
             print("=" * 48)
 
         pause_return()
