@@ -34,9 +34,9 @@ function onChange(key: string, raw: string) {
       </button>
     </div>
     <div class="card-body !py-3">
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
         <div v-for="f in FIELDS" :key="f.key" class="flex items-center gap-1.5">
-          <label class="text-[11px] text-slate-500 whitespace-nowrap w-[84px] text-right flex-shrink-0">{{ f.label }}</label>
+          <label class="text-[11px] text-slate-500 whitespace-nowrap w-[78px] text-right flex-shrink-0">{{ f.label }}</label>
           <input
             type="number"
             :value="displayValue(f.key)"

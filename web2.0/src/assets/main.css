@@ -97,6 +97,9 @@
            transition-all duration-150;
   }
   .input-field:hover:not(:disabled):not(:focus) { border-color: #cbd5e1; }
+  .input-field[type="number"] { -moz-appearance: textfield; }
+  .input-field[type="number"]::-webkit-inner-spin-button,
+  .input-field[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .label-text { @apply block text-xs font-medium text-slate-500 mb-1.5 tracking-wide; }
   select.input-field { @apply appearance-none pr-8; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 
