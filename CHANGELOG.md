@@ -72,6 +72,7 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/V2.0.0-Beta...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/weihong-su/miniQMT/compare/V2.0.0-Beta...v3.0.0
 [2.0.0-Beta]: https://github.com/weihong-su/miniQMT/compare/V1.0.0...V2.0.0-Beta
 [1.0.0]: https://github.com/weihong-su/miniQMT/releases/tag/V1.0.0
