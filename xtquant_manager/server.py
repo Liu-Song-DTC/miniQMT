@@ -8,7 +8,8 @@ from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
 
 from .exceptions import (
@@ -80,7 +81,51 @@ def create_app(security_config: Optional[SecurityConfig] = None) -> FastAPI:
     # 注册路由
     _register_routes(app, security_config)
 
+    # —— 托管 web2.0 前端（如果已构建） ——
+    _mount_web_ui(app)
+
     return app
+
+
+def _mount_web_ui(app: FastAPI) -> None:
+    """将 web2.0/dist/ 挂载为静态站点（如果存在）。
+    用户启动 xtquant_manager 后可直接访问 http://host:port/ 使用 web2.0 界面。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    dist_dir = root / "web2.0" / "dist"
+
+    if not dist_dir.is_dir() or not (dist_dir / "index.html").exists():
+        logger.info("web2.0 未构建，跳过 web2.0 界面。运行 cd web2.0 && npm run build 后可用。")
+        return
+
+    # 挂载静态资源（JS/CSS/图标等）
+    assets_dir = dist_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="web2_assets")
+
+    # SPA fallback: 非 /api/ 路径返回 index.html（API 路由已先注册，优先级更高）
+    import re
+    _api_pattern = re.compile(r"^/api/")
+    _asset_pattern = re.compile(r"^/assets/")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if _api_pattern.match(f"/{full_path}"):
+            raise HTTPException(status_code=404, detail="Not found")
+        if _asset_pattern.match(f"/{full_path}"):
+            raise HTTPException(status_code=404, detail="Not found")
+        file_path = dist_dir / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(dist_dir / "index.html"))
+
+    # 首页
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(str(dist_dir / "index.html"))
+
+    logger.info("web2.0 界面已就绪 — 访问根路径即可使用")
 
 
 def _make_token_verifier(security_config: SecurityConfig):
