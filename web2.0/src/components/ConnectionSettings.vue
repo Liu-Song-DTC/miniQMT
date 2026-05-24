@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { loadConnection, saveConnection, checkSecurityWarning, isSecureContext, isRemoteUrl } from '../api/accounts'
+import { loadConnection, saveConnection, checkSecurityWarning, isSecureContext } from '../api/accounts'
 import type { ConnectionSettings } from '../api/accounts'
 
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -17,33 +17,41 @@ function save() {
 
 async function testConnection() {
   testing.value = true; testResult.value = ''; save()
+  const mode = form.value.mode
   try {
-    const mode = form.value.mode
-    let base = form.value.xtquantUrl
-    if (!base && mode !== 'flask') {
-      base = window.location.origin
+    let url: string
+    if (mode === 'flask') {
+      url = '/api/status'
+    } else {
+      const base = form.value.xtquantUrl || window.location.origin
+      url = `${base}/api/v1/health`
     }
-    if (!base) {
-      testResult.value = '✗ 请先填写网关地址，或切换到直连模式'
-      testing.value = false; return
-    }
-    const url = `${base}/api/v1/health`
     const headers: Record<string, string> = {}
     if (form.value.apiToken) headers['X-API-Token'] = form.value.apiToken
     const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 8000)
     const resp = await fetch(url, { headers, signal: ctrl.signal, mode: 'cors' })
+    const ct = resp.headers.get('content-type') || ''
+    if (!ct.includes('application/json')) {
+      testResult.value = `✗ 服务器返回非 JSON (HTTP ${resp.status})，请检查地址是否正确`
+      testing.value = false; return
+    }
     const data = await resp.json()
-    if (resp.ok && data.success) {
-      const total = data.data?.total || 0; const healthy = data.data?.healthy || 0
-      testResult.value = `✓ 连接成功 — ${total} 个账号, ${healthy} 个在线`
+    if (resp.ok && (data.success || data.status === 'success')) {
+      if (mode === 'flask') {
+        testResult.value = `✓ Flask 连接成功 — 账户 ${data.account?.id || 'OK'}`
+      } else {
+        const total = data.data?.total || 0
+        const healthy = data.data?.healthy || 0
+        testResult.value = `✓ 连接成功 — ${total} 个账号, ${healthy} 个在线`
+      }
     } else {
-      testResult.value = `✗ 服务器返回 HTTP ${resp.status}: ${data.error || data.detail || ''}`
+      testResult.value = `✗ HTTP ${resp.status}: ${data.error || data.detail || ''}`
     }
   } catch (e: any) {
     if (e.name === 'AbortError') {
       testResult.value = '✗ 连接超时 (8s)，请检查服务器是否可达'
-    } else if (e.message?.includes('Failed to fetch') || e.message?.includes('NetworkError')) {
-      testResult.value = '✗ 无法连接，请检查: 1) 网关是否启动 2) URL 是否正确 3) 防火墙/CORS'
+    } else if (e.message?.includes('Failed to fetch')) {
+      testResult.value = '✗ 无法连接，请检查: 1) 服务是否启动 2) URL是否正确 3) 防火墙/CORS'
     } else {
       testResult.value = `✗ ${e.message}`
     }
@@ -85,10 +93,14 @@ async function testConnection() {
             </div>
           </div>
 
-          <div v-if="form.mode === 'xtquant'">
+          <div>
             <label class="label-text">网关地址</label>
-            <input v-model="form.xtquantUrl" type="url" placeholder="http://127.0.0.1:8888" class="input-field font-mono" />
-            <p class="text-[10px] text-slate-400 mt-1">本地默认 http://127.0.0.1:8888，远程填入隧道 URL</p>
+            <input v-if="form.mode === 'xtquant'" v-model="form.xtquantUrl" type="url" placeholder="http://127.0.0.1:8888" class="input-field font-mono" />
+            <input v-else :value="form.xtquantUrl" disabled type="url" class="input-field font-mono text-slate-300 bg-slate-50 cursor-not-allowed" />
+            <p class="text-[10px] text-slate-400 mt-1">
+              <template v-if="form.mode === 'xtquant'">本地默认 http://127.0.0.1:8888，远程填入隧道 URL</template>
+              <template v-else>直连模式下不使用网关地址，切换到网关模式后可编辑</template>
+            </p>
           </div>
 
           <div>
