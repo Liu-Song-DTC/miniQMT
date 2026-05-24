@@ -34,6 +34,7 @@ export function useSSE() {
             system.allowSell = msg.monitoring.allowSell
             system.simulationMode = msg.monitoring.simulationMode
           }
+          system.lastUpdateTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           if (msg.positions_update?.changed) {
             setTimeout(() => positions.fetchPositions(), 100)
           }

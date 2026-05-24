@@ -17,6 +17,7 @@ export const useSystemStore = defineStore('system', () => {
   const allowSell = ref(true)
   const simulationMode = ref(false)
   const positionMonitorRunning = ref(false)
+  const lastUpdateTime = ref('')
 
   const currentAccount = computed(() =>
     accounts.value.find(a => a.id === currentAccountId.value) || accounts.value[0]
@@ -55,6 +56,7 @@ export const useSystemStore = defineStore('system', () => {
     allowSell.value = r.settings.allowSell
     simulationMode.value = r.settings.simulationMode
     positionMonitorRunning.value = r.settings.positionMonitorRunning
+    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
   async function fetchConnection() {
@@ -69,7 +71,7 @@ export const useSystemStore = defineStore('system', () => {
   return {
     connected, accounts, currentAccountId, currentAccount, account,
     isMonitoring, autoTrading, allowBuy, allowSell,
-    simulationMode, positionMonitorRunning, statusText,
+    simulationMode, positionMonitorRunning, statusText, lastUpdateTime,
     switchAccount, addAccount, removeAccount,
     fetchStatus, fetchConnection, toggleMonitor,
   }
