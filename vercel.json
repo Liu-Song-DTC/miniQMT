@@ -1,0 +1,4 @@
+{
+  "buildCommand": "cd web2.0 && npm install && npm run build",
+  "outputDirectory": "web2.0/dist"
+}

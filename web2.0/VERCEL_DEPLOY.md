@@ -158,6 +158,8 @@ dist/assets/index-*.js   ~119 kB
 
 ### 3.2 部署到 Vercel
 
+**项目已包含 `vercel.json`，Vercel 会自动识别正确的构建命令和输出目录。**
+
 **方式一：Vercel CLI（推荐首次部署）**
 
 ```bash
@@ -176,18 +178,9 @@ CLI 会引导你登录，确认项目设置后直接部署。输出类似：
 
 **方式二：GitHub 自动部署（推荐后续更新）**
 
-1. 将项目推送到 GitHub（如 `https://github.com/你的用户名/miniQMT`）
+1. 将项目推送到 GitHub
 2. 打开 [vercel.com/new](https://vercel.com/new)，导入你的仓库
-3. 配置构建设置：
-
-| 设置项 | 值 |
-|--------|-----|
-| Framework Preset | Vite |
-| Root Directory | `web2.0` |
-| Build Command | `npm run build` |
-| Output Directory | `web2.0/dist` |
-| Install Command | `npm install` |
-
+3. Vercel 会自动读取根目录 `vercel.json` 中的配置，无需手动设置
 4. 点击 Deploy。以后每次 `git push` 自动触发部署。
 
 **方式三：手动上传**
