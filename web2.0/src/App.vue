@@ -5,8 +5,7 @@ import { usePositionsStore } from './stores/positions'
 import { useGridStore } from './stores/grid'
 import { useSSE } from './composables/useSSE'
 import { usePolling } from './composables/usePolling'
-import { onMounted, watch, ref } from 'vue'
-import * as xqApi from './api/xtquant'
+import { onMounted, watch } from 'vue'
 
 import HeaderBar from './components/HeaderBar.vue'
 import SimulationBanner from './components/SimulationBanner.vue'
@@ -19,10 +18,8 @@ const system = useSystemStore()
 const config = useConfigStore()
 const positions = usePositionsStore()
 const grid = useGridStore()
-const { healthy: sseHealthy, connect: sseConnect } = useSSE()
-const { start: startPolling, stop: stopPolling } = usePolling()
-const stopProfitEnabled = ref(false)
-const stopProfitLoading = ref(false)
+const { connect: sseConnect } = useSSE()
+const { start: startPolling } = usePolling()
 
 async function refreshAll() {
   await Promise.all([positions.fetchPositions(), positions.fetchTrades(), grid.fetchSessions()])
@@ -34,24 +31,7 @@ async function init() {
   system.fetchConnection()
 }
 
-function toggleMonitoring() {
-  const next = !system.isMonitoring
-  system.toggleMonitor(next).then(() => { if (next) startPolling(); else stopPolling() })
-}
-
-async function toggleStopProfit() {
-  stopProfitLoading.value = true
-  const next = !stopProfitEnabled.value
-  await xqApi.toggleStopProfit(next)
-  stopProfitEnabled.value = next
-  stopProfitLoading.value = false
-}
-
-async function loadStopProfitStatus() {
-  try { const data = await xqApi.getStopProfitStatus(); if (data?.config) stopProfitEnabled.value = data.config.enabled } catch {}
-}
-
-onMounted(() => { init(); loadStopProfitStatus(); setTimeout(() => sseConnect(), 1000); startPolling() })
+onMounted(() => { init(); setTimeout(() => sseConnect(), 1000); startPolling() })
 
 watch(() => system.currentAccountId, () => {
   positions.dataVersion = 0; positions.positions = []; positions.trades = []; grid.sessions = []
@@ -64,40 +44,14 @@ watch(() => system.currentAccountId, () => {
     <HeaderBar />
     <SimulationBanner />
 
-    <main class="flex-1 p-5 space-y-5 max-w-[1600px] mx-auto w-full">
-      <!-- Control bar -->
-      <div class="flex items-center gap-3 flex-wrap">
-        <div class="flex items-center gap-2 bg-white rounded-xl border border-slate-200/80 px-2 py-1.5 shadow-sm">
-          <button @click="toggleMonitoring"
-            :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-              system.isMonitoring ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-blue-50 text-blue-700 hover:bg-blue-100']">
-            <span :class="system.isMonitoring ? 'dot-red' : 'dot-green'"></span>
-            {{ system.isMonitoring ? '监控 OFF' : '监控 ON' }}
-          </button>
-          <button @click="toggleStopProfit" :disabled="stopProfitLoading"
-            :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-              stopProfitEnabled ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100']">
-            <span :class="stopProfitEnabled ? 'dot-amber' : 'dot-green'"></span>
-            {{ stopProfitLoading ? '...' : stopProfitEnabled ? '止盈止损 OFF' : '止盈止损 ON' }}
-          </button>
-        </div>
-
-        <div class="flex items-center gap-2 ml-auto text-[11px]">
-          <span class="flex items-center gap-1.5 text-slate-500" :title="sseHealthy ? 'Server-Sent Events 实时推送正常，数据自动刷新' : 'SSE 断开，使用轮询方式刷新数据（功能不受影响）'">
-            <span :class="['w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-bold',
-              sseHealthy ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600']">SSE</span>
-            {{ sseHealthy ? '推送正常' : '推送断开(轮询中)' }}
-          </span>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div class="lg:col-span-2 space-y-5">
+    <main class="flex-1 p-3 md:p-5 space-y-3 md:space-y-5 max-w-[1600px] mx-auto w-full">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-5">
+        <div class="lg:col-span-2 space-y-3 md:space-y-5">
           <ConfigPanel />
           <BuyPanel @refresh="refreshAll" />
           <HoldingsTable @refresh="refreshAll" />
         </div>
-        <div class="space-y-5">
+        <div class="space-y-3 md:space-y-5">
           <OrderLog />
         </div>
       </div>

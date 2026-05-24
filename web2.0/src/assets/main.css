@@ -159,4 +159,13 @@
   }
   .stat-label { @apply text-[11px] font-medium text-slate-400 uppercase tracking-wider; }
   .stat-value { @apply text-lg font-bold text-slate-800 mt-0.5; }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 640px) {
+    .card-header { @apply px-3 py-2 text-xs; }
+    .card-body { @apply p-3; }
+    .btn { @apply px-2.5 py-1.5 text-xs; }
+    table { font-size: 10px; }
+    th, td { @apply px-1 py-1; }
+  }
 }

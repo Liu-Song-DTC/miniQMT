@@ -22,13 +22,6 @@ const NUMERIC_FIELDS: FieldDef[] = [
   { label: '最大总持仓', key: 'totalMaxPosition', suffix: '元', step: 1, decimals: 0 },
 ]
 
-const BOOL_FIELDS = [
-  { label: '允许买入', key: 'allowBuy' },
-  { label: '允许卖出', key: 'allowSell' },
-  { label: '模拟交易', key: 'simulationMode' },
-  { label: '全局总开关', key: 'globalAllowBuySell' },
-]
-
 function displayValue(field: FieldDef): string | number {
   const raw = (store.config as any)[field.key]
   if (raw == null || isNaN(raw)) return ''
@@ -74,17 +67,6 @@ function onBoolChange(key: string, checked: boolean) {
             <span v-if="f.suffix" class="text-xs text-slate-400">{{ f.suffix }}</span>
           </div>
         </div>
-      </div>
-      <div class="flex flex-wrap gap-4 mt-4 pt-3 border-t border-slate-100">
-        <label v-for="item in BOOL_FIELDS" :key="item.key" class="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            :checked="(store.config as any)[item.key]"
-            @change="onBoolChange(item.key, ($event.target as HTMLInputElement).checked)"
-            class="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-          />
-          <span class="text-slate-600">{{ item.label }}</span>
-        </label>
       </div>
     </div>
   </div>
