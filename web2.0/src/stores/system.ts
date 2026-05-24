@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as flaskApi from '../api/flask'
-import { loadAccounts, saveAccounts, getCurrentAccountId, setCurrentAccountId, getCurrentAccount } from '../api/accounts'
+import { loadAccounts, saveAccounts, getCurrentAccountId, setCurrentAccountId } from '../api/accounts'
 import type { AccountEntry } from '../api/accounts'
 
 export const useSystemStore = defineStore('system', () => {
@@ -18,7 +18,9 @@ export const useSystemStore = defineStore('system', () => {
   const simulationMode = ref(false)
   const positionMonitorRunning = ref(false)
 
-  const currentAccount = computed(() => getCurrentAccount())
+  const currentAccount = computed(() =>
+    accounts.value.find(a => a.id === currentAccountId.value) || accounts.value[0]
+  )
   const statusText = computed(() => isMonitoring.value ? '运行中' : '已停止')
 
   function switchAccount(accountId: string) {
