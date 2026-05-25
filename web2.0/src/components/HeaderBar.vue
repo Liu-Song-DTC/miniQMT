@@ -7,6 +7,7 @@ import { useSSE } from '../composables/useSSE'
 import { usePolling } from '../composables/usePolling'
 import * as xqApi from '../api/xtquant'
 import * as flaskApi from '../api/flask'
+import { isGatewayMode } from '../api/accounts'
 import type { BuyStrategy } from '../types'
 import type { AccountEntry } from '../api/accounts'
 import ConnectionSettings from './ConnectionSettings.vue'
@@ -24,6 +25,7 @@ const editForm = ref<AccountEntry>({ id: '', label: '', flaskUrl: '' })
 const dropdownRef = ref<HTMLElement | null>(null)
 const stopProfitEnabled = ref(false)
 const stopProfitLoading = ref(false)
+const gatewayMode = ref(isGatewayMode())
 
 function toggleDropdown() { showDropdown.value = !showDropdown.value }
 function closeDropdown() { showDropdown.value = false }
@@ -141,13 +143,16 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     <div class="px-4 md:px-6 pb-2 flex items-center justify-between gap-2 flex-wrap">
       <!-- Control toggles -->
       <div class="flex items-center gap-1.5 flex-wrap">
-        <button @click="toggleMonitoring" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
-        <button @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
-        <span class="w-px h-4 bg-slate-200 mx-0.5 hidden sm:inline"></span>
+        <button v-if="!gatewayMode" @click="toggleMonitoring" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
+        <button v-if="!gatewayMode" @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
+        <span v-if="gatewayMode" class="text-[11px] text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md" title="网关模式不支持监控开关和动态止盈控制，请使用 Flask 直连模式">🔒 网关模式 · 只读监控+下单</span>
+        <span v-if="!gatewayMode" class="w-px h-4 bg-slate-200 mx-0.5 hidden sm:inline"></span>
+        <template v-if="!gatewayMode">
         <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
         <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
         <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
         <label class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />总开关</label>
+        </template>
       </div>
 
       <!-- Status badges (right) -->
@@ -159,8 +164,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       </div>
     </div>
 
-    <!-- Row 3: Buy actions -->
-    <div class="px-4 md:px-6 pb-2.5 flex items-center gap-2 flex-wrap text-[12px]">
+    <!-- Row 3: Buy actions (网关模式下禁用—需Flask后端) -->
+    <div v-if="!gatewayMode" class="px-4 md:px-6 pb-2.5 flex items-center gap-2 flex-wrap text-[12px]">
       <select v-model="buyStrategy" class="input-field !w-auto !py-1 !text-[11px]">
         <option value="random_pool">备选池随机</option>
         <option value="custom_stock">自定义股票</option>

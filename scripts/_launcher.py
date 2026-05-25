@@ -42,6 +42,30 @@ if sys.platform == "win32":
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH  = PROJECT_ROOT / "account_config.json"
 MAIN_PY      = PROJECT_ROOT / "main.py"
+WEB_MODE_PREF = PROJECT_ROOT / "data" / ".web_mode"
+
+
+# ---------------------------------------------------------------------------
+# Web 模式偏好（记忆用户最后选择的 web1.0/2.0）
+# ---------------------------------------------------------------------------
+def _load_web_mode_pref() -> str:
+    """读取用户上次选择的 Web 模式，返回 "1" 或 "2"，默认 "1"。"""
+    try:
+        if WEB_MODE_PREF.exists():
+            val = WEB_MODE_PREF.read_text(encoding="ascii").strip()
+            if val in ("1", "2"):
+                return val
+    except Exception:
+        pass
+    return "1"
+
+
+def _save_web_mode_pref(web2: bool) -> None:
+    """保存用户 Web 模式选择。"""
+    data_dir = WEB_MODE_PREF.parent
+    if not data_dir.exists():
+        data_dir.mkdir(parents=True, exist_ok=True)
+    WEB_MODE_PREF.write_text("2" if web2 else "1", encoding="ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -798,11 +822,19 @@ def cmd_menu(_args) -> int:
             return ""
 
     def _start_with_web_mode(simulation: bool, all_accounts: bool):
-        """启动账号，先询问 Web 模式。"""
+        """启动账号，先询问 Web 模式（记忆上次选择作为默认）。"""
         mode_label = "实盘" if not simulation else "模拟"
         scope_label = "所有账号" if all_accounts else "指定账号"
+        pref = _load_web_mode_pref()
+        mode_desc = "web1.0 (Flask :5000起)" if pref == "1" else "web2.0 (xtquant_manager :8888)"
         print(f"\n[启动{scope_label} - {mode_label}模式]\n")
-        web2 = ask("Web 界面 [1=web1.0 (Flask :5000起), 2=web2.0 (xtquant_manager :8888)] (默认 1): ") == "2"
+        web2 = ask(f"Web 界面 [1=web1.0, 2=web2.0] (默认 {pref}={mode_desc}): ")
+        if web2 == "":
+            web2 = pref  # 使用记忆偏好
+        else:
+            web2 = "2" if web2 == "2" else "1"  # 非 2 一律当 1
+        _save_web_mode_pref(web2 == "2")
+        web2 = web2 == "2"
         print()
         _do_start(None, simulation=simulation, web2=web2)
 
@@ -929,7 +961,11 @@ def cmd_menu(_args) -> int:
             if not acc:
                 continue
             sim = ask("模式 [1=实盘, 2=模拟] (默认 1): ") == "2"
-            web2 = ask("Web 界面 [1=web1.0 (Flask), 2=web2.0 (xtquant_manager)] (默认 1): ") == "2"
+            pref = _load_web_mode_pref()
+            mode_desc = "web1.0 (Flask)" if pref == "1" else "web2.0 (xtquant_manager)"
+            web2_input = ask(f"Web 界面 [1=web1.0, 2=web2.0] (默认 {pref}={mode_desc}): ")
+            web2 = (web2_input if web2_input else pref) == "2"
+            _save_web_mode_pref(web2)
             print()
             _do_start(acc, simulation=sim, web2=web2)
 
@@ -951,11 +987,16 @@ def cmd_menu(_args) -> int:
             pause_return()
 
         elif choice == "c":
-            print("\n[警告] 将强制结束所有账号进程，未保存数据可能丢失！")
+            print("\n[警告] 将强制结束所有账号进程 (含 xtquant_manager 网关)，未保存数据可能丢失！")
             confirm = ask("确认强制停止? [y/N]: ")
             if confirm.lower() == "y":
                 print()
+                # 先停交易策略 (main.py)，再停网关
                 cmd_stop(argparse.Namespace(accounts=None, force=True, timeout=0))
+                print()
+                if _xqm_is_port_in_use(XQM_DEFAULT_PORT):
+                    print("停止 xtquant_manager 网关...")
+                    cmd_xqm_stop(argparse.Namespace())
             else:
                 print("已取消。")
             pause_return()
@@ -984,7 +1025,12 @@ def cmd_menu(_args) -> int:
         elif choice == "h":
             print("\n[重启 xtquant_manager]\n")
             cmd_xqm_stop(None)
-            time.sleep(2)
+            # 等待端口完全释放（最多等 5 秒），确保新进程能绑定
+            for _ in range(10):
+                if not _xqm_is_port_in_use(XQM_DEFAULT_PORT):
+                    break
+                time.sleep(0.5)
+            print()
             cmd_xqm_start(None)
             pause_return()
 
