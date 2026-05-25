@@ -74,6 +74,25 @@ class TestAccountHealthCheck(unittest.TestCase):
         account, _, _ = make_account_with_mocks()
         self.assertTrue(account.is_healthy())
 
+    def test_healthy_when_ping_stale(self):
+        """ping 过期只触发例行探测，不应把内存连接状态判为不健康"""
+        account, _, _ = make_account_with_mocks(ping_staleness_threshold=1.0)
+        account._last_ping_ok_time = time.time() - 2.0
+        self.assertTrue(account.is_healthy())
+
+    def test_needs_ping_when_ping_stale(self):
+        """超过 ping 时效阈值后，应提示 HealthMonitor 做例行真实探测"""
+        account, _, _ = make_account_with_mocks(ping_staleness_threshold=1.0)
+        account._last_ping_ok_time = time.time() - 2.0
+        self.assertTrue(account.needs_ping())
+
+    def test_no_needs_ping_when_disconnected(self):
+        """断连账号走 Level 0 失败路径，不走例行 ping 路径"""
+        account, _, _ = make_account_with_mocks(ping_staleness_threshold=1.0)
+        account._connected = False
+        account._last_ping_ok_time = time.time() - 2.0
+        self.assertFalse(account.needs_ping())
+
     def test_unhealthy_when_disconnected(self):
         account, mock_trader, _ = make_account_with_mocks()
         account._connected = False

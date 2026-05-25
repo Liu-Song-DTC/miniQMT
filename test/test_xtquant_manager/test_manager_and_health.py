@@ -262,6 +262,28 @@ class TestHealthMonitor(unittest.TestCase):
 
         self.assertEqual(len(reconnect_calls), 0)
 
+    def test_stale_ping_runs_routine_probe_without_unhealthy_count(self):
+        """ping 过期时执行例行探测，但不记录为 Level 0 检查失败"""
+        account = self._inject_account("H_STALE", connected=True)
+        account.config.ping_staleness_threshold = 0.01
+        account._last_ping_ok_time = time.time() - 1.0
+
+        ping_calls = []
+
+        def mock_ping():
+            ping_calls.append(True)
+            account._last_ping_ok_time = time.time()
+            return True
+
+        account.ping = mock_ping
+
+        monitor = HealthMonitor(self.manager, check_interval=999.0)
+        monitor._check_account("H_STALE")
+
+        self.assertEqual(len(ping_calls), 1)
+        self.assertEqual(monitor._consecutive_unhealthy.get("H_STALE", 0), 0)
+        self.assertEqual(monitor._total_reconnects, 0)
+
     def test_triggers_ping_when_not_healthy(self):
         """不健康账号触发 ping 探测"""
         account = self._inject_account("H002", connected=False)

@@ -53,7 +53,7 @@ class AccountConfig:
     reconnect_base_wait: float = 60.0          # 重连基础等待（秒）
     max_reconnect_attempts: int = 5             # 最大重连次数（超过后仍重试但不计次）
     ping_stock: str = "000001.SZ"              # 心跳探测使用的股票代码
-    ping_staleness_threshold: float = 300.0    # 超过此秒数未成功 ping，is_healthy() 返回 False
+    ping_staleness_threshold: float = 300.0    # 超过此秒数未成功 ping，触发例行真实探测
 
 
 class XtQuantAccount:
@@ -356,16 +356,28 @@ class XtQuantAccount:
         """
         快速内存检查（无 I/O）。
 
-        除基础的 _connected 和 _xt_trader 标志外，还检查 ping 时效：
-        若 _last_ping_ok_time 超过 ping_staleness_threshold 秒未刷新，
-        返回 False 强制触发 Level 1 ping()，从而探测到 QMT 进程崩溃等隐性断连。
+        这里只判断连接对象和连接标志是否处于可用状态，不把 ping 过期当作
+        “不健康”。ping 过期只表示需要做一次例行真实探测，由 needs_ping()
+        单独表达，避免健康账号每 5 分钟产生一次误导性的 Level 0 失败日志。
         """
         if not self._connected or self._xt_trader is None:
             return False
         if self._last_ping_ok_time is None:
             return False
+        return True
+
+    def needs_ping(self) -> bool:
+        """
+        是否需要执行例行真实探测。
+
+        该方法只用于 HealthMonitor 的正常巡检路径：连接状态仍健康，但距离
+        上次 ping 成功已经超过阈值，需要主动探测 xtdata + xttrader，及时发现
+        QMT 进程崩溃、xttrader 隐性断连等问题。
+        """
+        if not self.is_healthy():
+            return False
         elapsed = time.time() - self._last_ping_ok_time
-        return elapsed <= self.config.ping_staleness_threshold
+        return elapsed >= self.config.ping_staleness_threshold
 
     def ping(self) -> bool:
         """
