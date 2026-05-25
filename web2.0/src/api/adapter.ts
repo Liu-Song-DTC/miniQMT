@@ -9,10 +9,12 @@ export async function apiGet(path: string): Promise<any> {
   if (accountId) headers['X-Account-Id'] = accountId
   try {
     const resp = await fetch(url, { headers })
-    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` }
-    return resp.json()
+    if (!resp.ok) return { status: 'error', error: `HTTP ${resp.status}` }
+    const data = await resp.json()
+    // 标准化 xtquant_manager ApiResponse (success: bool) → Flask 格式 (status: string)
+    return normalizeResponse(data)
   } catch (e: any) {
-    return { success: false, error: e.message || 'Network error' }
+    return { status: 'error', error: e.message || 'Network error' }
   }
 }
 
@@ -25,11 +27,21 @@ export async function apiPost(path: string, body?: any): Promise<any> {
   if (accountId) headers['X-Account-Id'] = accountId
   try {
     const resp = await fetch(url, { method: 'POST', headers, body: body ? JSON.stringify(body) : undefined })
-    if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` }
-    return resp.json()
+    if (!resp.ok) return { status: 'error', error: `HTTP ${resp.status}` }
+    const data = await resp.json()
+    return normalizeResponse(data)
   } catch (e: any) {
-    return { success: false, error: e.message || 'Network error' }
+    return { status: 'error', error: e.message || 'Network error' }
   }
+}
+
+function normalizeResponse(data: any): any {
+  // xtquant_manager ApiResponse 使用 success: bool，Flask 使用 status: "success"/"error"
+  // 统一转换为 Flask 兼容格式，确保 r.status !== 'success' 检查正确
+  if (data && typeof data.success === 'boolean' && !data.status) {
+    data.status = data.success ? 'success' : 'error'
+  }
+  return data
 }
 
 function resolveUrl(path: string): string {
