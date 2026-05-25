@@ -9,11 +9,15 @@ Flask web_server 一致（顶层字段 + 英文键），确保持仓/交易数�
 - 顶层字段对齐: connected/account/settings/ranges/data_version 不嵌套在 data 内
 - X-Account-Id 请求头选择目标账号（多账号隔离）
 - 委托类型 23→BUY / 24→SELL 映射
+- SQLite 持久化字段注入: stock_name/open_date/stop_loss_price/highest_price
 """
 import os
 import sys
 import time
 import unittest
+import sqlite3
+import tempfile
+import shutil
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -27,8 +31,10 @@ from test.test_xtquant_manager.mocks import (
     MockXtTrader, MockXtData, MockStockAccount, MockXtTrade,
 )
 
-ACC1 = "25105132"
-ACC2 = "25106531"
+# 用不与真实账号冲突的测试 ID，避免污染真实 SQLite 数据库
+ACC1 = "test_flask_a"
+ACC2 = "test_flask_b"
+_TMP_DIRS = []  # setUp 创建，tearDown 清理
 
 
 def _inject_account(manager, account_id, positions=None, trades=None):
@@ -79,12 +85,52 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         ], trades=[
             {"stock_code": "600036.SH", "order_type": 23, "traded_volume": 200, "traded_price": 35.0},
         ])
+
+        # 创建临时 SQLite 数据库模拟 position_manager 持久化数据
+        self._tmp_dirs = []
+        self._create_test_db(ACC1, {
+            "000001": {"stock_name": "平安银行", "open_date": "2026-03-15 10:30:00",
+                        "stop_loss_price": 9.25, "profit_triggered": 0, "highest_price": 11.2},
+        })
+        self._create_test_db(ACC2, {
+            "600036": {"stock_name": "招商银行", "open_date": "2026-04-20 14:00:00",
+                        "stop_loss_price": 32.38, "profit_triggered": 1, "highest_price": 38.5},
+        })
+
         # TestClient host 为 "testclient"，需加入 local_ips 才能通过安全校验
         sec = SecurityConfig(api_token="", local_ips=["127.0.0.1", "::1", "localhost", "testclient", "unknown"])
         self.app = create_app(sec)
         self.client = TestClient(self.app)
 
+    def _create_test_db(self, aid: str, positions: dict):
+        """在项目根目录创建 data_<aid>/trading.db 临时 SQLite 文件。"""
+        import os as _os
+        tmp_dir = _os.path.join(_os.path.dirname(__file__), "..", f"data_{aid}")
+        tmp_dir = _os.path.normpath(tmp_dir)
+        _os.makedirs(tmp_dir, exist_ok=True)
+        self._tmp_dirs.append(tmp_dir)
+        db_path = _os.path.join(tmp_dir, "trading.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE IF NOT EXISTS positions (
+            stock_code TEXT PRIMARY KEY, stock_name TEXT, volume REAL,
+            cost_price REAL, current_price REAL, market_value REAL,
+            open_date TIMESTAMP, profit_triggered BOOLEAN DEFAULT FALSE,
+            highest_price REAL, stop_loss_price REAL)""")
+        for code, fields in positions.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO positions (stock_code, stock_name, open_date, stop_loss_price, profit_triggered, highest_price) VALUES (?,?,?,?,?,?)",
+                (code, fields["stock_name"], fields["open_date"],
+                 fields["stop_loss_price"], fields["profit_triggered"], fields["highest_price"]))
+        conn.commit()
+        conn.close()
+
     def tearDown(self):
+        # 清理临时 SQLite 数据库目录
+        for d in self._tmp_dirs:
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
         # 还原测试前的单例，保证跨模块运行时不破坏其他测试的状态
         XtQuantManager._instance = self._prev_instance
 
@@ -112,25 +158,46 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         self.assertEqual(p["volume"], 1000)
         self.assertEqual(p["cost_price"], 10.0)
 
-    def test_positions_stock_name_from_xtdata(self):
-        """股票名称从 xtdata get_instrument_detail 获取（mock 返回 平安银行）"""
+    def test_positions_stock_name_from_sqlite(self):
+        """股票名称从 SQLite 持久化字段获取（position_manager 写入）"""
         r = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
         p = r.json()["data"]["positions"][0]
         self.assertEqual(p["stock_name"], "平安银行")
 
     def test_positions_stock_name_fallback_to_code(self):
-        """无 xtdata 名称时回退为股票代码"""
+        """无 SQLite 数据的股票回退为代码作为名称"""
         r = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
         p = r.json()["data"]["positions"][0]
-        self.assertEqual(p["stock_name"], "招商银行")  # 600036 → 招商银行
+        self.assertEqual(p["stock_name"], "招商银行")
 
-    def test_positions_stop_loss_price_computed(self):
-        """止损价 = 成本价 * 0.925"""
+    def test_positions_open_date_from_sqlite(self):
+        """建仓日期从 SQLite 读取"""
         r = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
         p = r.json()["data"]["positions"][0]
-        # cost=10.0 → stop_loss = 10.0 * 0.925 = 9.25
-        self.assertAlmostEqual(p["stop_loss_price"], 9.25, places=2)
-        self.assertEqual(p["cost_price"], 10.0)
+        self.assertEqual(p["open_date"], "2026-03-15")
+
+    def test_positions_stop_loss_from_sqlite(self):
+        """止损价优先使用 SQLite 策略计算值"""
+        r1 = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        p1 = r1.json()["data"]["positions"][0]
+        self.assertEqual(p1["stop_loss_price"], 9.25)  # SQLite 精确值
+        r2 = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
+        p2 = r2.json()["data"]["positions"][0]
+        self.assertEqual(p2["stop_loss_price"], 32.38)
+
+    def test_positions_profit_triggered_from_sqlite(self):
+        """止盈触发标记从 SQLite 读取"""
+        r1 = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        self.assertFalse(r1.json()["data"]["positions"][0]["profit_triggered"])
+        r2 = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
+        self.assertTrue(r2.json()["data"]["positions"][0]["profit_triggered"])
+
+    def test_positions_highest_price_from_sqlite(self):
+        """最高价从 SQLite 读取（非 QMT 现价）"""
+        r1 = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        self.assertEqual(r1.json()["data"]["positions"][0]["highest_price"], 11.2)
+        r2 = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
+        self.assertEqual(r2.json()["data"]["positions"][0]["highest_price"], 38.5)
 
     def test_positions_current_price_computed(self):
         """市价为 None 时应从 市值/股票余额 估算 = 10.5"""

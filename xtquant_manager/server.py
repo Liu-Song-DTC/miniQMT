@@ -605,53 +605,49 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 return header_id
         return _first_account_id()
 
-    def _infer_exchange_suffix(code: str) -> str:
-        """根据6位股票代码推断交易所后缀，用于 xtdata API 查询。"""
-        if not code or len(code) < 6:
-            return ""
-        first = code[0]
-        if first == '6':
-            return ".SH"
-        if first in ('0', '2', '3'):
-            return ".SZ"
-        if first in ('4', '8'):
-            return ".BJ"
-        return ".SZ"
+    def _load_sqlite_enrichment(aid: str) -> dict:
+        """从 data_<aid>/trading.db 读取持久化的持仓元数据。
 
-    def _enrich_positions_with_names(aid: str, positions: list) -> None:
-        """用 xtdata get_instrument_detail 填充持仓的 证券名称（原地修改）。"""
+        position_manager 每 15 秒将内存数据同步到 SQLite，包含：
+        stock_name / open_date / stop_loss_price / profit_triggered / highest_price
+        等精确的策略计算值，远优于手工估算。
+
+        Returns:
+            {stock_code: {stock_name, open_date, stop_loss_price,
+                          profit_triggered, highest_price}}，读取失败返回 {}。
+        """
+        import sqlite3
+        import os as _os
+        db_path = _os.path.join(_os.path.dirname(__file__), "..", f"data_{aid}", "trading.db")
+        db_path = _os.path.normpath(db_path)
+        if not _os.path.exists(db_path):
+            return {}
         try:
-            acct = _get_manager().get_account(aid)
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT stock_code, stock_name, open_date, stop_loss_price, "
+                "profit_triggered, highest_price FROM positions"
+            ).fetchall()
+            conn.close()
+            result = {}
+            for r in rows:
+                result[r["stock_code"]] = {
+                    "stock_name": r["stock_name"] or "",
+                    "open_date": r["open_date"] or "",
+                    "stop_loss_price": r["stop_loss_price"] or 0,
+                    "profit_triggered": bool(r["profit_triggered"]),
+                    "highest_price": r["highest_price"] or 0,
+                }
+            return result
         except Exception:
-            return
-        for p in positions:
-            code = p.get("证券代码", "")
-            if not code:
-                continue
-            full_code = f"{code}{_infer_exchange_suffix(code)}"
-            detail = {}
-            try:
-                detail = acct.get_instrument_detail(full_code)
-            except Exception:
-                pass
-            name = (detail.get("InstrumentName") or "").strip()
-            if not name:
-                # 尝试另一个交易所后缀
-                alt_suffix = ".SH" if _infer_exchange_suffix(code) == ".SZ" else ".SZ"
-                try:
-                    detail2 = acct.get_instrument_detail(f"{code}{alt_suffix}")
-                    name = (detail2.get("InstrumentName") or "").strip()
-                except Exception:
-                    pass
-            if name:
-                p["证券名称"] = name
+            return {}
 
     def _map_position_to_flask(p: dict) -> dict:
-        """xtquant 中文字段持仓 → Flask 英文字段持仓。
+        """xtquant 中文字段持仓 + SQLite 持久化元数据 → Flask 英文字段。
 
-        现价：QMT 的 市值 已按最新价计算，因此用 市值/股票余额 反推。
-        止损价：成本价 * (1 + 止损比例)，默认 -7.5% (与 config.STOP_LOSS_RATIO 对齐)。
-        名称：_enrich_positions_with_names 已从 xtdata 填充 证券名称，否则回退为代码。"""
+        QMT 提供实时交易字段（量/价/市值），SQLite 提供策略元数据
+        （名称/建仓日期/止损价/止盈触发/最高价），通过 p 中的 _sqlite_* 键合并。"""
         vol = p.get("股票余额", 0) or 0
         cost = p.get("成本价", 0) or 0
         mv = p.get("市值", 0) or 0
@@ -661,12 +657,22 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         cur = cur or 0
         profit_ratio = ((cur - cost) / cost) if cost else 0
         code = p.get("证券代码", "")
-        name = p.get("证券名称") or ""
-        # 止损价 = 成本价 * (1 - 7.5%)，与 config.STOP_LOSS_RATIO = -0.075 对齐
-        stop_loss = round(cost * (1 - 0.075), 2) if cost else 0
+
+        # SQLite 持久化元数据（由 _enrich_positions_from_sqlite 注入）
+        name     = p.get("_sqlite_name") or ""
+        open_dt  = p.get("_sqlite_open_date") or ""
+        sl_price = p.get("_sqlite_stop_loss_price")
+        trig     = p.get("_sqlite_profit_triggered", False)
+        high_p   = p.get("_sqlite_highest_price")
+
+        if sl_price is None or sl_price == 0:
+            sl_price = round(cost * 0.925, 2)  # fallback: 与 STOP_LOSS_RATIO=-0.075 对齐
+        if high_p is None or high_p == 0:
+            high_p = cur
+
         return {
             "stock_code": code,
-            "stock_name": name or code,   # fallback: 代码当名称
+            "stock_name": name or code,
             "volume": vol,
             "available": p.get("可用余额", 0) or 0,
             "cost_price": cost,
@@ -674,10 +680,10 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             "market_value": mv,
             "profit_ratio": profit_ratio,
             "profit_amount": (cur - cost) * vol,
-            "profit_triggered": False,
-            "highest_price": cur,
-            "stop_loss_price": stop_loss,
-            "open_date": "--",
+            "profit_triggered": trig,
+            "highest_price": high_p,
+            "stop_loss_price": sl_price,
+            "open_date": (open_dt or "")[:10] or "--",
             "grid_session_active": False,
         }
 
@@ -735,7 +741,16 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return JSONResponse({"status": "error", "error": "无已注册账号"})
         try:
             raw = _get_manager().query_positions(aid)
-            _enrich_positions_with_names(aid, raw)
+            sqlite = _load_sqlite_enrichment(aid)
+            # 将 SQLite 持久化字段注入到 QMT 持仓 dict 中
+            for p in raw:
+                code = p.get("证券代码", "")
+                enr = sqlite.get(code, {})
+                p["_sqlite_name"]              = enr.get("stock_name", "")
+                p["_sqlite_open_date"]         = enr.get("open_date", "")
+                p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
+                p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
+                p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
             positions = [_map_position_to_flask(p) for p in raw]
             total_mv = sum(p["market_value"] for p in positions)
             total_profit = sum(p["profit_amount"] for p in positions)
@@ -773,7 +788,15 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return JSONResponse({"status": "success", "data": [], "data_version": 0, "no_change": False})
         try:
             raw = _get_manager().query_positions(aid)
-            _enrich_positions_with_names(aid, raw)
+            sqlite = _load_sqlite_enrichment(aid)
+            for p in raw:
+                code = p.get("证券代码", "")
+                enr = sqlite.get(code, {})
+                p["_sqlite_name"]              = enr.get("stock_name", "")
+                p["_sqlite_open_date"]         = enr.get("open_date", "")
+                p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
+                p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
+                p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
             positions = [_map_position_to_flask(p) for p in raw]
             return JSONResponse({
                 "status": "success",
