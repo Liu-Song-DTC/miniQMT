@@ -428,6 +428,18 @@ class XtQuantAccount:
             default={},
         )
 
+    def get_instrument_detail(self, stock_code: str) -> dict:
+        """获取证券信息（含名称），失败返回空 dict。
+        xtdata 本地缓存调用，无网络开销。"""
+        if self._xtdata is None:
+            return {}
+        return self._call(
+            self._xtdata.get_instrument_detail,
+            stock_code,
+            op="get_instrument_detail",
+            default={},
+        )
+
     def get_market_data_ex(
         self,
         fields: list,

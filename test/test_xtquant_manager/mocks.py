@@ -331,6 +331,7 @@ class MockXtData:
         self._next_tick_failure = False
         self._next_timeout = False
         self._tick_data: Dict[str, dict] = {}
+        self._instrument_names: Dict[str, str] = {}
 
     def connect(self) -> bool:
         return self._connected
@@ -354,6 +355,19 @@ class MockXtData:
             })
         return result
 
+    def get_instrument_detail(self, stock_code: str) -> dict:
+        """模拟 xtdata.get_instrument_detail：返回证券信息（含名称）。"""
+        name = self._instrument_names.get(stock_code)
+        if name:
+            return {"InstrumentName": name, "ExchangeID": "SZ" if ".SZ" in stock_code else "SH"}
+        # 根据代码前缀推断默认名称
+        prefix = stock_code[:6] if stock_code else ""
+        default_names = {
+            "000001": "平安银行", "600036": "招商银行", "600509": "天富能源",
+            "300473": "德尔股份", "301587": "中瑞股份",
+        }
+        return {"InstrumentName": default_names.get(prefix, f"测试股票{prefix}"), "ExchangeID": "SZ"}
+
     def get_market_data_ex(self, fields, stock_list, period="1d",
                             start_time="20240101", end_time="20241231") -> dict:
         result = {}
@@ -374,6 +388,10 @@ class MockXtData:
     def set_tick_data(self, stock_code: str, data: dict):
         """设置指定股票的 tick 数据"""
         self._tick_data[stock_code] = data
+
+    def set_instrument_name(self, stock_code: str, name: str):
+        """设置指定证券的名称（get_instrument_detail 会返回）"""
+        self._instrument_names[stock_code] = name
 
     def simulate_disconnect(self):
         self._connected = False

@@ -104,12 +104,32 @@ class TestFlaskCompatEndpoints(unittest.TestCase):
         positions = r.json()["data"]["positions"]
         self.assertEqual(len(positions), 1)
         p = positions[0]
-        # 英文键齐全
-        for key in ("stock_code", "volume", "available", "cost_price",
-                    "current_price", "market_value", "profit_ratio"):
+        for key in ("stock_code", "stock_name", "volume", "available", "cost_price",
+                    "current_price", "market_value", "profit_ratio",
+                    "stop_loss_price", "open_date"):
             self.assertIn(key, p, f"缺少字段 {key}")
         self.assertEqual(p["stock_code"], "000001")
         self.assertEqual(p["volume"], 1000)
+        self.assertEqual(p["cost_price"], 10.0)
+
+    def test_positions_stock_name_from_xtdata(self):
+        """股票名称从 xtdata get_instrument_detail 获取（mock 返回 平安银行）"""
+        r = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        p = r.json()["data"]["positions"][0]
+        self.assertEqual(p["stock_name"], "平安银行")
+
+    def test_positions_stock_name_fallback_to_code(self):
+        """无 xtdata 名称时回退为股票代码"""
+        r = self.client.get("/api/positions", headers={"X-Account-Id": ACC2})
+        p = r.json()["data"]["positions"][0]
+        self.assertEqual(p["stock_name"], "招商银行")  # 600036 → 招商银行
+
+    def test_positions_stop_loss_price_computed(self):
+        """止损价 = 成本价 * 0.925"""
+        r = self.client.get("/api/positions", headers={"X-Account-Id": ACC1})
+        p = r.json()["data"]["positions"][0]
+        # cost=10.0 → stop_loss = 10.0 * 0.925 = 9.25
+        self.assertAlmostEqual(p["stop_loss_price"], 9.25, places=2)
         self.assertEqual(p["cost_price"], 10.0)
 
     def test_positions_current_price_computed(self):

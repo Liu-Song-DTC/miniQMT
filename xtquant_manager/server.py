@@ -605,11 +605,53 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 return header_id
         return _first_account_id()
 
+    def _infer_exchange_suffix(code: str) -> str:
+        """根据6位股票代码推断交易所后缀，用于 xtdata API 查询。"""
+        if not code or len(code) < 6:
+            return ""
+        first = code[0]
+        if first == '6':
+            return ".SH"
+        if first in ('0', '2', '3'):
+            return ".SZ"
+        if first in ('4', '8'):
+            return ".BJ"
+        return ".SZ"
+
+    def _enrich_positions_with_names(aid: str, positions: list) -> None:
+        """用 xtdata get_instrument_detail 填充持仓的 证券名称（原地修改）。"""
+        try:
+            acct = _get_manager().get_account(aid)
+        except Exception:
+            return
+        for p in positions:
+            code = p.get("证券代码", "")
+            if not code:
+                continue
+            full_code = f"{code}{_infer_exchange_suffix(code)}"
+            detail = {}
+            try:
+                detail = acct.get_instrument_detail(full_code)
+            except Exception:
+                pass
+            name = (detail.get("InstrumentName") or "").strip()
+            if not name:
+                # 尝试另一个交易所后缀
+                alt_suffix = ".SH" if _infer_exchange_suffix(code) == ".SZ" else ".SZ"
+                try:
+                    detail2 = acct.get_instrument_detail(f"{code}{alt_suffix}")
+                    name = (detail2.get("InstrumentName") or "").strip()
+                except Exception:
+                    pass
+            if name:
+                p["证券名称"] = name
+
     def _map_position_to_flask(p: dict) -> dict:
         """xtquant 中文字段持仓 → Flask 英文字段持仓。
 
-        现价计算：query_positions 不返回市价(市价=None)，但 QMT 的 市值 已按
-        最新价计算，因此用 市值/股票余额 反推现价（确定性、无需额外 tick 调用）。"""
+        现价：QMT 的 市值 已按最新价计算，因此用 市值/股票余额 反推。
+        止损价：成本价 * (1 + 止损比例)，默认 -7.5% (与 config.STOP_LOSS_RATIO 对齐)。
+        名称：_enrich_positions_with_names 已从 xtdata 填充 证券名称，否则回退为代码。"""
         vol = p.get("股票余额", 0) or 0
         cost = p.get("成本价", 0) or 0
         mv = p.get("市值", 0) or 0
@@ -618,9 +660,13 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             cur = mv / vol
         cur = cur or 0
         profit_ratio = ((cur - cost) / cost) if cost else 0
+        code = p.get("证券代码", "")
+        name = p.get("证券名称") or ""
+        # 止损价 = 成本价 * (1 - 7.5%)，与 config.STOP_LOSS_RATIO = -0.075 对齐
+        stop_loss = round(cost * (1 - 0.075), 2) if cost else 0
         return {
-            "stock_code": p.get("证券代码", ""),
-            "stock_name": p.get("证券名称") or "",
+            "stock_code": code,
+            "stock_name": name or code,   # fallback: 代码当名称
             "volume": vol,
             "available": p.get("可用余额", 0) or 0,
             "cost_price": cost,
@@ -630,7 +676,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             "profit_amount": (cur - cost) * vol,
             "profit_triggered": False,
             "highest_price": cur,
-            "stop_loss_price": 0,
+            "stop_loss_price": stop_loss,
             "open_date": "--",
             "grid_session_active": False,
         }
@@ -689,6 +735,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return JSONResponse({"status": "error", "error": "无已注册账号"})
         try:
             raw = _get_manager().query_positions(aid)
+            _enrich_positions_with_names(aid, raw)
             positions = [_map_position_to_flask(p) for p in raw]
             total_mv = sum(p["market_value"] for p in positions)
             total_profit = sum(p["profit_amount"] for p in positions)
@@ -726,6 +773,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return JSONResponse({"status": "success", "data": [], "data_version": 0, "no_change": False})
         try:
             raw = _get_manager().query_positions(aid)
+            _enrich_positions_with_names(aid, raw)
             positions = [_map_position_to_flask(p) for p in raw]
             return JSONResponse({
                 "status": "success",
