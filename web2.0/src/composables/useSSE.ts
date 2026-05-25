@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 import { usePositionsStore } from '../stores/positions'
+import { loadConnection } from '../api/accounts'
 import type { SSEMessage } from '../types'
 
 export function useSSE() {
@@ -14,6 +15,11 @@ export function useSSE() {
   const HEARTBEAT_TIMEOUT = 15000
 
   function connect() {
+    const conn = loadConnection()
+    // xtquant 网关模式：没有 SSE 端点，依赖轮询
+    if (conn.mode === 'xtquant') return
+    // auto 模式在同源 xtquant_manager 下也无 SSE 端点
+    if (conn.mode === 'auto' && conn.xtquantUrl && window.location.origin === conn.xtquantUrl) return
     disconnect()
     healthy.value = false
     try {

@@ -596,10 +596,19 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         ids = _get_manager().list_accounts()
         return ids[0] if ids else None
 
+    def _get_request_account_id(request: Request):
+        """从 X-Account-Id 请求头获取目标账号，fallback 到第一个注册账号。"""
+        header_id = (request.headers.get("X-Account-Id") or "").strip()
+        if header_id:
+            ids = _get_manager().list_accounts()
+            if header_id in ids:
+                return header_id
+        return _first_account_id()
+
     @app.get("/api/status", response_model=ApiResponse, tags=["兼容"])
-    async def flask_status():
-        """Flask 兼容: /api/status → 返回首个账号的状态"""
-        aid = _first_account_id()
+    async def flask_status(request: Request):
+        """Flask 兼容: /api/status → 返回指定账号的状态"""
+        aid = _get_request_account_id(request)
         if not aid:
             return ApiResponse(success=False, error="无已注册账号")
         try:
@@ -628,9 +637,9 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             raise HTTPException(status_code=404, detail=f"账号不存在: {aid}")
 
     @app.get("/api/positions", response_model=ApiResponse, tags=["兼容"])
-    async def flask_positions(version: int = -1):
+    async def flask_positions(request: Request, version: int = -1):
         """Flask 兼容: /api/positions"""
-        aid = _first_account_id()
+        aid = _get_request_account_id(request)
         if not aid:
             return ApiResponse(success=False, error="无已注册账号")
         try:
@@ -646,14 +655,14 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             return ApiResponse(success=True, data={"positions": [], "metrics": {}, "positions_all": [], "data_version": 0, "no_change": False})
 
     @app.get("/api/positions-all", response_model=ApiResponse, tags=["兼容"])
-    async def flask_positions_all(version: int = 0):
+    async def flask_positions_all(request: Request, version: int = 0):
         """Flask 兼容: /api/positions-all"""
-        return await flask_positions(version=version)
+        return await flask_positions(request=request, version=version)
 
     @app.get("/api/connection/status", response_model=ApiResponse, tags=["兼容"])
-    async def flask_connection_status():
+    async def flask_connection_status(request: Request):
         """Flask 兼容: /api/connection/status"""
-        aid = _first_account_id()
+        aid = _get_request_account_id(request)
         if not aid:
             return ApiResponse(success=True, data={"status": "success", "connected": False})
         state = _get_manager().get_account_state(aid)
@@ -678,9 +687,9 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         }, ranges={})
 
     @app.get("/api/trade-records", response_model=ApiResponse, tags=["兼容"])
-    async def flask_trade_records():
+    async def flask_trade_records(request: Request):
         """Flask 兼容: /api/trade-records"""
-        aid = _first_account_id()
+        aid = _get_request_account_id(request)
         if not aid:
             return ApiResponse(success=True, data={"status": "success", "data": []})
         orders = _get_manager().query_orders(aid)

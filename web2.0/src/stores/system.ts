@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as flaskApi from '../api/flask'
-import { loadAccounts, saveAccounts, getCurrentAccountId, setCurrentAccountId } from '../api/accounts'
+import { loadAccounts, saveAccounts, getCurrentAccountId, setCurrentAccountId, discoverAccounts } from '../api/accounts'
 import type { AccountEntry } from '../api/accounts'
 
 export const useSystemStore = defineStore('system', () => {
@@ -45,6 +45,30 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
 
+  async function syncAccountsFromGateway() {
+    const discovered = await discoverAccounts()
+    if (!discovered.length) return false
+    // 合并：已手动配置的账号保留，新增自动发现的账号
+    const existingIds = new Set(accounts.value.map(a => a.id))
+    for (const acc of discovered) {
+      if (!existingIds.has(acc.id)) {
+        accounts.value.push(acc)
+      } else {
+        // 更新标签（保留用户自定义的 label 如果已有）
+        const existing = accounts.value.find(a => a.id === acc.id)
+        if (existing && existing.label === acc.id) {
+          existing.label = acc.label
+        }
+      }
+    }
+    saveAccounts(accounts.value)
+    // 如果当前选中账号不在列表中，切换到第一个
+    if (!accounts.value.find(a => a.id === currentAccountId.value)) {
+      switchAccount(accounts.value[0].id)
+    }
+    return true
+  }
+
   async function fetchStatus() {
     const r = await flaskApi.getStatus()
     if (!r) return
@@ -71,7 +95,7 @@ export const useSystemStore = defineStore('system', () => {
     connected, accounts, currentAccountId, currentAccount, account,
     isMonitoring, autoTrading, allowBuy, allowSell,
     simulationMode, positionMonitorRunning, lastUpdateTime,
-    switchAccount, addAccount, removeAccount,
+    switchAccount, addAccount, removeAccount, syncAccountsFromGateway,
     fetchStatus, fetchConnection, toggleMonitor,
   }
 })

@@ -101,6 +101,29 @@ export function getApiToken(): string {
   return loadConnection().apiToken
 }
 
+// ===== 账号自动发现 =====
+
+export async function discoverAccounts(): Promise<AccountEntry[]> {
+  const conn = loadConnection()
+  if (conn.mode !== 'xtquant' && conn.mode !== 'auto') return []
+  try {
+    const base = conn.xtquantUrl
+    const headers: Record<string, string> = {}
+    if (conn.apiToken) headers['X-API-Token'] = conn.apiToken
+    const resp = await fetch(`${base}/api/v1/accounts`, { headers })
+    if (!resp.ok) return []
+    const data = await resp.json()
+    if (!data.success) return []
+    const ids: string[] = data.data?.accounts || []
+    return ids.map((id, i) => ({
+      id,
+      label: `账户${String.fromCharCode(65 + i)}`,
+    }))
+  } catch {
+    return []
+  }
+}
+
 // ===== 安全检测 =====
 
 export function isSecureContext(): boolean {

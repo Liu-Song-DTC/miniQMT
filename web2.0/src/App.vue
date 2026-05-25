@@ -5,6 +5,7 @@ import { usePositionsStore } from './stores/positions'
 import { useGridStore } from './stores/grid'
 import { useSSE } from './composables/useSSE'
 import { usePolling } from './composables/usePolling'
+import { loadConnection } from './api/accounts'
 import { onMounted, onUnmounted, watch } from 'vue'
 
 import HeaderBar from './components/HeaderBar.vue'
@@ -25,6 +26,11 @@ async function refreshAll() {
 }
 
 async function init() {
+  const conn = loadConnection()
+  // xtquant 网关或 auto 模式：尝试从网关同步真实账号列表
+  if (conn.mode === 'xtquant' || (conn.mode === 'auto' && conn.xtquantUrl && window.location.origin === conn.xtquantUrl)) {
+    await system.syncAccountsFromGateway()
+  }
   config.fetchConfig()
   await Promise.all([system.fetchStatus(), positions.fetchAll(), grid.fetchAll()])
   system.fetchConnection()
