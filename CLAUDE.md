@@ -130,8 +130,32 @@ npm install                          # 安装依赖（仅首次）
 npm run dev                          # 开发模式 (http://localhost:5173, 热更新)
 npm run build                        # 生产构建 → dist/
 ```
-构建产物 `dist/` 可直接部署到 Vercel 或由 Flask web_server 托管。
+构建产物 `dist/` 可直接部署到 Vercel 或由 Flask web_server / xtquant_manager 托管。
 详见 [web2.0/VERCEL_DEPLOY.md](web2.0/VERCEL_DEPLOY.md)。
+
+#### Web 双模式架构
+
+web2.0 支持两种后端连接模式，通过前端「连接设置」切换：
+
+| 模式 | 后端 | 端口 | 适用场景 |
+|------|------|------|---------|
+| **Flask 直连** | 每账号独立 Flask (web_server.py) | :5000, :5001... | 完整功能：配置管理/监控开关/模拟买入/初始化持仓 |
+| **网关模式** | xtquant_manager 统一入口 | :8888 | 多账号只读监控 + 下单；配置/监控/初始化需 Flask 直连 |
+
+**网关模式能力边界**（2026-05-25）:
+- ✅ 多账号持仓查看（字段完整、账号隔离、现价反推）
+- ✅ 账户资产/状态、连接状态、交易记录
+- ✅ 参数展示（只读）、动态止盈状态
+- ✅ 账号自动发现（从 xtquant_manager 同步真实 ID）
+- 🔒 配置保存/监控开关/模拟买入/初始化持仓 — **需 Flask 直连模式**
+- 🔒 SSE 实时推送不可用 — 依赖 3s/10s 轮询更新
+
+技术要点:
+- 网关兼容端点 (`/api/positions`, `/api/status` 等) 在 [server.py](xtquant_manager/server.py) 中实现
+- QMT 实时数据 (量/价/市值) + SQLite 持久化元数据 (名称/建仓/止损/止盈) 合并返回
+- 前端通过 `X-Account-Id` 请求头切换目标账号，`isGatewayMode()` 检测当前模式
+- `_launcher.py` 菜单选项 [7]/[9] 启动时记忆 web 模式偏好 (`data/.web_mode`)
+- 网关重启 (菜单 [h]) 自动等待端口释放防止旧进程残留
 
 ### miniqmt.bat 总控制台
 ```bash
@@ -216,6 +240,7 @@ grid_validation.py     # 网格交易参数校验
 xtquant_manager/       # XtQuantManager HTTP网关(多账户管理，可选)
 xtquant_manager/stop_profit.py  # 网关模式动态止盈止损(后台线程，复用 position_manager 算法)
 web2.0/                # Vue3+Vite+TS+PWA 新版Web界面
+test/test_xqm_flask_compat.py  # 网关Flask兼容端点测试(21用例,字段映射/账号隔离/SQLite注入)
 ```
 
 ### 线程架构
