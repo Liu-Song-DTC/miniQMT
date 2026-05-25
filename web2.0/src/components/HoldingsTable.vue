@@ -59,8 +59,9 @@ function cellValue(pos: any, col: typeof COLS[0]): string {
 }
 
 function profitBg(v: number): string {
-  if (v > 0) return 'bg-emerald-50/40'
-  if (v < 0) return 'bg-red-50/40'
+  // A股习惯：红涨绿跌
+  if (v > 0) return 'bg-red-50/40'
+  if (v < 0) return 'bg-emerald-50/40'
   return ''
 }
 </script>
@@ -118,7 +119,7 @@ function profitBg(v: number): string {
             </td>
             <td v-for="col in COLS.slice(1)" :key="col.k"
               :class="['px-2 py-2 whitespace-nowrap', col.c,
-                       col.k === 'profit_ratio' ? (pos.profit_ratio > 0 ? 'text-emerald-600' : pos.profit_ratio < 0 ? 'text-red-600' : 'text-slate-400') : '']">
+                       col.k === 'profit_ratio' ? (pos.profit_ratio > 0 ? 'text-red-600' : pos.profit_ratio < 0 ? 'text-emerald-600' : 'text-slate-400') : '']">
               <span v-if="col.k === 'profit_triggered'">
                 <span :class="pos.profit_triggered ? 'badge-green !text-[9px]' : 'badge-slate !text-[9px]'">{{ pos.profit_triggered ? '是' : '否' }}</span>
               </span>

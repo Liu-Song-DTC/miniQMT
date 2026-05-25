@@ -24,8 +24,9 @@ export function fmtTime(ts: string | null | undefined): string {
 }
 
 export function profitClass(v: number): string {
-  if (v > 0) return 'text-profit'
-  if (v < 0) return 'text-loss'
+  // A股习惯：红涨绿跌
+  if (v > 0) return 'text-red-600'
+  if (v < 0) return 'text-emerald-600'
   return 'text-slate-500'
 }
 
