@@ -124,17 +124,17 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
       <!-- Assets (right) -->
       <div class="hidden sm:flex items-center gap-2 md:gap-3 ml-auto">
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">可用</span> <strong class="text-slate-700">¥{{ system.account.availableBalance.toLocaleString() }}</strong></div>
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">市值</span> <strong class="text-slate-700">¥{{ system.account.maxHoldingValue.toLocaleString() }}</strong></div>
-        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">总资产</span> <strong class="text-slate-700">¥{{ system.account.totalAssets.toLocaleString() }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">可用</span> <strong class="text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">市值</span> <strong class="text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></div>
+        <div class="text-[10px] md:text-xs text-slate-500"><span class="text-slate-400">总资产</span> <strong class="text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></div>
       </div>
     </div>
 
     <!-- Mobile asset bar -->
     <div class="sm:hidden px-4 pb-1 flex gap-3 text-[11px] text-slate-500">
-      <span>可用 <strong class="text-slate-700">¥{{ system.account.availableBalance.toLocaleString() }}</strong></span>
-      <span>市值 <strong class="text-slate-700">¥{{ system.account.maxHoldingValue.toLocaleString() }}</strong></span>
-      <span>总资产 <strong class="text-slate-700">¥{{ system.account.totalAssets.toLocaleString() }}</strong></span>
+      <span>可用 <strong class="text-slate-700">¥{{ (system.account.availableBalance ?? 0).toLocaleString() }}</strong></span>
+      <span>市值 <strong class="text-slate-700">¥{{ (system.account.maxHoldingValue ?? 0).toLocaleString() }}</strong></span>
+      <span>总资产 <strong class="text-slate-700">¥{{ (system.account.totalAssets ?? 0).toLocaleString() }}</strong></span>
     </div>
 
     <!-- Row 2: Controls (left) + Status badges (right) -->

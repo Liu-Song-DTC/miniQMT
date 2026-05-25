@@ -72,13 +72,16 @@ export const useSystemStore = defineStore('system', () => {
   async function fetchStatus() {
     const r = await flaskApi.getStatus()
     if (!r) return
-    account.value = r.account
-    isMonitoring.value = r.settings.isMonitoring
-    autoTrading.value = r.settings.enableAutoTrading
-    allowBuy.value = r.settings.allowBuy
-    allowSell.value = r.settings.allowSell
-    simulationMode.value = r.settings.simulationMode
-    positionMonitorRunning.value = r.settings.positionMonitorRunning
+    if (r.account) account.value = r.account
+    const s = r.settings
+    if (s) {
+      isMonitoring.value = s.isMonitoring
+      autoTrading.value = s.enableAutoTrading
+      allowBuy.value = s.allowBuy
+      allowSell.value = s.allowSell
+      simulationMode.value = s.simulationMode
+      positionMonitorRunning.value = s.positionMonitorRunning
+    }
     lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 

@@ -605,16 +605,61 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 return header_id
         return _first_account_id()
 
-    @app.get("/api/status", response_model=ApiResponse, tags=["兼容"])
+    def _map_position_to_flask(p: dict) -> dict:
+        """xtquant 中文字段持仓 → Flask 英文字段持仓。
+
+        现价计算：query_positions 不返回市价(市价=None)，但 QMT 的 市值 已按
+        最新价计算，因此用 市值/股票余额 反推现价（确定性、无需额外 tick 调用）。"""
+        vol = p.get("股票余额", 0) or 0
+        cost = p.get("成本价", 0) or 0
+        mv = p.get("市值", 0) or 0
+        cur = p.get("市价")
+        if not cur and vol:
+            cur = mv / vol
+        cur = cur or 0
+        profit_ratio = ((cur - cost) / cost) if cost else 0
+        return {
+            "stock_code": p.get("证券代码", ""),
+            "stock_name": p.get("证券名称") or "",
+            "volume": vol,
+            "available": p.get("可用余额", 0) or 0,
+            "cost_price": cost,
+            "current_price": cur,
+            "market_value": mv,
+            "profit_ratio": profit_ratio,
+            "profit_amount": (cur - cost) * vol,
+            "profit_triggered": False,
+            "highest_price": cur,
+            "stop_loss_price": 0,
+            "open_date": "--",
+            "grid_session_active": False,
+        }
+
+    def _map_trade_to_flask(t: dict) -> dict:
+        """xtquant 中文字段成交/委托 → Flask 英文字段交易记录。"""
+        # 委托类型: 23=买入, 24=卖出（其余按奇偶兜底）
+        order_type = t.get("委托类型", 0) or 0
+        trade_type = "BUY" if order_type == 23 else ("SELL" if order_type == 24 else ("BUY" if order_type % 2 == 1 else "SELL"))
+        return {
+            "stock_code": t.get("证券代码", ""),
+            "stock_name": t.get("证券名称") or "",
+            "trade_type": trade_type,
+            "price": t.get("成交价格") or t.get("委托价格") or 0,
+            "volume": t.get("成交数量") or t.get("委托数量") or 0,
+            "trade_time": t.get("成交时间") or "--",
+            "trade_id": str(t.get("成交编号") or t.get("订单编号") or ""),
+            "strategy": "manual",
+        }
+
+    @app.get("/api/status", tags=["兼容"])
     async def flask_status(request: Request):
-        """Flask 兼容: /api/status → 返回指定账号的状态"""
+        """Flask 兼容: /api/status → 返回指定账号的状态（顶层字段格式）"""
         aid = _get_request_account_id(request)
         if not aid:
-            return ApiResponse(success=False, error="无已注册账号")
+            return JSONResponse({"status": "error", "error": "无已注册账号"})
         try:
-            state = _get_manager().get_account_state(aid)
             asset = _get_manager().query_asset(aid)
-            return ApiResponse(success=True, data={
+            return JSONResponse({
                 "status": "success",
                 "isMonitoring": True,
                 "account": {
@@ -636,62 +681,100 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             raise HTTPException(status_code=404, detail=f"账号不存在: {aid}")
 
-    @app.get("/api/positions", response_model=ApiResponse, tags=["兼容"])
+    @app.get("/api/positions", tags=["兼容"])
     async def flask_positions(request: Request, version: int = -1):
-        """Flask 兼容: /api/positions"""
+        """Flask 兼容: /api/positions（字段映射为前端英文格式，顶层字段格式）"""
         aid = _get_request_account_id(request)
         if not aid:
-            return ApiResponse(success=False, error="无已注册账号")
+            return JSONResponse({"status": "error", "error": "无已注册账号"})
         try:
-            positions = _get_manager().query_positions(aid)
-            return ApiResponse(success=True, data={
-                "positions": positions,
-                "metrics": {},
-                "positions_all": positions,
+            raw = _get_manager().query_positions(aid)
+            positions = [_map_position_to_flask(p) for p in raw]
+            total_mv = sum(p["market_value"] for p in positions)
+            total_profit = sum(p["profit_amount"] for p in positions)
+            total_cost = sum(p["cost_price"] * p["volume"] for p in positions)
+            metrics = {
+                "total_market_value": total_mv,
+                "total_profit": total_profit,
+                "total_profit_ratio": (total_profit / total_cost) if total_cost else 0,
+                "position_count": len(positions),
+                "stock_count": len(positions),
+            }
+            return JSONResponse({
+                "status": "success",
+                "data": {
+                    "positions": positions,
+                    "metrics": metrics,
+                    "positions_all": positions,
+                },
                 "data_version": 0,
                 "no_change": False,
             })
         except Exception:
-            return ApiResponse(success=True, data={"positions": [], "metrics": {}, "positions_all": [], "data_version": 0, "no_change": False})
+            return JSONResponse({
+                "status": "success",
+                "data": {"positions": [], "metrics": {}, "positions_all": []},
+                "data_version": 0,
+                "no_change": False,
+            })
 
-    @app.get("/api/positions-all", response_model=ApiResponse, tags=["兼容"])
+    @app.get("/api/positions-all", tags=["兼容"])
     async def flask_positions_all(request: Request, version: int = 0):
         """Flask 兼容: /api/positions-all"""
-        return await flask_positions(request=request, version=version)
-
-    @app.get("/api/connection/status", response_model=ApiResponse, tags=["兼容"])
-    async def flask_connection_status(request: Request):
-        """Flask 兼容: /api/connection/status"""
         aid = _get_request_account_id(request)
         if not aid:
-            return ApiResponse(success=True, data={"status": "success", "connected": False})
+            return JSONResponse({"status": "success", "data": [], "data_version": 0, "no_change": False})
+        try:
+            raw = _get_manager().query_positions(aid)
+            positions = [_map_position_to_flask(p) for p in raw]
+            return JSONResponse({
+                "status": "success",
+                "data": positions,
+                "data_version": 0,
+                "no_change": False,
+            })
+        except Exception:
+            return JSONResponse({"status": "success", "data": [], "data_version": 0, "no_change": False})
+
+    @app.get("/api/connection/status", tags=["兼容"])
+    async def flask_connection_status(request: Request):
+        """Flask 兼容: /api/connection/status（connected 为顶层字段）"""
+        aid = _get_request_account_id(request)
+        if not aid:
+            return JSONResponse({"status": "success", "connected": False, "timestamp": ""})
         state = _get_manager().get_account_state(aid)
-        return ApiResponse(success=True, data={
+        return JSONResponse({
             "status": "success",
             "connected": state.get("connected", False),
             "timestamp": "",
         })
 
-    @app.get("/api/config", response_model=ApiResponse, tags=["兼容"])
+    @app.get("/api/config", tags=["兼容"])
     async def flask_config():
-        """Flask 兼容: /api/config → 返回默认配置"""
-        return ApiResponse(success=True, data={
-            "singleBuyAmount": 35000,
-            "firstProfitSell": 5.0, "firstProfitSellEnabled": True,
-            "stockGainSellPencent": 60.0, "firstProfitSellPencent": True,
-            "allowBuy": True, "allowSell": True,
-            "stopLossBuy": 5.0, "stopLossBuyEnabled": True,
-            "stockStopLoss": 7.0, "StopLossEnabled": True,
-            "singleStockMaxPosition": 70000, "totalMaxPosition": 400000,
-            "globalAllowBuySell": True, "simulationMode": False,
-        }, ranges={})
+        """Flask 兼容: /api/config → 返回默认配置（data/ranges 为顶层字段）"""
+        return JSONResponse({
+            "status": "success",
+            "data": {
+                "singleBuyAmount": 35000,
+                "firstProfitSell": 5.0, "firstProfitSellEnabled": True,
+                "stockGainSellPencent": 60.0, "firstProfitSellPencent": True,
+                "allowBuy": True, "allowSell": True,
+                "stopLossBuy": 5.0, "stopLossBuyEnabled": True,
+                "stockStopLoss": 7.0, "StopLossEnabled": True,
+                "singleStockMaxPosition": 70000, "totalMaxPosition": 400000,
+                "globalAllowBuySell": True, "simulationMode": False,
+            },
+            "ranges": {},
+        })
 
-    @app.get("/api/trade-records", response_model=ApiResponse, tags=["兼容"])
+    @app.get("/api/trade-records", tags=["兼容"])
     async def flask_trade_records(request: Request):
-        """Flask 兼容: /api/trade-records"""
+        """Flask 兼容: /api/trade-records（字段映射为前端英文格式，data 为顶层数组）"""
         aid = _get_request_account_id(request)
         if not aid:
-            return ApiResponse(success=True, data={"status": "success", "data": []})
-        orders = _get_manager().query_orders(aid)
+            return JSONResponse({"status": "success", "data": []})
         trades = _get_manager().query_trades(aid)
-        return ApiResponse(success=True, data={"status": "success", "data": trades or orders})
+        if not trades:
+            trades = _get_manager().query_orders(aid)
+        mapped = [_map_trade_to_flask(t) for t in (trades or [])]
+        return JSONResponse({"status": "success", "data": mapped})
