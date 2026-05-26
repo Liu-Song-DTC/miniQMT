@@ -643,6 +643,26 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             return {}
 
+    def _enrich_positions_with_tick(positions: list, manager) -> None:
+        """批量获取全推行情，为每个持仓 dict 注入 _tick_change_pct。
+        失败时字段为 0，不抛异常。"""
+        codes = [p.get("证券代码", "") for p in positions if p.get("证券代码")]
+        if not codes:
+            return
+        tick = {}
+        try:
+            accounts = manager.list_accounts()
+            if accounts:
+                tick = manager.get_full_tick(accounts[0], codes) or {}
+        except Exception:
+            pass
+        for p in positions:
+            code = p.get("证券代码", "")
+            q = tick.get(code, {})
+            lp = q.get("lastPrice", 0) or 0
+            lc = q.get("lastClose", 0) or 0
+            p["_tick_change_pct"] = round(100 * (lp - lc) / lc, 2) if lc else 0
+
     def _map_position_to_flask(p: dict) -> dict:
         """xtquant 中文字段持仓 + SQLite 持久化元数据 → Flask 英文字段。
 
@@ -684,6 +704,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             "highest_price": high_p,
             "stop_loss_price": sl_price,
             "open_date": (open_dt or "")[:10] or "--",
+            "change_percentage": p.get("_tick_change_pct", 0),
             "grid_session_active": False,
         }
 
@@ -751,6 +772,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
                 p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
                 p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
+            _enrich_positions_with_tick(raw, _get_manager())
             positions = [_map_position_to_flask(p) for p in raw]
             total_mv = sum(p["market_value"] for p in positions)
             total_profit = sum(p["profit_amount"] for p in positions)
@@ -797,6 +819,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
                 p["_sqlite_stop_loss_price"]   = enr.get("stop_loss_price", 0)
                 p["_sqlite_profit_triggered"]  = enr.get("profit_triggered", False)
                 p["_sqlite_highest_price"]     = enr.get("highest_price", 0)
+            _enrich_positions_with_tick(raw, _get_manager())
             positions = [_map_position_to_flask(p) for p in raw]
             return JSONResponse({
                 "status": "success",

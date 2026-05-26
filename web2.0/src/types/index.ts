@@ -9,6 +9,7 @@ export interface Position {
   market_value: number
   profit_ratio: number
   profit_amount?: number
+  change_percentage?: number
   profit_triggered: boolean
   highest_price: number
   stop_loss_price: number

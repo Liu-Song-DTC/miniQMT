@@ -36,6 +36,7 @@ function openGridConfig(code: string) { gridStockCode.value = code; showGridDial
 const COLS = [
   { k: 'stock_code',   l: '代码',     s: true,  c: 'tabular-nums' },
   { k: 'stock_name',   l: '名称',     s: false, c: 'text-slate-500 truncate max-w-[60px]' },
+  { k: 'change_percentage', l: '涨跌幅', s: true, c: 'text-right tabular-nums' },
   { k: 'current_price',l: '现价',     s: true,  c: 'text-right tabular-nums' },
   { k: 'cost_price',   l: '成本',     s: true,  c: 'text-right tabular-nums text-slate-500' },
   { k: 'profit_ratio', l: '盈亏',     s: true,  c: 'text-right tabular-nums font-semibold' },
@@ -50,7 +51,7 @@ const COLS = [
 
 function cellValue(pos: any, col: typeof COLS[0]): string {
   const v = pos[col.k]
-  if (col.k === 'profit_ratio') return fmtPercent(v)
+  if (col.k === 'profit_ratio' || col.k === 'change_percentage') return fmtPercent(v)
   if (col.k === 'current_price' || col.k === 'cost_price' || col.k === 'highest_price' || col.k === 'stop_loss_price') return fmtPrice(v)
   if (col.k === 'market_value') return fmtMoney(v, 0)
   if (col.k === 'open_date') return (v || '').substring(0, 10) || '--'
@@ -119,7 +120,7 @@ function profitBg(v: number): string {
             </td>
             <td v-for="col in COLS.slice(1)" :key="col.k"
               :class="['px-2 py-2 whitespace-nowrap', col.c,
-                       col.k === 'profit_ratio' ? (pos.profit_ratio > 0 ? 'text-red-600' : pos.profit_ratio < 0 ? 'text-emerald-600' : 'text-slate-400') : '']">
+                       (col.k === 'profit_ratio' || col.k === 'change_percentage') ? ((pos[col.k] ?? 0) > 0 ? 'text-red-600' : (pos[col.k] ?? 0) < 0 ? 'text-emerald-600' : 'text-slate-400') : '']">
               <span v-if="col.k === 'profit_triggered'">
                 <span :class="pos.profit_triggered ? 'badge-green !text-[9px]' : 'badge-slate !text-[9px]'">{{ pos.profit_triggered ? '是' : '否' }}</span>
               </span>
