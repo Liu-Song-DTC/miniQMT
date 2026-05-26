@@ -643,6 +643,43 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             return {}
 
+    def _load_trade_records_from_sqlite(aid: str) -> list:
+        """从 data_<aid>/trading.db 的 trade_records 表读取交易记录。
+
+        与 web1.0 同源：position_manager/trading_executor 将买卖记录持久化到
+        此表，含 名称/时间/策略/买卖历史，远优于 QMT 当日成交（缺名称/时间/策略、
+        且只有当日）。按时间倒序返回，读取失败返回 []。
+        """
+        import sqlite3
+        import os as _os
+        db_path = _os.path.join(_os.path.dirname(__file__), "..", f"data_{aid}", "trading.db")
+        db_path = _os.path.normpath(db_path)
+        if not _os.path.exists(db_path):
+            return []
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT stock_code, stock_name, trade_time, trade_type, price, "
+                "volume, trade_id, strategy FROM trade_records ORDER BY trade_time DESC"
+            ).fetchall()
+            conn.close()
+            result = []
+            for r in rows:
+                result.append({
+                    "stock_code": r["stock_code"] or "",
+                    "stock_name": r["stock_name"] or "",
+                    "trade_type": r["trade_type"] or "",
+                    "price": r["price"] or 0,
+                    "volume": r["volume"] or 0,
+                    "trade_time": r["trade_time"] or "--",
+                    "trade_id": str(r["trade_id"] or ""),
+                    "strategy": r["strategy"] or "",
+                })
+            return result
+        except Exception:
+            return []
+
     def _to_xt_code(code: str) -> str:
         """6 位证券代码补全市场后缀（xtdata get_full_tick 要求带后缀）。
         持仓接口返回的是 6 位裸代码，需按 A 股规则映射：
@@ -877,10 +914,15 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
 
     @app.get("/api/trade-records", tags=["兼容"])
     async def flask_trade_records(request: Request):
-        """Flask 兼容: /api/trade-records（字段映射为前端英文格式，data 为顶层数组）"""
+        """Flask 兼容: /api/trade-records（与 web1.0 同源：优先读 SQLite trade_records）"""
         aid = _get_request_account_id(request)
         if not aid:
             return JSONResponse({"status": "success", "data": []})
+        # 优先从 SQLite trade_records 读取（含 名称/时间/策略/买卖历史，与 web1.0 一致）
+        records = _load_trade_records_from_sqlite(aid)
+        if records:
+            return JSONResponse({"status": "success", "data": records})
+        # 降级：SQLite 无记录时回退 QMT 当日成交/委托（缺名称/时间/策略）
         trades = _get_manager().query_trades(aid)
         if not trades:
             trades = _get_manager().query_orders(aid)

@@ -28,7 +28,9 @@ const positions = usePositionsStore()
             {{ t.trade_type === 'BUY' ? '买入' : '卖出' }}
           </span>
           <!-- stock -->
-          <span class="font-mono font-medium text-slate-700 w-20 flex-shrink-0">{{ t.stock_code }}</span>
+          <span class="font-mono font-medium text-slate-700 w-16 flex-shrink-0">{{ t.stock_code }}</span>
+          <!-- name -->
+          <span class="text-slate-500 truncate w-16 flex-shrink-0">{{ t.stock_name || '--' }}</span>
           <!-- price -->
           <span class="font-mono text-slate-600 w-16 text-right flex-shrink-0">{{ (t.price || 0).toFixed(2) }}</span>
           <!-- volume -->
