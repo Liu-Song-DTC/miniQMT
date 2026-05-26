@@ -830,6 +830,7 @@
 
         // 更新模拟交易模式 (SSE) - 用户意图优先
         if (monitoringInfo.simulationMode !== undefined) {
+            const wasSimulationMode = isSimulationMode;  // 先捕获旧值再修改，否则下方比较会 ReferenceError
             if (userSimulationModeIntent !== null) {
                 isSimulationMode = userSimulationModeIntent;
                 elements.simulationMode.checked = userSimulationModeIntent;
@@ -838,7 +839,7 @@
                 isSimulationMode = monitoringInfo.simulationMode;
                 elements.simulationMode.checked = isSimulationMode;
             }
-            
+
             // 只有状态有变化时才更新UI
             if (wasSimulationMode !== isSimulationMode) {
                 updateSimulationModeUI();

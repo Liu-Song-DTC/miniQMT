@@ -479,8 +479,14 @@ class PositionManager:
                                 current_price=current_price,
                                 open_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             )
-                            # 实盘新增持仓：确保已订阅到 xtdata 实时推送
-                            self.data_manager.ensure_subscribed(stock_code)
+
+                        # 实盘持仓（无论新旧）都确保已订阅到 xtdata 实时推送。
+                        # 否则 get_full_tick 拿不到实时 tick → current_price 停滞
+                        # → data_version 不增 → SSE 推 changed=false → 前端不刷新。
+                        # ensure_subscribed 对已订阅股票幂等短路，无额外开销。
+                        # （原先仅在"新增持仓"分支订阅，启动后已存在的持仓若不在
+                        #   STOCK_POOL 中则永不订阅，是实盘 P&L 长期不刷新的根因。）
+                        self.data_manager.ensure_subscribed(stock_code)
 
                         # 添加到当前持仓集合
                         current_positions.add(stock_code)

@@ -277,8 +277,27 @@ stop_push_flag = False
 
 @app.route('/')
 def index():
-    """Serve the index.html file"""
-    return send_from_directory(os.path.join(os.path.dirname(__file__), webpage_dir), 'index.html')
+    """Serve the index.html file with cache-busted script.js reference.
+
+    给 script.js 的引用注入基于文件 mtime 的版本号 (?v=<mtime>)，
+    JS 文件一变 URL 即变，浏览器必然重新加载新版本——彻底避免
+    "改了前端逻辑但浏览器仍跑旧 script.js" 导致的刷新行为不一致。
+    """
+    web_dir = os.path.join(os.path.dirname(__file__), webpage_dir)
+    index_path = os.path.join(web_dir, 'index.html')
+    try:
+        with open(index_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        script_path = os.path.join(web_dir, 'script.js')
+        version = str(int(os.path.getmtime(script_path)))
+        html = html.replace('src="script.js"', f'src="script.js?v={version}"')
+        resp = make_response(html)
+        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp
+    except Exception as e:
+        logger.error(f"渲染 index.html 失败，回退到静态文件: {str(e)}")
+        return send_from_directory(web_dir, 'index.html')
 
 @app.route('/<path:filename>')
 def serve_static(filename):
