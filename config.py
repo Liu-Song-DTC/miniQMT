@@ -391,7 +391,7 @@ def validate_config_param(param_name, value):
         return False, f"{param_range['desc']}必须是{param_type}类型"
 
 # ======================= Web服务配置 =======================
-WEB_SERVER_HOST = "0.0.0.0"
+WEB_SERVER_HOST = "127.0.0.1"
 WEB_SERVER_PORT = 5000
 WEB_SERVER_DEBUG = False
 WEB_API_TOKEN = os.environ.get("QMT_API_TOKEN", "")  # 设置后启用 Token 验证，空字符串=不验证（仅限内网部署）

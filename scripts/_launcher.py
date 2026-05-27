@@ -529,7 +529,7 @@ def cmd_git_pull(_args) -> int:
 # ============================================================================
 # XtQuantManager 网关管理
 # ============================================================================
-XQM_DEFAULT_HOST = "127.0.0.1"
+XQM_DEFAULT_HOST = "0.0.0.0"
 XQM_DEFAULT_PORT = 8888
 XQM_MODULE = "xtquant_manager"
 
@@ -570,7 +570,7 @@ def _ensure_xqm_config() -> Path | None:
 
     # 构建 xtquant_manager 配置
     xqm_cfg = {
-        "host": "127.0.0.1",
+        "host": "0.0.0.0",
         "port": 8888,
         "api_token": "",
         "rate_limit": 600,
