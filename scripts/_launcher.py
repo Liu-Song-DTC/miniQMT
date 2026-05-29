@@ -208,7 +208,7 @@ def cmd_start(args, web2: bool = False) -> int:
         started += 1
         time.sleep(0.8)  # 错开启动，避免 QMT 客户端初始化竞争
 
-    print(f"\n共启动 {started}/{len(accounts)} 个账号。Web 端口从 5000 开始按账号顺序分配。")
+    print(f"\n共启动 {started}/{len(accounts)} 个账号。Web 端口从 5000 开始按账号顺序分配（绑定 127.0.0.1，仅本机访问）。")
     return 0
 
 
@@ -529,9 +529,27 @@ def cmd_git_pull(_args) -> int:
 # ============================================================================
 # XtQuantManager 网关管理
 # ============================================================================
-XQM_DEFAULT_HOST = "0.0.0.0"
+XQM_DEFAULT_HOST = "0.0.0.0"        # 绑定地址：全部网卡（含 WAN/LAN/本机）
+XQM_CLIENT_HOST  = "127.0.0.1"      # 客户端访问地址：本机健康检查/UI 打开（0.0.0.0 不能作客户端目标）
 XQM_DEFAULT_PORT = 8888
 XQM_MODULE = "xtquant_manager"
+
+
+def _get_lan_ip() -> str:
+    """获取本机局域网 IP（用于菜单显示，方便用户从其他设备访问）。
+    无网卡或失败时返回空字符串，调用方应做空值兼容。"""
+    import socket
+    try:
+        # 用 UDP 连接外部地址触发路由选择（不真正发包）以获得首选出口 IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.2)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return ""
 
 
 def _xqm_config_path() -> Path:
@@ -617,7 +635,12 @@ def _xqm_is_port_in_use(port: int = XQM_DEFAULT_PORT) -> bool:
         return False
 
 
-def _xqm_health_check(host: str = XQM_DEFAULT_HOST, port: int = XQM_DEFAULT_PORT) -> bool:
+def _xqm_health_check(host: str = XQM_CLIENT_HOST, port: int = XQM_DEFAULT_PORT) -> bool:
+    """对运行中的服务做健康检查。
+    注意：host 必须是可作客户端目标的地址（127.0.0.1/本机 IP）；
+    0.0.0.0 是绑定地址、不能作客户端目标——若传入 0.0.0.0 自动改用 127.0.0.1。"""
+    if host in ("0.0.0.0", "::", ""):
+        host = XQM_CLIENT_HOST
     import urllib.request
     try:
         req = urllib.request.Request(f"http://{host}:{port}/api/v1/health", method="GET")
@@ -627,13 +650,26 @@ def _xqm_health_check(host: str = XQM_DEFAULT_HOST, port: int = XQM_DEFAULT_PORT
         return False
 
 
+def _xqm_access_urls(bind_host: str, port: int) -> str:
+    """构造访问地址显示文本。
+    bind_host=0.0.0.0 时同时列出本机和局域网两个 URL，方便用户复制；
+    否则按绑定地址显示。"""
+    if bind_host in ("0.0.0.0", "::", ""):
+        lan_ip = _get_lan_ip()
+        local = f"http://{XQM_CLIENT_HOST}:{port}"
+        if lan_ip and lan_ip != XQM_CLIENT_HOST:
+            return f"{local}  (本机)  |  http://{lan_ip}:{port}  (局域网)"
+        return f"{local}  (绑定 0.0.0.0：全部网卡可达)"
+    return f"http://{bind_host}:{port}"
+
+
 def cmd_xqm_start(_args) -> int:
     host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
     port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
 
     if _xqm_is_port_in_use(port):
-        if _xqm_health_check(host, port):
-            print(f"  ✓ xtquant_manager 已在运行: http://{host}:{port}")
+        if _xqm_health_check(XQM_CLIENT_HOST, port):
+            print(f"  ✓ xtquant_manager 已在运行: {_xqm_access_urls(host, port)}")
             return 0
         else:
             print(f"  ⚠ 端口 {port} 被占用但健康检查失败，尝试清理...")
@@ -677,10 +713,10 @@ def cmd_xqm_start(_args) -> int:
     print(f"  启动中 (PID={proc.pid})，等待服务就绪...")
     for _ in range(15):
         time.sleep(1)
-        if _xqm_health_check(host, port):
-            print(f"  ✓ xtquant_manager 已启动: http://{host}:{port}")
+        if _xqm_health_check(XQM_CLIENT_HOST, port):
+            print(f"  ✓ xtquant_manager 已启动: {_xqm_access_urls(host, port)}")
             return 0
-    print(f"  ⚠ 服务已启动但健康检查超时，稍后请访问 http://{host}:{port}/api/v1/health 确认")
+    print(f"  ⚠ 服务已启动但健康检查超时，稍后请访问 http://{XQM_CLIENT_HOST}:{port}/api/v1/health 确认")
     return 0
 
 
@@ -723,7 +759,7 @@ def cmd_xqm_status(_args) -> int:
 
     pid = _xqm_read_pid()
     port_used = _xqm_is_port_in_use(port)
-    healthy = _xqm_health_check(host, port)
+    healthy = _xqm_health_check(XQM_CLIENT_HOST, port)
 
     if pid:
         print(f"  PID      : {pid} {'(存活)' if pid_alive(pid) else '(已失效)'}")
@@ -731,12 +767,13 @@ def cmd_xqm_status(_args) -> int:
         print("  PID      : (未记录)")
     print(f"  端口     : {port} {'(监听中)' if port_used else '(空闲)'}")
     print(f"  健康检查 : {'✓ 通过' if healthy else ('✗ 失败' if port_used else '—')}")
-    print(f"  地址     : http://{host}:{port}")
+    print(f"  绑定     : {host}")
+    print(f"  访问地址 : {_xqm_access_urls(host, port)}")
 
     if healthy:
         import urllib.request, json
         try:
-            req = urllib.request.Request(f"http://{host}:{port}/api/v1/health")
+            req = urllib.request.Request(f"http://{XQM_CLIENT_HOST}:{port}/api/v1/health")
             data = json.loads(urllib.request.urlopen(req, timeout=3).read())
             acc_info = data.get("data", {})
             total = acc_info.get("total", 0)
@@ -756,10 +793,13 @@ def cmd_xqm_ui(_args) -> int:
     host = os.environ.get("XQM_HOST", XQM_DEFAULT_HOST)
     port = int(os.environ.get("XQM_PORT", str(XQM_DEFAULT_PORT)))
 
-    # 优先用 xtquant_manager 托管的 HTTP 服务打开
-    if _xqm_health_check(host, port):
-        url = f"http://{host}:{port}/"
+    # 浏览器无法访问 0.0.0.0；统一用 127.0.0.1 打开（本机浏览器场景）
+    if _xqm_health_check(XQM_CLIENT_HOST, port):
+        url = f"http://{XQM_CLIENT_HOST}:{port}/"
         print(f"  打开 web2.0: {url}")
+        lan_ip = _get_lan_ip()
+        if host in ("0.0.0.0", "::") and lan_ip and lan_ip != XQM_CLIENT_HOST:
+            print(f"  局域网访问: http://{lan_ip}:{port}/")
         webbrowser.open(url)
         return 0
 
@@ -776,7 +816,7 @@ def cmd_xqm_ui(_args) -> int:
     else:
         print("  未找到 web 界面文件。请先: cd web2.0 && npm run build")
 
-    print(f"  提示: 用 miniqmt.bat 菜单 [d] 启动 xtquant_manager 后，访问 http://{host}:{port}/")
+    print(f"  提示: 用 miniqmt.bat 菜单 [d] 启动 xtquant_manager 后，访问 http://{XQM_CLIENT_HOST}:{port}/")
     return 0
 
 
@@ -826,7 +866,7 @@ def cmd_menu(_args) -> int:
         mode_label = "实盘" if not simulation else "模拟"
         scope_label = "所有账号" if all_accounts else "指定账号"
         pref = _load_web_mode_pref()
-        mode_desc = "web1.0 (Flask :5000起)" if pref == "1" else "web2.0 (xtquant_manager :8888)"
+        mode_desc = "web1.0 (Flask :5000起, 仅本机)" if pref == "1" else "web2.0 (xtquant_manager :8888, 全网卡)"
         print(f"\n[启动{scope_label} - {mode_label}模式]\n")
         web2 = ask(f"Web 界面 [1=web1.0, 2=web2.0] (默认 {pref}={mode_desc}): ")
         if web2 == "":
@@ -846,7 +886,7 @@ def cmd_menu(_args) -> int:
             if not _xqm_is_port_in_use(XQM_DEFAULT_PORT):
                 cmd_xqm_start(argparse.Namespace())
             else:
-                if _xqm_health_check(XQM_DEFAULT_HOST, XQM_DEFAULT_PORT):
+                if _xqm_health_check(XQM_CLIENT_HOST, XQM_DEFAULT_PORT):
                     print("  ✓ xtquant_manager 已在运行")
                 else:
                     print("  ⚠ xtquant_manager 端口被占用但健康检查失败，尝试重启...")
@@ -861,8 +901,8 @@ def cmd_menu(_args) -> int:
         if web2:
             print()
             print("=" * 48)
-            print(f"  web2.0 访问地址: http://{XQM_DEFAULT_HOST}:{XQM_DEFAULT_PORT}")
-            print(f"  API 文档:        http://{XQM_DEFAULT_HOST}:{XQM_DEFAULT_PORT}/docs")
+            print(f"  web2.0 访问地址: {_xqm_access_urls(XQM_DEFAULT_HOST, XQM_DEFAULT_PORT)}")
+            print(f"  API 文档:        http://{XQM_CLIENT_HOST}:{XQM_DEFAULT_PORT}/docs")
             print("=" * 48)
 
         pause_return()
@@ -889,6 +929,8 @@ def cmd_menu(_args) -> int:
         print("   [7] 启动所有账号 (实盘，启动时选择 web1.0/web2.0)")
         print("   [8] 启动所有账号 (模拟，启动时选择 web1.0/web2.0)")
         print("   [9] 启动指定账号 (选择实盘/模拟 + web1.0/web2.0)")
+        print("        web1.0 = Flask :5000 起, 仅本机访问 (配置/监控用)")
+        print("        web2.0 = xtquant_manager :8888, 全网卡 (只读查询/对外)")
         print()
         print("  [日常运行 - 停止]")
         print("   [a] 停止所有账号 (优雅, 30s 超时)")
