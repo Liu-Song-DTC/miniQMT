@@ -881,6 +881,19 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
         except Exception:
             return JSONResponse({"status": "success", "data": [], "data_version": 0, "no_change": False})
 
+    @app.get("/api/accounts", tags=["兼容"])
+    async def flask_list_accounts():
+        """Flask 兼容: /api/accounts —— 无 token 列出账号 ID 列表。
+
+        与 v1 /api/v1/accounts 相同数据，但不受 Depends(verify_token) 保护，
+        与其他 Flask 兼容只读端点(positions/status 等)的安全级别一致。
+        互联网只读用户(没有 token)需要此端点才能拿到正确的账号列表，
+        否则前端只能用占位 ID，导致 X-Account-Id 始终匹配不上、
+        网关 fallback 总返回第一个账号的数据。
+        """
+        accounts = _get_manager().list_accounts()
+        return JSONResponse({"status": "success", "success": True, "data": {"accounts": accounts}})
+
     @app.get("/api/connection/status", tags=["兼容"])
     async def flask_connection_status(request: Request):
         """Flask 兼容: /api/connection/status（connected 为顶层字段）"""

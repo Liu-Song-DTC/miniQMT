@@ -118,22 +118,28 @@ export function isGatewayMode(): boolean {
 export async function discoverAccounts(): Promise<AccountEntry[]> {
   const conn = loadConnection()
   if (conn.mode !== 'xtquant' && conn.mode !== 'auto') return []
-  try {
-    const base = conn.xtquantUrl
-    const headers: Record<string, string> = {}
-    if (conn.apiToken) headers['X-API-Token'] = conn.apiToken
-    const resp = await fetch(`${base}/api/v1/accounts`, { headers })
-    if (!resp.ok) return []
-    const data = await resp.json()
-    if (!data.success) return []
-    const ids: string[] = data.data?.accounts || []
-    return ids.map((id, i) => ({
-      id,
-      label: `账户${String.fromCharCode(65 + i)}`,
-    }))
-  } catch {
-    return []
+  const base = conn.xtquantUrl
+  const headers: Record<string, string> = {}
+  if (conn.apiToken) headers['X-API-Token'] = conn.apiToken
+
+  // 优先用 Flask 兼容端点(无 token 要求)，互联网只读用户也能拿到账号列表;
+  // 回退到 v1(需 token)，兼容老版本网关。
+  const endpoints = [`${base}/api/accounts`, `${base}/api/v1/accounts`]
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, { headers })
+      if (!resp.ok) continue
+      const data = await resp.json()
+      if (!data.success) continue
+      const ids: string[] = data.data?.accounts || []
+      if (!ids.length) continue
+      return ids.map((id, i) => ({
+        id,
+        label: `账户${String.fromCharCode(65 + i)}`,
+      }))
+    } catch { /* try next */ }
   }
+  return []
 }
 
 // ===== 安全检测 =====
