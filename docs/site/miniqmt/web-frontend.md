@@ -1,0 +1,162 @@
+# Web 前端（web1.0 / web2.0）
+
+miniQMT 提供**两套**Web 界面，对应两种后端连接架构。本章节解释何时用哪一套、能力边界、连接设置面板用法、菜单启动方式，以及远程部署。
+
+---
+
+## 双模式架构对比
+
+| 维度 | web1.0（Flask 直连） | web2.0（xtquant_manager 网关） |
+|------|---------------------|--------------------------------|
+| 前端栈 | Flask 模板渲染 (`web1.0/`) | Vue3 + Vite + TypeScript + Tailwind + Pinia (`web2.0/`) |
+| 后端 | 每账号独立 Flask 进程 (`web_server.py`) | 单一 xtquant_manager 网关进程 |
+| 默认端口 | `:5000`、`:5001`、…（每账号一个） | `:8888`（多账号共用） |
+| 绑定地址 | `127.0.0.1` — **只绑本机**（避免误暴露写操作 API） | `0.0.0.0` — 全部网卡（含 LAN/WAN） |
+| 适用场景 | 完整功能：配置管理 / 监控开关 / 模拟买入 / 初始化持仓 | 多账号只读监控 + 下单；远程访问 |
+| 实时推送 | ✅ SSE | ❌ 仅 3s/10s 轮询 |
+| PWA 离线 | ❌ | ✅ 可安装到桌面 |
+
+!!! tip "为什么 web1.0 只绑本机"
+    web1.0 暴露完整写操作 API（配置保存、模拟买入、数据清除等），如果绑定到公网会有安全风险。
+    远程访问/局域网共享用 web2.0 + xtquant_manager 网关，写操作仅限本机使用 web1.0。
+
+---
+
+## 网关模式能力边界
+
+web2.0 通过 xtquant_manager 网关连接时，**写操作受限**。设计上网关只承担「多账号只读监控 + 下单」职责，配置/初始化等敏感写操作回到 Flask 直连模式完成。
+
+| 功能 | 网关模式 | 说明 |
+|------|---------|------|
+| 持仓查看（名称/盈亏/止损/建仓） | ✅ 完整 | QMT 实时数据 + SQLite 持久化元数据合并 |
+| 多账号切换 | ✅ 完整 | `X-Account-Id` 请求头隔离 |
+| 账户资产/连接状态 | ✅ 完整 | 可用余额 / 持仓市值 / 总资产 |
+| 交易记录 | ✅ 完整 | 优先读 SQLite `trade_records`（与 web1.0 同源） |
+| 下单（买/卖） | ✅ 完整 | 通过 v1 接口 |
+| 动态止盈状态查询 | ✅ 只读 | `/api/v1/stop-profit/status` |
+| 参数设置面板 | 🔒 只读 | 修改需 Flask 直连模式 |
+| 监控开关 | 🔒 不可用 | 需 Flask 直连模式 |
+| 模拟买入 / 清空 / 导入 / 初始化 | 🔒 不可用 | 需 Flask 直连模式 |
+| 动态止盈控制（开关） | 🔒 不可用 | 需 Flask 直连模式 |
+| SSE 实时推送 | 🔒 不可用 | 依赖 3s/10s 轮询 |
+
+前端通过 [`isGatewayMode()`](https://github.com/weihong-su/miniQMT/blob/main/web2.0/src/api/accounts.ts) 检测当前模式，自动隐藏写操作按钮并显示「🔒 网关模式 · 只读监控+下单」徽章。
+
+---
+
+## 连接设置面板
+
+顶部 ⚙ 齿轮按钮打开「连接设置」面板：
+
+```
+┌──────────────────────────────────────────────┐
+│ 当前: HTTPS (安全) — 后端也必须 HTTPS         │
+├──────────────────────────────────────────────┤
+│ 后端模式：  [ 网关模式 ]  [ 直连模式 ]        │
+├──────────────────────────────────────────────┤
+│ 网关地址：  http://127.0.0.1:8888             │
+│ API Token： •••••••••••• (留空=不验证)        │
+├──────────────────────────────────────────────┤
+│ 连通性测试：[ 测试连接 ]                      │
+│   ✓ 连接成功 — 2 个账号, 2 个在线             │
+└──────────────────────────────────────────────┘
+```
+
+### 字段说明
+
+| 字段 | 网关模式 | 直连模式 |
+|------|---------|---------|
+| 地址 | 网关地址（所有账户共用），如 `http://127.0.0.1:8888` | Flask 地址（每账户独立），在账户下拉菜单的 ✎ 中编辑 |
+| Token | xtquant_manager 的 `api_token` | Flask 的 `QMT_API_TOKEN` 环境变量值 |
+| 测试连接 | `GET /api/v1/health` — 显示账号总数与在线数 | `GET /api/status` — 显示账户 ID |
+
+### 自动化行为
+
+- **保存后自动发现账号**：保存连接配置后调用 `discoverAccounts()`，从网关同步真实账号 ID 到下拉列表（无需手动新增）
+- **HTTPS Mixed Content 警告**：HTTPS 页面访问 HTTP 后端会被浏览器阻止，面板自动给出警告
+- **无 Token 远程警告**：远程连接而不设 Token 时提示安全风险
+- **8s 超时 + 非 JSON 检测**：测试连接遇到反代/Nginx 错误页时给出明确诊断
+
+---
+
+## 启动菜单（miniqmt.bat）
+
+```
+[7] 启动所有账号 (实盘，启动时选择 web1.0/web2.0)
+[8] 启动所有账号 (模拟，启动时选择 web1.0/web2.0)
+[9] 启动指定账号 (选择实盘/模拟 + web1.0/web2.0)
+       web1.0 = Flask :5000 起, 仅本机访问 (配置/监控用)
+       web2.0 = xtquant_manager :8888, 全网卡 (只读查询/对外)
+[d] 启动 XtQuantManager 网关
+[e] 停止 XtQuantManager 网关
+[f] XtQuantManager 状态
+[g] 打开 web2.0 UI（浏览器）
+[h] 重启 XtQuantManager 网关
+[i] 查看 XtQuantManager 日志
+```
+
+### Web 模式偏好记忆
+
+启动菜单 [7]/[8]/[9] 会读取 `data/.web_mode` 中上次的选择：
+
+- `1` → web1.0（Flask）— 系统在每账号端口上启动完整 Flask 服务
+- `2` → web2.0（xtquant_manager）— 主程序设 `QMT_NO_FLASK=1` 跳过 Flask，由 xtquant_manager 统一提供网关与静态文件托管
+
+每次选择都会持久化，下次启动直接套用偏好。
+
+### 绑定地址 vs 客户端地址分离
+
+xtquant_manager 在 [_launcher.py](https://github.com/weihong-su/miniQMT/blob/main/scripts/_launcher.py) 中明确分离两个概念，避免 `0.0.0.0` 被错误用作客户端目标：
+
+| 常量 | 值 | 用途 |
+|------|----|----|
+| `XQM_DEFAULT_HOST` | `0.0.0.0` | **绑定地址** — 监听全部网卡，对外可达 |
+| `XQM_CLIENT_HOST` | `127.0.0.1` | **客户端地址** — 本机健康检查、浏览器打开 |
+
+启动后菜单会同时显示「本机 URL」和「局域网 URL」：
+
+```
+✓ xtquant_manager 已启动
+  Web UI:          http://127.0.0.1:8888  (本机)  |  http://192.168.1.10:8888  (局域网)
+  API 文档:        http://127.0.0.1:8888/docs
+```
+
+---
+
+## Vercel 远程部署（web2.0）
+
+如需将 web2.0 部署到 Vercel/Netlify 等公网托管，通过 Cloudflare Tunnel 暴露 Windows 上的 xtquant_manager：
+
+```
+Vercel (静态 UI) ──HTTPS──► Cloudflare Tunnel ──► Windows xtquant_manager :8888 ──► QMT
+```
+
+完整步骤（含 Tunnel 配置、Token 安全清单、CORS 排错）参见 [web2.0/VERCEL_DEPLOY.md](https://github.com/weihong-su/miniQMT/blob/main/web2.0/VERCEL_DEPLOY.md)。
+
+### 关键安全要点
+
+- ⚠️ **必须设置 `api_token`**：远程暴露唯一的安全防线，用强随机字符串（≥32 位）
+- ⚠️ **必须用 HTTPS 隧道**：Cloudflare Tunnel 自动 HTTPS；直接暴露 `:8888` 到公网会触发浏览器 Mixed Content 拦截
+- 远程用户始终通过网关模式接入，写操作（配置/监控/初始化）只能在本机用 web1.0 完成
+
+---
+
+## 开发与构建
+
+```bash
+cd web2.0
+npm install               # 仅首次
+npm run dev               # 开发模式 (http://localhost:5173，热更新)
+npm run build             # 生产构建 → dist/
+```
+
+构建产物 `web2.0/dist/` 会被 xtquant_manager 自动托管（静态文件 + SPA fallback），也可直接部署到 Vercel。
+
+---
+
+## 相关文档
+
+- [Web API](web-api.md) — REST 端点完整列表（标注网关模式可用性）
+- [架构说明](architecture.md) — 双层存储、信号检测与执行分离
+- [XtQuantManager 概述](../xqm/index.md) — 网关详细文档
+- [web2.0/VERCEL_DEPLOY.md](https://github.com/weihong-su/miniQMT/blob/main/web2.0/VERCEL_DEPLOY.md) — Vercel 远程部署完整指南
