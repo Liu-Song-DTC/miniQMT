@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-05-30
+
 ### Added
 - **web2.0 启动模式选择**: `miniqmt.bat` 菜单 [7]/[8]/[9] 启动前可选 `web1.0` (Flask :5000 起) 或 `web2.0` (xtquant_manager :8888)，偏好持久化到 `data/.web_mode`
 - **xtquant_manager 内嵌 web2.0**: 网关启动后 `http://localhost:8888/` 直接托管 `web2.0/dist/`（静态文件 + SPA fallback），菜单 [g] 打开浏览器
@@ -109,7 +111,8 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/weihong-su/miniQMT/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/weihong-su/miniQMT/compare/V2.0.0-Beta...v3.0.0
 [2.0.0-Beta]: https://github.com/weihong-su/miniQMT/compare/V1.0.0...V2.0.0-Beta
 [1.0.0]: https://github.com/weihong-su/miniQMT/releases/tag/V1.0.0
