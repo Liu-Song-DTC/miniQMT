@@ -61,7 +61,8 @@ def _run_config_in_subprocess(tmpdir: str, account_id: Optional[str],
 
     result = subprocess.run(
         [sys.executable, "-c", snippet],
-        cwd=tmpdir, env=env, capture_output=True, text=True, timeout=30,
+        cwd=tmpdir, env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(

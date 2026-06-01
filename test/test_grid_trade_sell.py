@@ -385,7 +385,28 @@ class TestGridTradeSell(unittest.TestCase):
         cursor = self.db.conn.cursor()
         cursor.execute("SELECT trade_id FROM grid_trades WHERE session_id=1")
         trade = cursor.fetchone()
-        self.assertEqual(trade['trade_id'], 'REAL_SELL_12345')
+        self.assertIsNone(trade, "实盘委托提交后不应立即记录 grid_trades")
+        self.assertIn('REAL_SELL_12345', self.manager.pending_grid_orders)
+        self.assertEqual(session.sell_count, 0)
+        self.assertAlmostEqual(session.current_investment, 5000.0, places=2)
+
+        fake_trade = type('FakeTrade', (), {})()
+        fake_trade.order_id = 'REAL_SELL_12345'
+        fake_trade.stock_code = '000001.SZ'
+        fake_trade.traded_volume = 200
+        fake_trade.traded_price = 10.5
+        fake_trade.trade_id = 'REAL_SELL_DEAL_1'
+        confirmed = self.manager.handle_deal_callback(fake_trade)
+
+        self.assertTrue(confirmed, "收到成交回报后应确认网格卖出")
+        cursor.execute("SELECT trade_id, volume, amount FROM grid_trades WHERE session_id=1")
+        trade = cursor.fetchone()
+        self.assertEqual(trade['trade_id'], 'REAL_SELL_DEAL_1')
+        self.assertEqual(trade['volume'], 200)
+        self.assertAlmostEqual(trade['amount'], 200 * 10.5, places=2)
+        self.assertNotIn('REAL_SELL_12345', self.manager.pending_grid_orders)
+        self.assertEqual(session.sell_count, 1)
+        self.assertAlmostEqual(session.current_investment, 5000.0 - 200 * 10.5, places=2)
 
         print(f"[OK] 实盘卖出成功, trade_id={trade['trade_id']}")
 

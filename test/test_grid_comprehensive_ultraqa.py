@@ -259,7 +259,8 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
             'ENABLE_MONITORING': config.ENABLE_MONITORING,
             'ENABLE_GRID_TRADING': config.ENABLE_GRID_TRADING,
             'GRID_REQUIRE_PROFIT_TRIGGERED': config.GRID_REQUIRE_PROFIT_TRIGGERED,
-            'DEBUG_SIMU_STOCK_DATA': config.DEBUG_SIMU_STOCK_DATA
+            'DEBUG_SIMU_STOCK_DATA': config.DEBUG_SIMU_STOCK_DATA,
+            'GRID_CONFIRM_LIVE_ORDER_BY_DEAL': getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
         }
 
         config.ENABLE_SIMULATION_MODE = False  # 关闭模拟交易模式
@@ -267,6 +268,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         config.ENABLE_GRID_TRADING = True  # 启用网格交易
         config.GRID_REQUIRE_PROFIT_TRIGGERED = False  # 关闭止盈触发要求
         config.DEBUG_SIMU_STOCK_DATA = True  # 绕过交易时间检查
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = False
 
         logger.info("="*80)
         logger.info("网格交易综合测试 - UltraQA版本")
@@ -308,6 +310,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         config.ENABLE_GRID_TRADING = cls.original_config['ENABLE_GRID_TRADING']
         config.GRID_REQUIRE_PROFIT_TRIGGERED = cls.original_config['GRID_REQUIRE_PROFIT_TRIGGERED']
         config.DEBUG_SIMU_STOCK_DATA = cls.original_config['DEBUG_SIMU_STOCK_DATA']
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = cls.original_config['GRID_CONFIRM_LIVE_ORDER_BY_DEAL']
 
         # 计算执行时间
         end_time = datetime.now()

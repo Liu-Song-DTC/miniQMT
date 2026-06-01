@@ -316,8 +316,8 @@ class TestPositionManagerDynamicSubscribe(TestBase):
         self.pm._sync_real_positions_to_memory(real_df)
         self.mock_dm.ensure_subscribed.assert_called_with('000920.SZ')
 
-    def test_sync_real_existing_position_no_ensure_subscribed(self):
-        """_sync_real_positions_to_memory 更新已有持仓时不调用 ensure_subscribed"""
+    def test_sync_real_existing_position_ensures_subscription_idempotently(self):
+        """_sync_real_positions_to_memory 更新已有持仓时也应幂等调用 ensure_subscribed"""
         import pandas as pd
 
         real_df = pd.DataFrame([{
@@ -339,7 +339,7 @@ class TestPositionManagerDynamicSubscribe(TestBase):
             self.pm.memory_conn.commit()
 
         self.pm._sync_real_positions_to_memory(real_df)
-        self.mock_dm.ensure_subscribed.assert_not_called()
+        self.mock_dm.ensure_subscribed.assert_called_with('000920.SZ')
 
 
 # ══════════════════════════════════════════════════════════════

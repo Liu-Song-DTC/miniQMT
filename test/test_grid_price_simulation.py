@@ -452,6 +452,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         cls._orig_monitoring = config.ENABLE_MONITORING
         cls._orig_cooldown = config.GRID_LEVEL_COOLDOWN
         cls._orig_require_profit = config.GRID_REQUIRE_PROFIT_TRIGGERED
+        cls._orig_confirm_live_order = getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
 
         # 设置测试配置
         config.ENABLE_SIMULATION_MODE = False   # 关闭模拟模式（使用mock）
@@ -459,6 +460,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         config.ENABLE_MONITORING = True          # 开启监控
         config.GRID_LEVEL_COOLDOWN = 0           # 禁用冷却（便于快速测试）
         config.GRID_REQUIRE_PROFIT_TRIGGERED = True
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = False
 
         # 创建共享组件
         cls.db_manager = DatabaseManager()
@@ -484,6 +486,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         config.ENABLE_MONITORING = cls._orig_monitoring
         config.GRID_LEVEL_COOLDOWN = cls._orig_cooldown
         config.GRID_REQUIRE_PROFIT_TRIGGERED = cls._orig_require_profit
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = cls._orig_confirm_live_order
 
         cls._print_summary()
 

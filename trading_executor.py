@@ -276,8 +276,12 @@ class TradingExecutor:
             self._update_position_after_trade(stock_code, trade_type, price, volume)
             
             # 处理网格交易
-            if config.GRID_TRADING_ENABLED:
-                self._handle_grid_trade_after_deal(stock_code, trade_type, price, volume, trade_id)
+            grid_manager = getattr(self.position_manager, 'grid_manager', None)
+            if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
+                try:
+                    grid_manager.handle_deal_callback(deal_info)
+                except Exception as grid_err:
+                    logger.warning(f"网格成交确认处理失败: {grid_err}")
             
             # 执行回调函数
             if trade_id in self.callbacks:

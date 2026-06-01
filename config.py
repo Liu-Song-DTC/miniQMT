@@ -335,7 +335,7 @@ DYNAMIC_TAKE_PROFIT = [
 # 4. 止损价格计算：未触发首次止盈时为成本价×(1-7%)，已触发后为最高价×对应系数
 
 # ===== 旧的网格交易参数已废弃 =====
-# GRID_TRADING_ENABLED, GRID_STEP_RATIO, GRID_POSITION_RATIO, GRID_MAX_LEVELS
+# ENABLE_GRID_TRADING, GRID_DEFAULT_PRICE_INTERVAL, GRID_DEFAULT_POSITION_RATIO
 # 已被config.py末尾的新网格交易配置替代(第504-547行)
 
 
@@ -642,6 +642,15 @@ GRID_LOG_LEVEL = "INFO"  # DEBUG时输出详细价格追踪
 
 # 网格交易策略标识
 GRID_STRATEGY_NAME = "grid"  # 用于trade_records表的strategy字段
+
+# 实盘网格委托确认机制
+# True: 实盘网格下单成功后仅登记待确认委托，等成交回报到达后再更新网格统计/重建网格
+# False: 兼容旧行为（不推荐实盘使用）
+GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+
+# 网格信号执行前复核
+GRID_SIGNAL_MAX_AGE_SECONDS = 60       # 网格信号最长有效期(秒)
+GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO = 0.01  # 执行前最新价相对触发价最大容忍偏离(1%)
 
 def get_grid_default_config(position_market_value: float) -> dict:
     """

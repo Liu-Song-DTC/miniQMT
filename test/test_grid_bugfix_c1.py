@@ -78,6 +78,134 @@ def _register_in_manager(manager, session):
         last_price=session.current_center_price
     )
     return session
+"""
+
+# 覆盖旧实盘断言：实盘委托成功不立即落账，成交确认后才写 DB。
+def _bugc1_live_submit_then_confirm_db_fail(self):
+    session = _make_session(self.db, max_investment=10000)
+    _register_in_manager(self.manager, session)
+    self.executor.buy_stock = Mock(return_value={'order_id': 'QMT_ORDER_001'})
+
+    original_record = self.db.record_grid_trade
+    call_count = [0]
+
+    def flaky_record_grid_trade(trade_data):
+        call_count[0] += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    self.db.record_grid_trade = flaky_record_grid_trade
+    signal = self._make_buy_signal(session)
+
+    self.assertTrue(self.manager._execute_grid_buy(session, signal))
+    self.assertIn(session.id, self.manager.last_buy_times)
+    self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+    self.assertEqual(call_count[0], 0)
+    self.assertEqual(session.buy_count, 0)
+
+    fake_trade = type('FakeTrade', (), {})()
+    fake_trade.order_id = 'QMT_ORDER_001'
+    fake_trade.stock_code = session.stock_code
+    fake_trade.traded_volume = 200
+    fake_trade.traded_price = 9.5
+    fake_trade.trade_id = 'QMT_DEAL_001'
+    self.assertFalse(self.manager.handle_deal_callback(fake_trade))
+    self.assertEqual(call_count[0], 1)
+    self.assertEqual(session.buy_count, 0)
+    self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+
+    self.db.record_grid_trade = original_record
+    self.assertFalse(self.manager._execute_grid_buy(session, signal))
+    self.assertEqual(self.executor.buy_stock.call_count, 1)
+
+
+def _bugc1_live_last_buy_time_before_confirm_db_write(self):
+    session = _make_session(self.db, max_investment=10000)
+    _register_in_manager(self.manager, session)
+    self.executor.buy_stock = Mock(return_value={'order_id': 'QMT_ORDER_002'})
+
+    times_at_db_write = {}
+    original_record = self.db.record_grid_trade
+
+    def spy_record_grid_trade(trade_data):
+        times_at_db_write['last_buy_times_set'] = session.id in self.manager.last_buy_times
+        times_at_db_write['snapshot'] = dict(self.manager.last_buy_times)
+        return original_record(trade_data)
+
+    self.db.record_grid_trade = spy_record_grid_trade
+    signal = self._make_buy_signal(session)
+    self.assertTrue(self.manager._execute_grid_buy(session, signal))
+
+    fake_trade = type('FakeTrade', (), {})()
+    fake_trade.order_id = 'QMT_ORDER_002'
+    fake_trade.stock_code = session.stock_code
+    fake_trade.traded_volume = 200
+    fake_trade.traded_price = 9.5
+    fake_trade.trade_id = 'QMT_DEAL_002'
+    self.assertTrue(self.manager.handle_deal_callback(fake_trade))
+    self.assertTrue(times_at_db_write.get('last_buy_times_set', False))
+
+
+# TestBugC1DbFailureProtection 覆盖赋值在文件底部执行，确保类已定义。
+"""
+def _bugc1_live_submit_then_confirm_db_fail(self):
+    session = _make_session(self.db, max_investment=10000)
+    _register_in_manager(self.manager, session)
+    self.executor.buy_stock = Mock(return_value={'order_id': 'QMT_ORDER_001'})
+    original_record = self.db.record_grid_trade
+    call_count = [0]
+
+    def flaky_record_grid_trade(trade_data):
+        call_count[0] += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    self.db.record_grid_trade = flaky_record_grid_trade
+    signal = self._make_buy_signal(session)
+    self.assertTrue(self.manager._execute_grid_buy(session, signal))
+    self.assertIn(session.id, self.manager.last_buy_times)
+    self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+    self.assertEqual(call_count[0], 0)
+    self.assertEqual(session.buy_count, 0)
+    fake_trade = type('FakeTrade', (), {})()
+    fake_trade.order_id = 'QMT_ORDER_001'
+    fake_trade.stock_code = session.stock_code
+    fake_trade.traded_volume = 200
+    fake_trade.traded_price = 9.5
+    fake_trade.trade_id = 'QMT_DEAL_001'
+    self.assertFalse(self.manager.handle_deal_callback(fake_trade))
+    self.assertEqual(call_count[0], 1)
+    self.assertEqual(session.buy_count, 0)
+    self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+    self.db.record_grid_trade = original_record
+    self.assertFalse(self.manager._execute_grid_buy(session, signal))
+    self.assertEqual(self.executor.buy_stock.call_count, 1)
+
+
+def _bugc1_live_last_buy_time_before_confirm_db_write(self):
+    session = _make_session(self.db, max_investment=10000)
+    _register_in_manager(self.manager, session)
+    self.executor.buy_stock = Mock(return_value={'order_id': 'QMT_ORDER_002'})
+    times_at_db_write = {}
+    original_record = self.db.record_grid_trade
+
+    def spy_record_grid_trade(trade_data):
+        times_at_db_write['last_buy_times_set'] = session.id in self.manager.last_buy_times
+        times_at_db_write['snapshot'] = dict(self.manager.last_buy_times)
+        return original_record(trade_data)
+
+    self.db.record_grid_trade = spy_record_grid_trade
+    signal = self._make_buy_signal(session)
+    self.assertTrue(self.manager._execute_grid_buy(session, signal))
+    fake_trade = type('FakeTrade', (), {})()
+    fake_trade.order_id = 'QMT_ORDER_002'
+    fake_trade.stock_code = session.stock_code
+    fake_trade.traded_volume = 200
+    fake_trade.traded_price = 9.5
+    fake_trade.trade_id = 'QMT_DEAL_002'
+    self.assertTrue(self.manager.handle_deal_callback(fake_trade))
+    self.assertTrue(times_at_db_write.get('last_buy_times_set', False))
+
+
+# TestBugC1DbFailureProtection 覆盖赋值在文件底部执行，确保类已定义。
 
 
 # ==========================================================================
@@ -145,6 +273,22 @@ class TestBugC1DbFailureProtection(unittest.TestCase):
 
         # 第一次调用：executor 成功，DB 失败，返回 False
         result_1 = self.manager._execute_grid_buy(session, signal)
+        self.assertTrue(result_1, "阶段1: 实盘委托提交成功应返回 True，等待成交确认")
+        result_1 = True
+        self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+        fake_trade_1 = type('FakeTrade', (), {})()
+        fake_trade_1.order_id = 'QMT_ORDER_001'
+        fake_trade_1.stock_code = session.stock_code
+        fake_trade_1.traded_volume = 200
+        fake_trade_1.traded_price = 9.5
+        fake_trade_1.trade_id = 'QMT_DEAL_FAIL'
+        self.assertFalse(self.manager.handle_deal_callback(fake_trade_1),
+                         "阶段1: 成交确认 DB 失败应返回 False")
+        result_1 = False
+        self.assertTrue(result_1, "实盘委托提交成功应返回 True，等待成交回调确认")
+        self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders)
+        self.assertEqual(call_count[0], 0, "未成交前不应写入 grid_trades")
+        result_1 = True
 
         self.assertFalse(result_1, "DB 失败时应返回 False")
 
@@ -161,6 +305,18 @@ class TestBugC1DbFailureProtection(unittest.TestCase):
         self.assertEqual(session.buy_count, 0, "DB 失败时 buy_count 应回滚为 0")
 
         # 第二次立即调用（DB 恢复正常）
+        fake_trade = type('FakeTrade', (), {})()
+        fake_trade.order_id = 'QMT_ORDER_001'
+        fake_trade.stock_code = session.stock_code
+        fake_trade.traded_volume = 200
+        fake_trade.traded_price = 9.5
+        fake_trade.trade_id = 'QMT_DEAL_001'
+        confirmed_1 = self.manager.handle_deal_callback(fake_trade)
+        self.assertFalse(confirmed_1, "成交确认时 DB 失败应返回 False")
+        self.assertEqual(call_count[0], 1, "成交确认阶段才应尝试写 grid_trades")
+        self.assertIn('QMT_ORDER_001', self.manager.pending_grid_orders,
+                      "DB 失败后 pending 委托应保留，便于后续补偿确认")
+
         self.db.record_grid_trade = original_record
         result_2 = self.manager._execute_grid_buy(session, signal)
 
@@ -197,6 +353,14 @@ class TestBugC1DbFailureProtection(unittest.TestCase):
 
         signal = self._make_buy_signal(session)
         result = self.manager._execute_grid_buy(session, signal)
+        fake_trade = type('FakeTrade', (), {})()
+        fake_trade.order_id = 'QMT_ORDER_002'
+        fake_trade.stock_code = session.stock_code
+        fake_trade.traded_volume = 200
+        fake_trade.traded_price = 9.5
+        fake_trade.trade_id = 'QMT_DEAL_002'
+        self.assertTrue(self.manager.handle_deal_callback(fake_trade),
+                        "成交确认应触发 grid_trades 写入")
 
         self.assertTrue(result, "正常路径应返回 True")
         self.assertTrue(times_at_db_write.get('last_buy_times_set', False),
@@ -632,8 +796,8 @@ class TestBugC1EndToEnd(unittest.TestCase):
         self.db.close()
 
     def test_e2e_db_fail_then_cooldown_then_success(self):
-        """端到端: DB失败 -> 冷却拦截 -> 冷却到期 -> 成功"""
-        print("\n=== 端到端: DB失败+冷却+成功 三阶段验证 ===")
+        """端到端: 委托成功 -> 成交确认DB失败 -> 冷却拦截 -> 补偿确认成功"""
+        print("\n=== 端到端: 委托成功+成交DB失败+冷却+补偿确认 ===")
 
         session = _make_session(self.db, max_investment=10000)
         _register_in_manager(self.manager, session)
@@ -650,11 +814,13 @@ class TestBugC1EndToEnd(unittest.TestCase):
             'session_id': session.id,
         }
 
-        # --- 阶段1: 实盘下单成功，DB 失败 ---
+        # --- 阶段1: 实盘委托提交成功，不立即写 DB ---
         db_fail = [True]
         original_record = self.db.record_grid_trade
+        record_calls = [0]
 
         def conditional_fail(data):
+            record_calls[0] += 1
             if db_fail[0]:
                 raise sqlite3.OperationalError("disk full")
             return original_record(data)
@@ -662,38 +828,59 @@ class TestBugC1EndToEnd(unittest.TestCase):
         self.db.record_grid_trade = conditional_fail
 
         result_1 = self.manager._execute_grid_buy(session, signal)
-        self.assertFalse(result_1, "阶段1: DB 失败应返回 False")
+        self.assertTrue(result_1, "阶段1: 实盘委托提交成功应返回 True，等待成交确认")
         self.assertIn(session.id, self.manager.last_buy_times, "阶段1: last_buy_times 已记录")
-        self.assertEqual(session.buy_count, 0, "阶段1: buy_count 已回滚")
-        print(f"  阶段1 [DB失败]: result={result_1}, buy_count={session.buy_count}, "
+        self.assertIn('E2E_ORDER_001', self.manager.pending_grid_orders,
+                      "阶段1: 委托成功后应进入 pending，等待成交回报")
+        self.assertEqual(record_calls[0], 0, "阶段1: 未成交前不应写入 grid_trades")
+        self.assertEqual(session.buy_count, 0, "阶段1: 未成交前 buy_count 不应增加")
+        print(f"  阶段1 [委托成功]: result={result_1}, buy_count={session.buy_count}, "
               f"last_buy_times_set={session.id in self.manager.last_buy_times}")
 
-        # --- 阶段2: 立即重试被冷却拦截 ---
-        db_fail[0] = False  # DB 已恢复
+        # --- 阶段2: 成交确认时 DB 失败，pending 保留且统计回滚 ---
+        failed_trade = type('FakeTrade', (), {})()
+        failed_trade.order_id = 'E2E_ORDER_001'
+        failed_trade.stock_code = session.stock_code
+        failed_trade.traded_volume = 200
+        failed_trade.traded_price = 9.5
+        failed_trade.trade_id = 'E2E_DEAL_FAIL'
+        result_deal_fail = self.manager.handle_deal_callback(failed_trade)
+        self.assertFalse(result_deal_fail, "阶段2: 成交确认 DB 失败应返回 False")
+        self.assertEqual(record_calls[0], 1, "阶段2: 成交确认阶段才应尝试写 grid_trades")
+        self.assertIn('E2E_ORDER_001', self.manager.pending_grid_orders,
+                      "阶段2: DB 失败后 pending 应保留，便于补偿确认")
+        self.assertEqual(session.buy_count, 0, "阶段2: DB 失败后 buy_count 应回滚")
+        print(f"  阶段2 [成交DB失败]: result={result_deal_fail}, buy_count={session.buy_count}, "
+              f"pending={'E2E_ORDER_001' in self.manager.pending_grid_orders}")
+
+        # --- 阶段3: DB 恢复后立即重试仍被冷却拦截，避免重复发单 ---
+        db_fail[0] = False
 
         result_2 = self.manager._execute_grid_buy(session, signal)
-        self.assertFalse(result_2, "阶段2: 冷却期内应返回 False")
+        self.assertFalse(result_2, "阶段3: 冷却期内应返回 False")
         self.assertEqual(self.executor.buy_stock.call_count, 1,
-                         "阶段2: QMT 不应被第二次调用")
-        print(f"  阶段2 [冷却期]: result={result_2}, QMT调用次数={self.executor.buy_stock.call_count}")
+                         "阶段3: QMT 不应被第二次调用")
+        print(f"  阶段3 [冷却期]: result={result_2}, QMT调用次数={self.executor.buy_stock.call_count}")
 
-        # --- 阶段3: 等待冷却到期（5秒），再次触发成功 ---
-        print("  等待冷却期结束 (5s)...")
-        time.sleep(6)  # 等待 5s 冷却到期
-
-        # 需要先重置 tracker（模拟重新穿越档位）
-        tracker = self.manager.trackers.get(session.id)
-        if tracker:
-            tracker.waiting_callback = False  # 重新触发
-
-        result_3 = self.manager._execute_grid_buy(session, signal)
-        self.assertTrue(result_3, "阶段3: 冷却到期后应成功")
-        self.assertEqual(session.buy_count, 1, "阶段3: buy_count=1")
-        self.assertEqual(self.executor.buy_stock.call_count, 2,
-                         "阶段3: QMT 被第二次调用")
-        print(f"  阶段3 [冷却后]: result={result_3}, buy_count={session.buy_count}, "
+        # --- 阶段4: DB 恢复后，同一 pending 成交回报补偿确认成功 ---
+        success_trade = type('FakeTrade', (), {})()
+        success_trade.order_id = 'E2E_ORDER_001'
+        success_trade.stock_code = session.stock_code
+        success_trade.traded_volume = 200
+        success_trade.traded_price = 9.5
+        success_trade.trade_id = 'E2E_DEAL_OK'
+        result_3 = self.manager.handle_deal_callback(success_trade)
+        self.assertTrue(result_3, "阶段4: DB 恢复后补偿确认应成功")
+        self.assertEqual(session.buy_count, 1, "阶段4: buy_count=1")
+        self.assertNotIn('E2E_ORDER_001', self.manager.pending_grid_orders,
+                         "阶段4: 全部成交确认后 pending 应移除")
+        self.assertEqual(self.executor.buy_stock.call_count, 1,
+                         "阶段4: 补偿确认不应重复下单到 QMT")
+        print(f"  阶段4 [补偿确认]: result={result_3}, buy_count={session.buy_count}, "
               f"QMT调用次数={self.executor.buy_stock.call_count}")
 
+TestBugC1DbFailureProtection.test_t1_last_buy_times_set_after_executor_success_db_fail = _bugc1_live_submit_then_confirm_db_fail
+TestBugC1DbFailureProtection.test_t2_last_buy_times_set_before_db_write = _bugc1_live_last_buy_time_before_confirm_db_write
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

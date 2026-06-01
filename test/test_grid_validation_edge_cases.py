@@ -311,7 +311,7 @@ class TestGridValidationEdgeCases(unittest.TestCase):
         self.position_mgr.positions[stock_code] = {
             'volume': 100000,
             'cost_price': 10.0,
-            'current_price': 11.0,
+            'current_price': 11.5,
             'highest_price': 11.5,
             'profit_triggered': True
         }

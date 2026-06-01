@@ -1280,6 +1280,9 @@ class PositionManager:
             # 获取当前时间
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+            def _fmt_optional_price(value):
+                return f"{value:.2f}" if value is not None else "None"
+
             with self.memory_conn_lock:
                 cursor = self.memory_conn.cursor()
 
@@ -1356,9 +1359,9 @@ class PositionManager:
                     if final_profit_triggered != existing_profit_triggered:
                         logger.info(f"更新 {stock_code} 持仓: 首次止盈触发: 从 {existing_profit_triggered} 到 {final_profit_triggered}")
                     elif abs(final_highest_price - (old_db_highest_price or 0)) > 0.01:
-                        logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {old_db_highest_price:.2f} 到 {final_highest_price:.2f}")
+                        logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {_fmt_optional_price(old_db_highest_price)} 到 {_fmt_optional_price(final_highest_price)}")
                     elif final_stop_loss_price != (float(result_row['stop_loss_price']) if result_row['stop_loss_price'] is not None else None):  # 替代 result[3]
-                        logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {result_row['stop_loss_price']:.2f} 到 {final_stop_loss_price:.2f}")
+                        logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {_fmt_optional_price(result_row['stop_loss_price'])} 到 {_fmt_optional_price(final_stop_loss_price)}")
 
                 else:
                     # 新增持仓（保持原有逻辑不变）
@@ -1384,7 +1387,7 @@ class PositionManager:
                     """, (stock_code, stock_name, int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value,
                         int(p_available), p_profit_ratio, now, open_date, profit_triggered, final_highest_price, final_stop_loss_price))
 
-                    logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={final_cost_price:.2f}, 最高价={final_highest_price:.2f}, 止损价={final_stop_loss_price:.2f}")
+                    logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={_fmt_optional_price(final_cost_price)}, 最高价={_fmt_optional_price(final_highest_price)}, 止损价={_fmt_optional_price(final_stop_loss_price)}")
 
                 # P0修复: commit操作（移除finally块和row_factory恢复）
                 self.memory_conn.commit()
@@ -3773,6 +3776,14 @@ class PositionManager:
                             args=(stock_code_short,),
                             daemon=True
                         ).start()
+
+            # 网格实盘委托只在成交回报到达后确认落账
+            grid_manager = getattr(self, 'grid_manager', None)
+            if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
+                try:
+                    grid_manager.handle_deal_callback(trade)
+                except Exception as grid_err:
+                    logger.warning(f"[GRID] 成交回调确认网格委托失败: {grid_err}")
         except Exception as e:
             logger.error(f"_on_trade_callback 处理异常: {e}")
 

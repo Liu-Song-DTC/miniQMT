@@ -453,6 +453,23 @@ class TestHardCapValidation(MaxInvTestBase):
         with self.grid_manager.lock:
             after_inv = session.current_investment
         delta = after_inv - before_inv
+        self.assertAlmostEqual(delta, 0.0, places=4,
+                               msg="V3-5: 实盘委托提交后，未成交前不应增加 current_investment")
+        self.assertIn('LIVE_001', self.grid_manager.pending_grid_orders,
+                      "V3-5: 实盘委托应进入待成交确认队列")
+
+        fake_trade = type('FakeTrade', (), {})()
+        fake_trade.order_id = 'LIVE_001'
+        fake_trade.stock_code = code
+        fake_trade.traded_volume = expected_volume
+        fake_trade.traded_price = trigger
+        fake_trade.trade_id = 'LIVE_DEAL_001'
+        confirmed = self.grid_manager.handle_deal_callback(fake_trade)
+
+        self.assertTrue(confirmed, "V3-5: 成交回调到达后应确认网格买入")
+        with self.grid_manager.lock:
+            after_inv = session.current_investment
+        delta = after_inv - before_inv
         self.assertAlmostEqual(delta, expected_delta, places=4,
                                msg=f"V3-5: 投入增量={delta:.4f} 应等于 volume*price={expected_delta:.4f}")
         self.assertLessEqual(after_inv, max_inv + 0.01,
