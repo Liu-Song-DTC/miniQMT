@@ -82,6 +82,8 @@ class PositionManager:
                 self.qmt_connected = True
                 # P0修复: 注册成交回报回调，成交时立即从pending_orders移除跟踪
                 self.qmt_trader.register_trade_callback(self._on_trade_callback)
+                if hasattr(self.qmt_trader, 'register_order_callback'):
+                    self.qmt_trader.register_order_callback(self._on_order_callback)
                 # Fail-Safe: 注册断连回调，QMT崩溃时立即标记 qmt_connected=False
                 self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
 
@@ -254,6 +256,12 @@ class PositionManager:
                     except Exception as e:
                         logger.warning(f'[RECONNECT] 重新注册 trade_callback 失败 (非致命): {e}')
                     # 重新注册断连回调
+                    try:
+                        if hasattr(self.qmt_trader, 'register_order_callback'):
+                            self.qmt_trader.register_order_callback(self._on_order_callback)
+                            logger.info('[RECONNECT] 已重新注册 order_callback')
+                    except Exception as e:
+                        logger.warning(f'[RECONNECT] 重新注册 order_callback 失败 (非致命): {e}')
                     try:
                         self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
                         logger.info('[RECONNECT] 已重新注册 disconnect_callback')
@@ -3786,6 +3794,15 @@ class PositionManager:
                     logger.warning(f"[GRID] 成交回调确认网格委托失败: {grid_err}")
         except Exception as e:
             logger.error(f"_on_trade_callback 处理异常: {e}")
+
+    def _on_order_callback(self, order):
+        """QMT委托状态回调：将撤单、废单等终态转发给网格管理器。"""
+        try:
+            grid_manager = getattr(self, 'grid_manager', None)
+            if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
+                grid_manager.handle_order_callback(order)
+        except Exception as e:
+            logger.warning(f"[GRID] 委托状态回调处理失败: {e}")
 
     def _sync_profit_triggered_to_sqlite(self, stock_code):
         """P1修复: 立即将内存中的profit_triggered=True同步到SQLite，不等待定时同步"""

@@ -319,7 +319,10 @@ class GridTradingManager:
         # 初始化:从数据库加载活跃会话
         logger.info(f"[GRID] GridTradingManager.__init__: 初始化网格交易管理器")
         loaded_count = self._load_active_sessions()
+        pending_count = self._load_open_grid_orders()
         logger.info(f"[GRID] GridTradingManager.__init__: 初始化完成, 已加载 {loaded_count} 个活跃会话")
+        if pending_count:
+            logger.warning(f"[GRID] GridTradingManager.__init__: 恢复 {pending_count} 个未完成网格委托，等待成交/撤废单回报")
 
     @staticmethod
     def _normalize_code(stock_code: str) -> str:
@@ -513,6 +516,69 @@ class GridTradingManager:
         except Exception as e:
             logger.error(f"[GRID] 加载活跃会话失败: {str(e)}")
             return 0
+
+    def _load_open_grid_orders(self) -> int:
+        """系统启动时恢复尚未终结的网格委托"""
+        if not hasattr(self.db, 'get_open_grid_orders'):
+            return 0
+
+        try:
+            open_orders = self.db.get_open_grid_orders()
+        except Exception as e:
+            logger.warning(f"[GRID] 恢复未完成网格委托失败: {e}")
+            return 0
+
+        recovered = 0
+        for order in open_orders:
+            stock_code = order.get('stock_code')
+            session_id = order.get('session_id')
+            session = (
+                self.sessions.get(self._normalize_code(stock_code))
+                or self.sessions.get(stock_code)
+            )
+            if not session or session.id != session_id or session.status != 'active':
+                try:
+                    self.db.update_grid_order(order['order_id'], {
+                        'status': 'orphaned',
+                        'last_error': 'active session not found during recovery'
+                    })
+                except Exception:
+                    pass
+                logger.warning(
+                    f"[GRID] 未完成委托无法恢复，已标记orphaned order_id={order.get('order_id')}, "
+                    f"session_id={session_id}, stock_code={stock_code}"
+                )
+                continue
+
+            try:
+                signal = json.loads(order.get('raw_signal') or '{}')
+            except Exception:
+                signal = {}
+            if not signal:
+                signal = {
+                    'stock_code': stock_code,
+                    'signal_type': order.get('side'),
+                    'grid_level': session.current_center_price,
+                    'trigger_price': order.get('expected_price'),
+                    'session_id': session_id,
+                }
+
+            self.pending_grid_orders[str(order['order_id'])] = {
+                'order_id': str(order['order_id']),
+                'session_id': session_id,
+                'stock_code': stock_code,
+                'side': order.get('side'),
+                'signal': signal,
+                'requested_volume': int(order.get('requested_volume') or 0),
+                'expected_price': float(order.get('expected_price') or 0),
+                'filled_volume': int(order.get('filled_volume') or 0),
+                'filled_amount': float(order.get('filled_amount') or 0),
+                'confirmed_trade_ids': set(),
+                'created_at': order.get('submitted_at') or datetime.now().isoformat()
+            }
+            recovered += 1
+
+        return recovered
 
     def start_grid_session(self, stock_code: str, user_config: dict) -> GridSession:
         """启动网格交易会话（三阶段设计，避免AB-BA死锁）
@@ -1185,7 +1251,7 @@ class GridTradingManager:
     def _register_pending_grid_order(self, order_id: str, session: GridSession, signal: dict,
                                      side: str, volume: int, expected_price: float) -> None:
         normalized_order_id = str(order_id)
-        self.pending_grid_orders[normalized_order_id] = {
+        pending_info = {
             'order_id': normalized_order_id,
             'session_id': session.id,
             'stock_code': session.stock_code,
@@ -1197,6 +1263,21 @@ class GridTradingManager:
             'confirmed_trade_ids': set(),
             'created_at': datetime.now().isoformat()
         }
+        if hasattr(self.db, 'create_grid_order'):
+            self.db.create_grid_order({
+                'order_id': normalized_order_id,
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'side': side,
+                'status': 'submitted',
+                'requested_volume': int(volume),
+                'expected_price': float(expected_price),
+                'filled_volume': 0,
+                'filled_amount': 0.0,
+                'submitted_at': pending_info['created_at'],
+                'raw_signal': json.dumps(dict(signal), ensure_ascii=False, default=str)
+            })
+        self.pending_grid_orders[normalized_order_id] = pending_info
         logger.info(
             f"[GRID] pending order registered: order_id={normalized_order_id}, "
             f"session_id={session.id}, side={side}, volume={volume}, price={expected_price:.2f}"
@@ -1204,6 +1285,20 @@ class GridTradingManager:
 
     def _record_confirmed_grid_trade(self, session: GridSession, signal: dict, side: str,
                                      price: float, volume: int, trade_id: str) -> bool:
+        """按真实成交回报落账，并在DB失败时回滚内存统计"""
+        return self._record_confirmed_grid_trade_with_order(
+            session=session,
+            signal=signal,
+            side=side,
+            price=price,
+            volume=volume,
+            trade_id=trade_id
+        )
+
+    def _record_confirmed_grid_trade_with_order(self, session: GridSession, signal: dict, side: str,
+                                                price: float, volume: int, trade_id: str,
+                                                order_id: str = None,
+                                                order_updates: dict = None) -> bool:
         """按真实成交回报落账，并在DB失败时回滚内存统计"""
         stock_code = session.stock_code
         price = float(price)
@@ -1254,26 +1349,36 @@ class GridTradingManager:
             'grid_center_after': price
         }
 
-        try:
-            self.db.record_grid_trade(trade_data)
+        updates = {
+            'trade_count': session.trade_count,
+            'current_investment': session.current_investment
+        }
+        if side == 'BUY':
+            updates.update({
+                'buy_count': session.buy_count,
+                'total_buy_amount': session.total_buy_amount,
+                'total_buy_volume': session.total_buy_volume
+            })
+        else:
+            updates.update({
+                'sell_count': session.sell_count,
+                'total_sell_amount': session.total_sell_amount,
+                'total_sell_volume': session.total_sell_volume
+            })
 
-            updates = {
-                'trade_count': session.trade_count,
-                'current_investment': session.current_investment
-            }
-            if side == 'BUY':
-                updates.update({
-                    'buy_count': session.buy_count,
-                    'total_buy_amount': session.total_buy_amount,
-                    'total_buy_volume': session.total_buy_volume
-                })
+        try:
+            if hasattr(self.db, 'record_grid_trade_and_update_session'):
+                self.db.record_grid_trade_and_update_session(
+                    trade_data,
+                    updates,
+                    order_id=order_id,
+                    order_updates=order_updates
+                )
             else:
-                updates.update({
-                    'sell_count': session.sell_count,
-                    'total_sell_amount': session.total_sell_amount,
-                    'total_sell_volume': session.total_sell_volume
-                })
-            self.db.update_grid_session(session.id, updates)
+                self.db.record_grid_trade(trade_data)
+                self.db.update_grid_session(session.id, updates)
+                if order_id and order_updates and hasattr(self.db, 'update_grid_order'):
+                    self.db.update_grid_order(order_id, order_updates)
         except Exception as db_err:
             logger.error(f"[GRID] confirmed trade DB写入失败，回滚内存统计: {db_err}")
             session.trade_count = old_trade_count
@@ -1343,6 +1448,10 @@ class GridTradingManager:
             if trade_id in confirmed_trade_ids:
                 logger.warning(f"[GRID] handle_deal_callback: 重复成交回报已忽略 trade_id={trade_id}, order_id={order_id}")
                 return False
+            if hasattr(self.db, 'grid_trade_exists') and self.db.grid_trade_exists(trade_id):
+                logger.warning(f"[GRID] handle_deal_callback: 成交已在DB落账，忽略重复回报 trade_id={trade_id}, order_id={order_id}")
+                confirmed_trade_ids.add(trade_id)
+                return False
 
             session = (
                 self.sessions.get(self._normalize_code(pending['stock_code']))
@@ -1352,19 +1461,29 @@ class GridTradingManager:
                 logger.warning(f"[GRID] handle_deal_callback: 会话不存在或非active order_id={order_id}, session_id={pending['session_id']}")
                 return False
 
-            success = self._record_confirmed_grid_trade(
+            new_filled_volume = pending.get('filled_volume', 0) + confirmed_volume
+            new_filled_amount = pending.get('filled_amount', 0.0) + price * confirmed_volume
+            order_status = 'filled' if new_filled_volume >= pending['requested_volume'] else 'partial_filled'
+
+            success = self._record_confirmed_grid_trade_with_order(
                 session=session,
                 signal=pending['signal'],
                 side=pending['side'],
                 price=price,
                 volume=confirmed_volume,
-                trade_id=trade_id
+                trade_id=trade_id,
+                order_id=order_id,
+                order_updates={
+                    'status': order_status,
+                    'filled_volume': new_filled_volume,
+                    'filled_amount': new_filled_amount
+                }
             )
             if not success:
                 return False
 
-            pending['filled_volume'] = pending.get('filled_volume', 0) + confirmed_volume
-            pending['filled_amount'] = pending.get('filled_amount', 0.0) + price * confirmed_volume
+            pending['filled_volume'] = new_filled_volume
+            pending['filled_amount'] = new_filled_amount
             confirmed_trade_ids.add(trade_id)
 
             if pending['filled_volume'] >= pending['requested_volume']:
@@ -1375,6 +1494,72 @@ class GridTradingManager:
                     f"[GRID] handle_deal_callback: 委托部分成交 order_id={order_id}, "
                     f"filled={pending['filled_volume']}/{pending['requested_volume']}"
                 )
+            return True
+
+    def handle_order_callback(self, order) -> bool:
+        """处理网格委托状态回报，撤单/废单/拒单时清理 pending 委托"""
+        order_id = self._get_attr_or_key(order, ('order_id', 'm_strOrderSysID', 'order_sys_id'))
+        if order_id is None:
+            return False
+        order_id = str(order_id)
+
+        status = self._get_attr_or_key(order, ('order_status', 'm_nOrderStatus', 'status'))
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            return False
+
+        terminal_status_map = {
+            53: 'partially_canceled',
+            54: 'canceled',
+            57: 'rejected',
+        }
+        if status not in terminal_status_map:
+            return False
+
+        with self.lock:
+            pending = self.pending_grid_orders.get(order_id)
+            if not pending:
+                if hasattr(self.db, 'get_grid_order') and self.db.get_grid_order(order_id):
+                    try:
+                        self.db.update_grid_order(order_id, {
+                            'status': terminal_status_map[status],
+                            'last_error': f'order terminal status {status}'
+                        })
+                    except Exception as db_err:
+                        logger.warning(f"[GRID] handle_order_callback: 更新历史委托状态失败 order_id={order_id}, err={db_err}")
+                    return True
+                return False
+
+            filled_volume = int(pending.get('filled_volume') or 0)
+            requested_volume = int(pending.get('requested_volume') or 0)
+            new_status = terminal_status_map[status]
+            if status == 53 and filled_volume > 0:
+                new_status = 'partial_filled_canceled'
+            elif status == 54 and filled_volume >= requested_volume > 0:
+                new_status = 'filled'
+
+            try:
+                if hasattr(self.db, 'update_grid_order'):
+                    self.db.update_grid_order(order_id, {
+                        'status': new_status,
+                        'filled_volume': filled_volume,
+                        'filled_amount': float(pending.get('filled_amount') or 0.0),
+                        'last_error': f'order terminal status {status}'
+                    })
+            except Exception as db_err:
+                logger.error(f"[GRID] handle_order_callback: 更新委托终态失败 order_id={order_id}, err={db_err}")
+                return False
+
+            self.pending_grid_orders.pop(order_id, None)
+            tracker = self.trackers.get(pending.get('session_id'))
+            if tracker:
+                tracker.waiting_callback = False
+                tracker.crossed_level = None
+            logger.warning(
+                f"[GRID] handle_order_callback: 委托终态已处理 order_id={order_id}, "
+                f"status={status}, mapped={new_status}, filled={filled_volume}/{requested_volume}"
+            )
             return True
 
     def execute_grid_trade(self, signal: dict) -> bool:

@@ -25,6 +25,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
     def __init__(self, order_id_map):
         super().__init__()
         self.order_id_map = order_id_map
+        self.order_callbacks = []
         self.trade_callbacks = []       # 成交回报外部回调列表
         self.disconnect_callbacks = []  # 断连事件外部回调列表（Fail-Safe 用）
 
@@ -47,6 +48,11 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :return:
         """
         logger.info(f"委托回报: 股票代码={order.stock_code}, 委托状态={order.order_status}, 系统订单号={order.order_sysid}")
+        for cb in self.order_callbacks:
+            try:
+                cb(order)
+            except Exception as e:
+                logger.error(f"on_stock_order 外部回调异常: {e}")
     def on_stock_asset(self, asset):
         """
         资金变动推送
@@ -127,6 +133,13 @@ class easy_qmt_trader:
             self._callback.trade_callbacks.append(cb)
         else:
             logger.warning("register_trade_callback: callback尚未初始化，请在connect()后调用")
+
+    def register_order_callback(self, cb):
+        """注册委托状态外部回调，cb(order) 在委托状态变化时调用。"""
+        if self._callback is not None:
+            self._callback.order_callbacks.append(cb)
+        else:
+            logger.warning("register_order_callback: callback尚未初始化，请在connect()后调用")
 
     def register_disconnect_callback(self, cb):
         """

@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import config
+from easy_qmt_trader import MyXtQuantTraderCallback, easy_qmt_trader
 from grid_database import DatabaseManager
 from grid_trading_manager import GridSession, GridTradingManager, PriceTracker
 from position_manager import PositionManager
@@ -42,6 +43,17 @@ class FakeDealInfo:
     m_strTradeID = 'DEAL_OLD_SWITCH'
     m_dComssion = 0.0
     m_strOrderID = 'ORDER_OLD_SWITCH'
+
+
+class FakeOrderInfo:
+    def __init__(self, order_id, stock_code='000001.SZ', status=54):
+        self.m_strOrderSysID = order_id
+        self.m_strInstrumentID = stock_code
+        self.m_nOrderStatus = status
+        self.order_sysid = order_id
+        self.order_id = order_id
+        self.stock_code = stock_code
+        self.order_status = status
 
 
 class TestGridLiveOrderConfirmation(unittest.TestCase):
@@ -118,6 +130,9 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn('ORDER_PARTIAL', self.manager.pending_grid_orders)
+        db_order = self.db.get_grid_order('ORDER_PARTIAL')
+        self.assertIsNotNone(db_order)
+        self.assertEqual(db_order['status'], 'submitted')
         self.assertEqual(session.buy_count, 0)
         self.assertEqual(len(self.db.get_grid_trades(session.id)), 0)
 
@@ -125,6 +140,9 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
             FakeTrade('ORDER_PARTIAL', volume=100, price=10.0, trade_id='DEAL_1')
         ))
         self.assertIn('ORDER_PARTIAL', self.manager.pending_grid_orders)
+        db_order = self.db.get_grid_order('ORDER_PARTIAL')
+        self.assertEqual(db_order['status'], 'partial_filled')
+        self.assertEqual(db_order['filled_volume'], 100)
         self.assertEqual(session.buy_count, 1)
         self.assertEqual(session.total_buy_volume, 100)
         self.assertAlmostEqual(session.current_investment, 1000.0, places=2)
@@ -133,10 +151,62 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
             FakeTrade('ORDER_PARTIAL', volume=100, price=10.1, trade_id='DEAL_2')
         ))
         self.assertNotIn('ORDER_PARTIAL', self.manager.pending_grid_orders)
+        db_order = self.db.get_grid_order('ORDER_PARTIAL')
+        self.assertEqual(db_order['status'], 'filled')
+        self.assertEqual(db_order['filled_volume'], 200)
         self.assertEqual(session.buy_count, 2)
         self.assertEqual(session.total_buy_volume, 200)
         self.assertAlmostEqual(session.current_investment, 2010.0, places=2)
         self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 2)
+
+    def test_order_cancel_reject_cleans_pending_and_persists_status(self):
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        signal = self._buy_signal(session)
+        self.executor.buy_stock.return_value = {'order_id': 'ORDER_CANCEL'}
+
+        self.assertTrue(self.manager.execute_grid_trade(signal))
+        self.assertIn('ORDER_CANCEL', self.manager.pending_grid_orders)
+
+        handled = self.manager.handle_order_callback(FakeOrderInfo('ORDER_CANCEL', status=54))
+
+        self.assertTrue(handled)
+        self.assertNotIn('ORDER_CANCEL', self.manager.pending_grid_orders)
+        db_order = self.db.get_grid_order('ORDER_CANCEL')
+        self.assertEqual(db_order['status'], 'canceled')
+        self.assertEqual(session.buy_count, 0)
+        self.assertEqual(len(self.db.get_grid_trades(session.id)), 0)
+
+    def test_open_grid_orders_recovered_on_manager_restart(self):
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        signal = self._buy_signal(session)
+        self.executor.buy_stock.return_value = {'order_id': 'ORDER_RESTART'}
+
+        self.assertTrue(self.manager.execute_grid_trade(signal))
+
+        restarted = GridTradingManager(self.db, self.position_manager, self.executor)
+        self.assertIn('ORDER_RESTART', restarted.pending_grid_orders)
+        self.assertTrue(restarted.handle_deal_callback(
+            FakeTrade('ORDER_RESTART', volume=200, price=10.0, trade_id='DEAL_RESTART')
+        ))
+        self.assertNotIn('ORDER_RESTART', restarted.pending_grid_orders)
+        self.assertEqual(self.db.get_grid_order('ORDER_RESTART')['status'], 'filled')
+
+    def test_duplicate_deal_ignored_by_db_idempotency(self):
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        signal = self._buy_signal(session)
+        self.executor.buy_stock.return_value = {'order_id': 'ORDER_DUP'}
+
+        self.assertTrue(self.manager.execute_grid_trade(signal))
+        trade = FakeTrade('ORDER_DUP', volume=100, price=10.0, trade_id='DEAL_DUP')
+        self.assertTrue(self.manager.handle_deal_callback(trade))
+        self.assertFalse(self.manager.handle_deal_callback(trade))
+        self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 1)
 
     def test_stale_signal_rejected_before_order(self):
         config.ENABLE_SIMULATION_MODE = False
@@ -196,6 +266,40 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
                 setattr(config, 'GRID_TRADING_ENABLED', old_value)
 
         executor.position_manager.grid_manager.handle_deal_callback.assert_called_once()
+
+    def test_trading_executor_order_callback_notifies_grid_manager(self):
+        executor = TradingExecutor.__new__(TradingExecutor)
+        executor.position_manager = Mock()
+        executor.position_manager.grid_manager = Mock()
+        executor.order_cache = {}
+        executor.callbacks = {}
+
+        with patch.object(config, 'ENABLE_GRID_TRADING', True):
+            executor._on_order_callback(FakeOrderInfo('ORDER_NOTIFY', status=54))
+
+        executor.position_manager.grid_manager.handle_order_callback.assert_called_once()
+
+    def test_easy_qmt_order_callback_dispatches_external_callbacks(self):
+        callback = MyXtQuantTraderCallback({})
+        trader = easy_qmt_trader.__new__(easy_qmt_trader)
+        trader._callback = callback
+        handler = Mock()
+        order = FakeOrderInfo('ORDER_QMT_NOTIFY', status=54)
+
+        trader.register_order_callback(handler)
+        callback.on_stock_order(order)
+
+        handler.assert_called_once_with(order)
+
+    def test_position_manager_order_callback_notifies_grid_manager(self):
+        position_manager = PositionManager.__new__(PositionManager)
+        position_manager.grid_manager = Mock()
+        order = FakeOrderInfo('ORDER_PM_NOTIFY', status=57)
+
+        with patch.object(config, 'ENABLE_GRID_TRADING', True):
+            position_manager._on_order_callback(order)
+
+        position_manager.grid_manager.handle_order_callback.assert_called_once_with(order)
 
 
 if __name__ == '__main__':

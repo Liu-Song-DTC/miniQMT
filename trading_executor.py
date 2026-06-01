@@ -322,6 +322,13 @@ class TradingExecutor:
             logger.info(f"收到委托回调: {stock_code}, 委托号: {order_id}, 状态: {status_desc.get(status, '未知')}")
             
             # 如果委托已完成（已成、已撤、废单），移除回调
+            grid_manager = getattr(self.position_manager, 'grid_manager', None)
+            if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
+                try:
+                    grid_manager.handle_order_callback(order_info)
+                except Exception as grid_err:
+                    logger.warning(f"网格委托状态回调处理失败: {grid_err}")
+
             if status in [54, 56, 57]:
                 if order_id in self.callbacks:
                     logger.debug(f"委托 {order_id} 已完成，移除回调")

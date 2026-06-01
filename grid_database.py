@@ -300,6 +300,40 @@ class DatabaseManager:
             ON grid_trades(trade_time)
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS grid_orders (
+                order_id TEXT PRIMARY KEY,
+                session_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                side TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'submitted',
+                requested_volume INTEGER NOT NULL,
+                expected_price REAL NOT NULL,
+                filled_volume INTEGER DEFAULT 0,
+                filled_amount REAL DEFAULT 0,
+                last_error TEXT,
+                submitted_at TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                raw_signal TEXT,
+                FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_orders_session
+            ON grid_orders(session_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_orders_status
+            ON grid_orders(status)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_orders_stock
+            ON grid_orders(stock_code)
+        """)
+
         # 创建grid_config_templates表(网格配置模板)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grid_config_templates (
@@ -429,6 +463,7 @@ class DatabaseManager:
             raise ValueError(f"update_grid_session: 非法字段名 {invalid_fields}，拒绝执行以防 SQL 注入")
 
         with self.lock:
+            should_commit = not self.conn.in_transaction
             set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
             values = list(updates.values()) + [session_id]
 
@@ -438,7 +473,8 @@ class DatabaseManager:
                 SET {set_clause}, updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
             """, values)
-            self.conn.commit()
+            if should_commit:
+                self.conn.commit()
             logger.debug(f"[GRID-DB] update_grid_session: 更新完成 session_id={session_id}, affected_rows={cursor.rowcount}")
 
     def stop_grid_session(self, session_id: int, reason: str):
@@ -511,6 +547,7 @@ class DatabaseManager:
         logger.debug(f"[GRID-DB] record_grid_trade: trade_data={trade_data}")
 
         with self.lock:
+            should_commit = not self.conn.in_transaction
             cursor = self.conn.cursor()
             cursor.execute("""
                 INSERT INTO grid_trades
@@ -534,11 +571,125 @@ class DatabaseManager:
                 trade_data.get('grid_center_before'),
                 trade_data.get('grid_center_after')
             ))
-            self.conn.commit()
+            if should_commit:
+                self.conn.commit()
             trade_id = cursor.lastrowid
             logger.info(f"[GRID-DB] record_grid_trade: 记录成功 id={trade_id}, session_id={trade_data.get('session_id')}, "
                        f"trade_type={trade_data.get('trade_type')}, volume={trade_data.get('volume')}, amount={trade_data.get('amount')}")
             return trade_id
+
+    def create_grid_order(self, order_data: dict) -> None:
+        """持久化网格委托，用于重启恢复和撤废单处理"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO grid_orders
+                (order_id, session_id, stock_code, side, status,
+                 requested_volume, expected_price, filled_volume, filled_amount,
+                 submitted_at, raw_signal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    session_id=excluded.session_id,
+                    stock_code=excluded.stock_code,
+                    side=excluded.side,
+                    status=excluded.status,
+                    requested_volume=excluded.requested_volume,
+                    expected_price=excluded.expected_price,
+                    filled_volume=excluded.filled_volume,
+                    filled_amount=excluded.filled_amount,
+                    submitted_at=excluded.submitted_at,
+                    raw_signal=excluded.raw_signal,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                str(order_data['order_id']),
+                order_data['session_id'],
+                order_data['stock_code'],
+                order_data['side'],
+                order_data.get('status', 'submitted'),
+                int(order_data['requested_volume']),
+                float(order_data['expected_price']),
+                int(order_data.get('filled_volume', 0)),
+                float(order_data.get('filled_amount', 0.0)),
+                order_data.get('submitted_at', datetime.now().isoformat()),
+                order_data.get('raw_signal')
+            ))
+            self.conn.commit()
+
+    def update_grid_order(self, order_id: str, updates: dict) -> None:
+        """更新网格委托状态"""
+        allowed_fields = {
+            'status', 'filled_volume', 'filled_amount', 'last_error', 'raw_signal'
+        }
+        invalid_fields = set(updates.keys()) - allowed_fields
+        if invalid_fields:
+            raise ValueError(f"update_grid_order: 非法字段名 {invalid_fields}")
+        if not updates:
+            return
+
+        with self.lock:
+            should_commit = not self.conn.in_transaction
+            set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
+            values = list(updates.values()) + [str(order_id)]
+            cursor = self.conn.cursor()
+            cursor.execute(f"""
+                UPDATE grid_orders
+                SET {set_clause}, updated_at=CURRENT_TIMESTAMP
+                WHERE order_id=?
+            """, values)
+            if should_commit:
+                self.conn.commit()
+
+    def get_grid_order(self, order_id: str):
+        """获取网格委托"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_orders WHERE order_id=?
+            """, (str(order_id),))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def grid_trade_exists(self, trade_id: str) -> bool:
+        """检查成交回报是否已经落账，用于重启后的幂等保护"""
+        if not trade_id:
+            return False
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT 1 FROM grid_trades WHERE trade_id=? LIMIT 1
+            """, (str(trade_id),))
+            return cursor.fetchone() is not None
+
+    def get_open_grid_orders(self) -> list:
+        """获取尚未终结的网格委托"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_orders
+                WHERE status IN ('submitted', 'partial_filled')
+                ORDER BY submitted_at ASC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def record_grid_trade_and_update_session(self, trade_data: dict, session_updates: dict,
+                                             order_id: str = None, order_updates: dict = None) -> int:
+        """在一个事务中写入成交明细、更新会话汇总和委托状态"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("BEGIN")
+                grid_trade_id = self.record_grid_trade(trade_data)
+
+                self.update_grid_session(trade_data['session_id'], session_updates)
+
+                if order_id and order_updates:
+                    self.update_grid_order(order_id, order_updates)
+
+                self.conn.commit()
+                return grid_trade_id
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def get_grid_trades(self, session_id: int, limit=50, offset=0) -> list:
         """获取网格交易历史"""
