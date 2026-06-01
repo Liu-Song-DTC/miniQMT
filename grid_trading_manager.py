@@ -1177,6 +1177,71 @@ class GridTradingManager:
 
         return None
 
+    def _get_price_limits(self, stock_code: str):
+        """获取标的当日涨停价/跌停价。
+
+        来源: xtdata.get_instrument_detail 的 UpStopPrice/DownStopPrice 字段。
+        获取失败时返回 (None, None)，由调用方 fail-open 处理。
+        """
+        try:
+            data_manager = getattr(self.position_manager, 'data_manager', None)
+            xt = getattr(data_manager, 'xt', None) if data_manager else None
+            if xt is None or not hasattr(xt, 'get_instrument_detail'):
+                return None, None
+            detail = xt.get_instrument_detail(stock_code)
+            if not isinstance(detail, dict):
+                return None, None
+
+            def _first_positive(keys):
+                for k in keys:
+                    v = detail.get(k)
+                    if v is not None:
+                        try:
+                            fv = float(v)
+                            if fv > 0:
+                                return fv
+                        except (TypeError, ValueError):
+                            continue
+                return None
+
+            up_limit = _first_positive(('UpStopPrice', 'upStopPrice', 'HighLimit', '涨停价'))
+            down_limit = _first_positive(('DownStopPrice', 'downStopPrice', 'LowLimit', '跌停价'))
+            return up_limit, down_limit
+        except Exception as e:
+            logger.debug(f"[GRID] _get_price_limits: 获取涨跌停价失败 stock_code={stock_code}, err={e}")
+            return None, None
+
+    def _check_tradable(self, stock_code: str, signal_type: str, current_price):
+        """实盘下单前涨跌停/停牌防护。
+
+        守卫的核心价值是涨跌停拦截(executor 层不检查涨跌停)；停牌则有 executor
+        盘口兜底(对手价模式下取不到盘口价会拒单)，故停牌判定从严，避免误伤降级场景：
+
+        - 涨停板: 拦截买入(封板买不进/追涨)
+        - 跌停板: 拦截卖出(封板卖不出)
+        - 停牌: 仅当"标的明细可查(说明标的真实存在)但拿不到有效现价"时拦截；
+                明细查不到(数据源降级/测试 mock)时 fail-open，交 executor 盘口兜底。
+        - 涨跌停价获取失败: fail-open(放行)
+
+        Returns:
+            (是否可交易: bool, 原因: str)
+        """
+        up_limit, down_limit = self._get_price_limits(stock_code)
+        has_limits = up_limit is not None or down_limit is not None
+
+        # 停牌检测: 标的明细可查但无有效现价 → 疑似停牌
+        if current_price is None or current_price <= 0:
+            if has_limits:
+                return False, "标的明细可查但无有效现价(疑似停牌)"
+            return True, ""  # 明细不可查(降级/mock)，放行交 executor 兜底
+
+        eps = getattr(config, 'GRID_PRICE_LIMIT_EPS', 0.001)
+        if signal_type == 'BUY' and up_limit is not None and current_price >= up_limit - eps:
+            return False, f"已涨停(现价{current_price:.2f}>=涨停{up_limit:.2f})，跳过买入"
+        if signal_type == 'SELL' and down_limit is not None and current_price <= down_limit + eps:
+            return False, f"已跌停(现价{current_price:.2f}<=跌停{down_limit:.2f})，跳过卖出"
+        return True, ""
+
     def _parse_signal_timestamp(self, value):
         if value is None:
             return None
@@ -1604,6 +1669,15 @@ class GridTradingManager:
                     logger.warning(f"[GRID] execute_grid_trade: 信号复核失败，拒绝执行 stock_code={stock_code}, signal_type={signal_type}")
                     return False
 
+                # 涨跌停/停牌防护(仅实盘)：封板/停牌时跳过本次交易，避免无效挂单。
+                # 不重置追踪器——市场恢复后价格仍满足回调条件即可重新触发执行。
+                if not config.ENABLE_SIMULATION_MODE and getattr(config, 'GRID_ENABLE_PRICE_LIMIT_GUARD', True):
+                    tradable, reason = self._check_tradable(stock_code, signal_type, latest_price)
+                    if not tradable:
+                        logger.warning(f"[GRID] execute_grid_trade: 涨跌停/停牌防护拦截 "
+                                       f"stock_code={stock_code}, signal_type={signal_type}: {reason}")
+                        return False
+
                 # 执行交易前的状态
                 logger.debug(f"[GRID] execute_grid_trade: 交易前状态 trade_count={session.trade_count}, "
                             f"current_investment={session.current_investment:.2f}, profit_ratio={session.get_profit_ratio()*100:.2f}%")
@@ -1760,13 +1834,22 @@ class GridTradingManager:
             # ── V1 修复：明确传入 volume+price，避免 executor 用市价重算量 ──────────────
             # 若只传 amount，executor 会用实时市价重算股数，当计算量≤0时强制设100股，
             # 可能导致实际下单金额远超 actual_amount（例如剩余50元却下了100股×市价的单）。
-            # 解决方案：直接传 volume 和 trigger_price，QMT 按指定价格下限价单。
+            # 解决方案：直接传 volume，价格按 order_price 下限价单。
+            #
+            # 对手价模式(GRID_USE_COUNTERPARTY_PRICE)：price=None 时 executor 自动取卖三价，
+            # 提高成交概率(参考动态止盈下单逻辑)。仅在成交确认模式下启用——落账以真实成交价
+            # 为准(handle_deal_callback)，volume 与硬上限以 trigger_price 估算、deal 回报修正。
+            use_counterparty = (
+                getattr(config, 'GRID_USE_COUNTERPARTY_PRICE', True)
+                and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
+            )
+            order_price = None if use_counterparty else trigger_price
             logger.debug(f"[GRID] _execute_grid_buy: 调用executor.buy_stock 实盘买入 "
-                         f"volume={volume}, price={trigger_price:.2f}")
+                         f"volume={volume}, price={'卖三价(对手价)' if order_price is None else f'{order_price:.2f}'}")
             result = self.executor.buy_stock(
                 stock_code=stock_code,
                 volume=volume,
-                price=trigger_price,
+                price=order_price,
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:
@@ -1918,16 +2001,23 @@ class GridTradingManager:
             trade_id = f"GRID_SIM_SELL_{int(time.time()*1000)}"
             logger.info(f"[GRID] _execute_grid_sell: [模拟]网格卖出: {stock_code}, 数量={sell_volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
         else:
-            # V1-SELL修复: 卖出同样传入 price=trigger_price，与买入 V1 修复对称。
-            # 若不传 price，executor 使用买三价（市价）成交，实际成交价可能偏离 trigger_price，
-            # 导致 sell_amount = sell_volume * trigger_price 与实际成交金额不一致，
-            # current_investment 回收额偏差累积，profit_ratio 统计失真。
+            # V1-SELL修复: 卖出明确传入 volume，避免 executor 用市价重算量。
+            #
+            # 对手价模式(GRID_USE_COUNTERPARTY_PRICE)：price=None 时 executor 自动取买三价，
+            # 提高成交概率(参考动态止盈下单逻辑)。仅在成交确认模式下启用——落账以真实成交价
+            # 为准(handle_deal_callback)，current_investment 回收额按 deal 回报精确统计，不失真。
+            # 非确认模式下回退 trigger_price 限价，保持 V1-SELL 统计一致性。
+            use_counterparty = (
+                getattr(config, 'GRID_USE_COUNTERPARTY_PRICE', True)
+                and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
+            )
+            order_price = None if use_counterparty else trigger_price
             logger.debug(f"[GRID] _execute_grid_sell: 调用executor.sell_stock 实盘卖出 "
-                         f"volume={sell_volume}, price={trigger_price:.2f}")
+                         f"volume={sell_volume}, price={'买三价(对手价)' if order_price is None else f'{order_price:.2f}'}")
             result = self.executor.sell_stock(
                 stock_code=stock_code,
                 volume=sell_volume,
-                price=trigger_price,
+                price=order_price,
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:

@@ -24,12 +24,27 @@ class MockPositionManager:
         self.positions = {}
         self.signal_lock = __import__('threading').RLock()  # signal_lock
         self.latest_signals = dict()  # latest_signals
+        # data_manager: 供网格涨跌停/停牌守卫读取现价；xt=None 使涨跌停价 fail-open(放行)
+        self.data_manager = _MockDataManager(self)
 
     def get_position(self, stock_code):
         return self.positions.get(stock_code)
 
     def _increment_data_version(self):
         pass
+
+
+class _MockDataManager:
+    """最小行情管理器：从持仓的 current_price 反推现价，xt=None 跳过涨跌停查询"""
+    def __init__(self, owner):
+        self.owner = owner
+        self.xt = None
+
+    def get_latest_data(self, stock_code):
+        pos = self.owner.positions.get(stock_code)
+        if pos and pos.get('current_price'):
+            return {'lastPrice': pos['current_price']}
+        return None
 
 
 class MockTradingExecutor:

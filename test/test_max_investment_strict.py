@@ -149,6 +149,7 @@ class TestExecutorCalledWithVolumePrice(MaxInvTestBase):
             return {'order_id': 'MOCK_ORDER_001'}
 
         with patch.object(config, 'ENABLE_SIMULATION_MODE', False), \
+             patch.object(config, 'GRID_USE_COUNTERPARTY_PRICE', False), \
              patch.object(self.grid_manager.executor, 'buy_stock',
                           side_effect=mock_buy_stock):
             result = self.grid_manager.execute_grid_trade(signal)

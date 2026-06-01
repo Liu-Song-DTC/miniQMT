@@ -652,6 +652,23 @@ GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
 GRID_SIGNAL_MAX_AGE_SECONDS = 60       # 网格信号最长有效期(秒)
 GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO = 0.01  # 执行前最新价相对触发价最大容忍偏离(1%)
 
+# 网格对手价下单(提高成交概率)
+# True: 实盘下单不指定价格，由 executor 取卖三价(买)/买三价(卖)，参考动态止盈下单逻辑，提高成交概率
+# False: 实盘下单使用 trigger_price 限价(兼容旧行为)
+# 注意: 对手价仅在 GRID_CONFIRM_LIVE_ORDER_BY_DEAL=True 时启用，
+#       因为成交以真实回报价落账(handle_deal_callback)，统计才准确；
+#       非确认模式下用 trigger_price 估算落账，强制回退限价以保持 V1/V1-SELL 修复的统计一致性。
+GRID_USE_COUNTERPARTY_PRICE = True
+
+# 网格涨跌停/停牌防护(仅实盘生效)
+# True: 实盘下单前检查标的涨跌停/停牌状态，封板时跳过本次交易，避免无效挂单
+#   - 买入: 现价已达涨停价 → 跳过(封板买不进/追涨)
+#   - 卖出: 现价已达跌停价 → 跳过(封板卖不出)
+#   - 停牌/无有效现价 → 买卖均跳过
+# 涨跌停价获取失败时 fail-open(放行)，仅保留停牌判断
+GRID_ENABLE_PRICE_LIMIT_GUARD = True
+GRID_PRICE_LIMIT_EPS = 0.001  # 涨跌停判定容差(元)，补偿浮点误差
+
 def get_grid_default_config(position_market_value: float) -> dict:
     """
     获取网格交易默认配置

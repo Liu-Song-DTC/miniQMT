@@ -49,11 +49,13 @@ class TestGridTradeBuy(unittest.TestCase):
 
         # 保存原始配置
         self.original_simulation_mode = config.ENABLE_SIMULATION_MODE
+        self.original_use_counterparty = getattr(config, 'GRID_USE_COUNTERPARTY_PRICE', True)
 
     def tearDown(self):
         """测试后清理"""
         # 恢复配置
         config.ENABLE_SIMULATION_MODE = self.original_simulation_mode
+        config.GRID_USE_COUNTERPARTY_PRICE = self.original_use_counterparty
 
         # 关闭数据库
         if hasattr(self, 'db') and self.db:
@@ -264,6 +266,10 @@ class TestGridTradeBuy(unittest.TestCase):
 
         # 切换到实盘模式
         config.ENABLE_SIMULATION_MODE = False
+        # 本测试验证 V1 修复的限价下单路径（传 volume+price、不传 amount），
+        # 显式关闭对手价模式以保留 price==trigger_price 断言；对手价路径由
+        # test_grid_counterparty_price_and_limit_guard.py 覆盖。
+        config.GRID_USE_COUNTERPARTY_PRICE = False
 
         session = self._create_test_session(max_investment=10000, current_investment=0)
         signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
