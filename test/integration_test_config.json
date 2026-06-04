@@ -44,7 +44,8 @@
         "test.test_grid_trade_sell",
         "test.test_grid_trade_fund_management",
         "test.test_grid_trade_statistics",
-        "test.test_grid_trade_rebuild"
+        "test.test_grid_trade_rebuild",
+        "test.test_grid_order_lifecycle_and_ledger"
       ],
       "priority": "high"
     },

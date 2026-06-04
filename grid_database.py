@@ -334,6 +334,66 @@ class DatabaseManager:
             ON grid_orders(stock_code)
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS grid_lots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                buy_trade_id TEXT NOT NULL,
+                buy_order_id TEXT,
+                buy_price REAL NOT NULL,
+                original_volume INTEGER NOT NULL,
+                remaining_volume INTEGER NOT NULL,
+                realized_volume INTEGER DEFAULT 0,
+                buy_amount REAL NOT NULL,
+                opened_at TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                status TEXT NOT NULL DEFAULT 'open',
+                FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_lots_session_status
+            ON grid_lots(session_id, status)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_lots_stock
+            ON grid_lots(stock_code)
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS grid_lot_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                buy_lot_id INTEGER,
+                sell_trade_id TEXT NOT NULL,
+                sell_order_id TEXT,
+                match_type TEXT NOT NULL DEFAULT 'matched',
+                volume INTEGER NOT NULL,
+                buy_price REAL,
+                sell_price REAL NOT NULL,
+                buy_amount REAL DEFAULT 0,
+                sell_amount REAL NOT NULL,
+                realized_pnl REAL DEFAULT 0,
+                matched_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (buy_lot_id) REFERENCES grid_lots(id) ON DELETE SET NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_lot_matches_session
+            ON grid_lot_matches(session_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_grid_lot_matches_sell_trade
+            ON grid_lot_matches(sell_trade_id)
+        """)
+
         # 创建grid_config_templates表(网格配置模板)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grid_config_templates (
@@ -666,20 +726,131 @@ class DatabaseManager:
             cursor = self.conn.cursor()
             cursor.execute("""
                 SELECT * FROM grid_orders
-                WHERE status IN ('submitted', 'partial_filled')
+                WHERE status IN ('submitted', 'partial_filled', 'cancel_requested', 'cancel_failed')
                 ORDER BY submitted_at ASC
             """)
             return [dict(row) for row in cursor.fetchall()]
 
+    def _record_grid_buy_lot(self, cursor, trade_data: dict):
+        """为已确认买入创建网格库存批次。"""
+        volume = int(trade_data['volume'])
+        price = float(trade_data['trigger_price'])
+        amount = float(trade_data['amount'])
+        cursor.execute("""
+            INSERT INTO grid_lots
+            (session_id, stock_code, buy_trade_id, buy_order_id, buy_price,
+             original_volume, remaining_volume, realized_volume, buy_amount,
+             opened_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'open')
+        """, (
+            trade_data['session_id'],
+            trade_data['stock_code'],
+            str(trade_data.get('trade_id') or ''),
+            str(trade_data.get('order_id') or '') if trade_data.get('order_id') else None,
+            price,
+            volume,
+            volume,
+            amount,
+            trade_data.get('trade_time') or datetime.now().isoformat()
+        ))
+
+    def _match_grid_sell_lots(self, cursor, trade_data: dict):
+        """按 FIFO 将已确认卖出匹配到网格买入批次，未匹配部分标记为底仓卖出。"""
+        remaining = int(trade_data['volume'])
+        sell_price = float(trade_data['trigger_price'])
+        sell_trade_id = str(trade_data.get('trade_id') or '')
+        sell_order_id = str(trade_data.get('order_id') or '') if trade_data.get('order_id') else None
+        matched_at = trade_data.get('trade_time') or datetime.now().isoformat()
+
+        cursor.execute("""
+            SELECT * FROM grid_lots
+            WHERE session_id=? AND remaining_volume > 0
+            ORDER BY opened_at ASC, id ASC
+        """, (trade_data['session_id'],))
+        lots = cursor.fetchall()
+
+        for lot in lots:
+            if remaining <= 0:
+                break
+
+            lot_volume = int(lot['remaining_volume'])
+            match_volume = min(remaining, lot_volume)
+            buy_price = float(lot['buy_price'])
+            buy_amount = buy_price * match_volume
+            sell_amount = sell_price * match_volume
+            realized_pnl = sell_amount - buy_amount
+            new_remaining = lot_volume - match_volume
+            new_realized = int(lot['realized_volume'] or 0) + match_volume
+            new_status = 'closed' if new_remaining <= 0 else 'open'
+
+            cursor.execute("""
+                INSERT INTO grid_lot_matches
+                (session_id, stock_code, buy_lot_id, sell_trade_id, sell_order_id,
+                 match_type, volume, buy_price, sell_price, buy_amount, sell_amount,
+                 realized_pnl, matched_at)
+                VALUES (?, ?, ?, ?, ?, 'matched', ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trade_data['session_id'],
+                trade_data['stock_code'],
+                lot['id'],
+                sell_trade_id,
+                sell_order_id,
+                match_volume,
+                buy_price,
+                sell_price,
+                buy_amount,
+                sell_amount,
+                realized_pnl,
+                matched_at
+            ))
+
+            cursor.execute("""
+                UPDATE grid_lots
+                SET remaining_volume=?, realized_volume=?, status=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+            """, (new_remaining, new_realized, new_status, lot['id']))
+            remaining -= match_volume
+
+        if remaining > 0:
+            sell_amount = sell_price * remaining
+            cursor.execute("""
+                INSERT INTO grid_lot_matches
+                (session_id, stock_code, buy_lot_id, sell_trade_id, sell_order_id,
+                 match_type, volume, buy_price, sell_price, buy_amount, sell_amount,
+                 realized_pnl, matched_at)
+                VALUES (?, ?, NULL, ?, ?, 'unmatched', ?, NULL, ?, 0, ?, 0, ?)
+            """, (
+                trade_data['session_id'],
+                trade_data['stock_code'],
+                sell_trade_id,
+                sell_order_id,
+                remaining,
+                sell_price,
+                sell_amount,
+                matched_at
+            ))
+
+    def _apply_grid_ledger(self, cursor, trade_data: dict):
+        """根据成交方向更新真实网格账本。"""
+        trade_type = str(trade_data.get('trade_type') or '').upper()
+        if trade_type == 'BUY':
+            self._record_grid_buy_lot(cursor, trade_data)
+        elif trade_type == 'SELL':
+            self._match_grid_sell_lots(cursor, trade_data)
+
     def record_grid_trade_and_update_session(self, trade_data: dict, session_updates: dict,
                                              order_id: str = None, order_updates: dict = None) -> int:
-        """在一个事务中写入成交明细、更新会话汇总和委托状态"""
+        """在一个事务中写入成交明细、更新会话汇总、委托状态和真实网格账本。"""
         with self.lock:
             cursor = self.conn.cursor()
             try:
                 cursor.execute("BEGIN")
+                if order_id:
+                    trade_data = dict(trade_data)
+                    trade_data['order_id'] = str(order_id)
                 grid_trade_id = self.record_grid_trade(trade_data)
 
+                self._apply_grid_ledger(cursor, trade_data)
                 self.update_grid_session(trade_data['session_id'], session_updates)
 
                 if order_id and order_updates:
@@ -690,6 +861,85 @@ class DatabaseManager:
             except Exception:
                 self.conn.rollback()
                 raise
+
+    def get_grid_lots(self, session_id: int, open_only: bool = False) -> list:
+        """获取网格库存批次。"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            if open_only:
+                cursor.execute("""
+                    SELECT * FROM grid_lots
+                    WHERE session_id=? AND remaining_volume > 0
+                    ORDER BY opened_at ASC, id ASC
+                """, (session_id,))
+            else:
+                cursor.execute("""
+                    SELECT * FROM grid_lots
+                    WHERE session_id=?
+                    ORDER BY opened_at ASC, id ASC
+                """, (session_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_grid_lot_matches(self, session_id: int) -> list:
+        """获取网格批次匹配明细。"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM grid_lot_matches
+                WHERE session_id=?
+                ORDER BY matched_at ASC, id ASC
+            """, (session_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_grid_ledger_summary(self, session_id: int, current_price: float = None) -> dict:
+        """汇总真实网格账本盈亏。"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS lot_count,
+                    COALESCE(SUM(original_volume), 0) AS bought_volume,
+                    COALESCE(SUM(remaining_volume), 0) AS open_volume,
+                    COALESCE(SUM(remaining_volume * buy_price), 0) AS open_cost
+                FROM grid_lots
+                WHERE session_id=?
+            """, (session_id,))
+            lot_row = dict(cursor.fetchone())
+
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS match_count,
+                    COALESCE(SUM(CASE WHEN match_type='matched' THEN volume ELSE 0 END), 0) AS matched_volume,
+                    COALESCE(SUM(CASE WHEN match_type='unmatched' THEN volume ELSE 0 END), 0) AS unmatched_volume,
+                    COALESCE(SUM(CASE WHEN match_type='matched' THEN realized_pnl ELSE 0 END), 0) AS realized_pnl
+                FROM grid_lot_matches
+                WHERE session_id=?
+            """, (session_id,))
+            match_row = dict(cursor.fetchone())
+
+            current_price = float(current_price) if current_price is not None else None
+            open_market_value = (
+                float(lot_row['open_volume']) * current_price
+                if current_price is not None and current_price > 0
+                else 0.0
+            )
+            unrealized_pnl = open_market_value - float(lot_row['open_cost'])
+            true_pnl = float(match_row['realized_pnl']) + unrealized_pnl
+
+            return {
+                'has_ledger': bool(lot_row['lot_count'] or match_row['match_count']),
+                'lot_count': int(lot_row['lot_count'] or 0),
+                'match_count': int(match_row['match_count'] or 0),
+                'bought_volume': int(lot_row['bought_volume'] or 0),
+                'open_volume': int(lot_row['open_volume'] or 0),
+                'matched_volume': int(match_row['matched_volume'] or 0),
+                'unmatched_volume': int(match_row['unmatched_volume'] or 0),
+                'open_cost': float(lot_row['open_cost'] or 0.0),
+                'open_market_value': open_market_value,
+                'realized_pnl': float(match_row['realized_pnl'] or 0.0),
+                'unrealized_pnl': unrealized_pnl,
+                'true_pnl': true_pnl
+            }
 
     def get_grid_trades(self, session_id: int, limit=50, offset=0) -> list:
         """获取网格交易历史"""
