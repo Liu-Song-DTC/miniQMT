@@ -2180,6 +2180,22 @@ class PositionManager:
                         pullback_ratio = (breakout_highest_price - current_price) / breakout_highest_price
                         
                         if pullback_ratio >= config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO:
+                            min_take_profit_price = self._get_initial_take_profit_min_valid_price(cost_price)
+                            if min_take_profit_price > 0 and current_price < min_take_profit_price:
+                                logger.warning(
+                                    f"{stock_code} 回撤止盈信号已失效: 当前价格 {current_price:.2f} "
+                                    f"< 最低有效止盈价 {min_take_profit_price:.2f}，清除突破状态，等待重新突破"
+                                )
+                                self._reset_profit_breakout(stock_code, "below_initial_take_profit_floor")
+                                return None, None
+
+                            if available <= 0:
+                                logger.warning(
+                                    f"{stock_code} 已满足回撤止盈但当前可卖数量为0，暂不生成半仓止盈信号 "
+                                    f"(volume={volume}, available={available})"
+                                )
+                                return None, None
+
                             logger.info(f"{stock_code} 触发回撤止盈，突破后最高价: {breakout_highest_price:.2f}, "
                                     f"当前价格: {current_price:.2f}, 回撤: {pullback_ratio:.2%}")
 
@@ -2363,6 +2379,16 @@ class PositionManager:
                     logger.error(f"🚨 {stock_code} 止盈信号但当前亏损 {profit_ratio:.2%}，拒绝执行")
                     logger.error(f"   成本价: {cost_price:.2f}, 当前价: {current_price:.2f}")
                     return False
+
+                if signal_type == 'take_profit_half':
+                    min_take_profit_price = self._get_initial_take_profit_min_valid_price(cost_price)
+                    if min_take_profit_price > 0 and current_price < min_take_profit_price:
+                        logger.error(
+                            f"🚨 {stock_code} 半仓止盈信号已失效，当前价 {current_price:.2f} "
+                            f"< 最低有效止盈价 {min_take_profit_price:.2f}，拒绝执行"
+                        )
+                        self._reset_profit_breakout(stock_code, "validate_below_initial_take_profit_floor")
+                        return False
 
                 logger.info(f"✅ {stock_code} 止盈信号验证通过，盈利 {profit_ratio:.2%}")
 
@@ -3162,6 +3188,47 @@ class PositionManager:
         except Exception as e:
             logger.error(f"标记 {stock_code} 突破状态失败: {str(e)}")
             return False
+
+    def _reset_profit_breakout(self, stock_code, reason=""):
+        """清除首次止盈突破状态，避免过期回撤信号跨日继续执行。"""
+        try:
+            with self.memory_conn_lock:
+                cursor = self.memory_conn.cursor()
+                cursor.execute("""
+                    UPDATE positions
+                    SET profit_breakout_triggered = ?, breakout_highest_price = ?
+                    WHERE stock_code = ?
+                """, (False, 0.0, stock_code))
+                self.memory_conn.commit()
+
+                if cursor.rowcount > 0:
+                    self.positions_cache = None
+                    reason_text = f"（原因: {reason}）" if reason else ""
+                    logger.info(f"{stock_code} 首次止盈突破状态已清除{reason_text}")
+                    return True
+
+                logger.warning(f"{stock_code} 清除突破状态失败，未找到记录")
+                return False
+
+        except Exception as e:
+            logger.error(f"清除 {stock_code} 突破状态失败: {str(e)}")
+            return False
+
+    def _get_initial_take_profit_min_valid_price(self, cost_price):
+        """首次止盈回撤信号的最低有效价格，允许一个回撤阈值的行情采样滑点。"""
+        try:
+            cost_price = float(cost_price)
+            if cost_price <= 0:
+                return 0.0
+
+            take_profit_ratio = getattr(config, 'INITIAL_TAKE_PROFIT_RATIO', 0.0)
+            pullback_ratio = getattr(config, 'INITIAL_TAKE_PROFIT_PULLBACK_RATIO', 0.0)
+            trigger_floor = cost_price * (1 + take_profit_ratio) * (1 - pullback_ratio)
+            return trigger_floor * (1 - pullback_ratio)
+
+        except (TypeError, ValueError) as e:
+            logger.error(f"计算首次止盈最低有效价格失败: {e}")
+            return 0.0
 
     def _update_breakout_highest_price(self, stock_code, new_highest_price):
         """更新突破后最高价 - 修正版本"""

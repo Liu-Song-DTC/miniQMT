@@ -150,6 +150,67 @@ class TestStopProfitSignalFlow(TestBase):
             self.assertIsNone(signal_type)
             self.assertTrue(mock_mark.called, "应标记突破状态")
 
+    def test_fast_rally_waits_for_pullback_before_half_take_profit(self):
+        """
+        设计目标回归：股价快速突破半仓止盈点后不立即卖出；
+        后续继续冲高时只抬高突破后最高价，小幅回撤不卖，达到配置回撤幅度才半仓止盈。
+        """
+        cost_price = 10.0
+        stock_code = self._insert_position(
+            cost_price=cost_price,
+            current_price=cost_price,
+            profit_triggered=0,
+            profit_breakout_triggered=0,
+            breakout_highest_price=0.0,
+            volume=1000,
+            available=1000,
+        )
+
+        # 第一次快速突破首次止盈阈值：只记录突破状态，不立即卖出。
+        breakout_price = cost_price * (1 + config.INITIAL_TAKE_PROFIT_RATIO + 0.02)
+        signal_type, signal_info = self.pm.check_trading_signals(stock_code, current_price=breakout_price)
+        self.assertIsNone(signal_type)
+        self.assertIsNone(signal_info)
+
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute(
+            "SELECT profit_breakout_triggered, breakout_highest_price FROM positions WHERE stock_code=?",
+            (stock_code,)
+        )
+        row = cursor.fetchone()
+        self.assertTrue(bool(row[0]), "首次突破后应进入等待回撤状态")
+        self.assertAlmostEqual(float(row[1]), breakout_price, places=4)
+
+        # 继续快速上涨：只更新突破后最高价，仍不卖。
+        rally_high = breakout_price * 1.08
+        signal_type, signal_info = self.pm.check_trading_signals(stock_code, current_price=rally_high)
+        self.assertIsNone(signal_type)
+        self.assertIsNone(signal_info)
+
+        cursor.execute(
+            "SELECT breakout_highest_price FROM positions WHERE stock_code=?",
+            (stock_code,)
+        )
+        self.assertAlmostEqual(float(cursor.fetchone()[0]), rally_high, places=4)
+
+        # 小幅回撤但未达到配置回撤阈值：继续等待，不半仓止盈。
+        shallow_pullback_price = rally_high * (1 - config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO / 2)
+        signal_type, signal_info = self.pm.check_trading_signals(stock_code, current_price=shallow_pullback_price)
+        self.assertIsNone(signal_type)
+        self.assertIsNone(signal_info)
+
+        # 达到配置回撤阈值：才触发半仓止盈信号，使用冲高后的最高价作为回撤锚点。
+        valid_pullback_price = rally_high * (1 - config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO - 0.001)
+        signal_type, signal_info = self.pm.check_trading_signals(stock_code, current_price=valid_pullback_price)
+        self.assertEqual(signal_type, "take_profit_half")
+        self.assertIsNotNone(signal_info)
+        self.assertAlmostEqual(signal_info["breakout_highest_price"], rally_high, places=4)
+        self.assertGreaterEqual(
+            signal_info["pullback_ratio"],
+            config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO,
+        )
+        self.assertEqual(signal_info["sell_ratio"], config.INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE)
+
     def test_breakout_update_and_pullback_trigger(self):
         # 已突破，回撤触发首次止盈
         stock_code = self._insert_position(cost_price=10.0, current_price=10.94, profit_triggered=0,
@@ -158,6 +219,96 @@ class TestStopProfitSignalFlow(TestBase):
         self.assertEqual(signal_type, "take_profit_half")
         self.assertIn("pullback_ratio", info)
         self.assertIn("sell_ratio", info)
+
+    def test_stale_pullback_below_initial_floor_resets_breakout(self):
+        """
+        生产回归：当日买入后曾突破首次止盈，但 available=0 无法卖出；
+        次日若低开到首次止盈有效价以下，不应继续执行昨天的回撤止盈。
+        """
+        old_ratio = config.INITIAL_TAKE_PROFIT_RATIO
+        old_pullback = config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO
+        try:
+            config.INITIAL_TAKE_PROFIT_RATIO = 0.055
+            config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO = 0.005
+
+            stock_code = self._insert_position(
+                stock_code="300930.SZ",
+                cost_price=35.40,
+                current_price=36.00,
+                profit_triggered=0,
+                profit_breakout_triggered=1,
+                breakout_highest_price=37.38,
+                volume=1400,
+                available=1400,
+            )
+
+            signal_type, signal_info = self.pm.check_trading_signals(
+                stock_code, current_price=36.00
+            )
+
+            self.assertIsNone(signal_type)
+            self.assertIsNone(signal_info)
+
+            cursor = self.pm.memory_conn.cursor()
+            cursor.execute(
+                "SELECT profit_breakout_triggered, breakout_highest_price FROM positions WHERE stock_code=?",
+                (stock_code,)
+            )
+            row = cursor.fetchone()
+            self.assertFalse(bool(row[0]), "低于首次止盈有效价后应清除突破状态")
+            self.assertEqual(float(row[1]), 0.0)
+        finally:
+            config.INITIAL_TAKE_PROFIT_RATIO = old_ratio
+            config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO = old_pullback
+
+    def test_pullback_with_available_zero_does_not_emit_half_signal(self):
+        """
+        当日买入 T+1/T+0 可卖受限时，信号检测层不应持续吐出可执行半仓止盈信号。
+        这能减少策略层重试噪音，并避免跨日陈旧信号被执行。
+        """
+        stock_code = self._insert_position(
+            cost_price=10.0,
+            current_price=10.94,
+            profit_triggered=0,
+            profit_breakout_triggered=1,
+            breakout_highest_price=11.0,
+            volume=1000,
+            available=0,
+        )
+
+        signal_type, signal_info = self.pm.check_trading_signals(stock_code, current_price=10.94)
+
+        self.assertIsNone(signal_type)
+        self.assertIsNone(signal_info)
+
+    def test_validate_take_profit_half_rejects_below_initial_floor(self):
+        """最终执行校验也要拒绝低于首次止盈有效价的半仓止盈信号。"""
+        old_ratio = config.INITIAL_TAKE_PROFIT_RATIO
+        old_pullback = config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO
+        try:
+            config.INITIAL_TAKE_PROFIT_RATIO = 0.055
+            config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO = 0.005
+
+            stock_code = self._insert_position(
+                stock_code="300930.SZ",
+                cost_price=35.40,
+                current_price=36.00,
+                profit_triggered=0,
+                profit_breakout_triggered=1,
+                breakout_highest_price=37.38,
+                volume=1400,
+                available=1400,
+            )
+
+            ok = self.pm.validate_trading_signal(stock_code, "take_profit_half", {
+                "current_price": 36.00,
+                "cost_price": 35.40,
+            })
+
+            self.assertFalse(ok)
+        finally:
+            config.INITIAL_TAKE_PROFIT_RATIO = old_ratio
+            config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO = old_pullback
 
     def test_breakout_highest_price_update_only(self):
         # 已突破，价格创新高，更新突破后最高价，不触发回撤
