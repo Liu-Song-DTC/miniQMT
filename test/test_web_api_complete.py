@@ -898,6 +898,19 @@ def _make_grid_manager_mock(sessions=None, db_sessions=None):
     mock_gm.db.get_all_grid_sessions.return_value = db_sessions or []
     mock_gm.db.get_grid_trades.return_value = []
     mock_gm.db.get_grid_trade_count.return_value = 0
+    mock_gm.get_pnl_snapshot.return_value = {
+        'profit_ratio': 0.0,
+        'total_pnl_ratio': 0.0,
+        'total_pnl': 0.0,
+        'realized_pnl': 0.0,
+        'unrealized_pnl': 0.0,
+        'cash_flow_profit': 0.0,
+        'cash_flow_ratio': 0.0,
+        'method': 'cash_flow_legacy',
+        'method_detail': 'fallback_mi',
+        'has_ledger': False,
+        'is_degraded': True,
+    }
     return mock_gm
 
 
@@ -951,6 +964,52 @@ class TestGridTrading(WebAPITestBase):
             extra_checks=lambda d: (
                 self.assertTrue(d.get('success')),
                 self.assertIn('sessions', d),
+            ),
+        )
+        mock_pm.grid_manager = None
+
+    def test_01_grid_sessions_pnl_fields_share_snapshot(self):
+        """GET /api/grid/sessions 活跃会话利润字段应与统一 PnL 快照同源。"""
+        mock_session = _make_grid_session_mock(session_id=7, stock_code='000001.SZ')
+        snapshot = {
+            'profit_ratio': 0.1234,
+            'total_pnl_ratio': 0.1234,
+            'total_pnl': 123.4,
+            'realized_pnl': 100.0,
+            'unrealized_pnl': 23.4,
+            'cash_flow_profit': 0.0,
+            'cash_flow_ratio': 0.0,
+            'method': 'ledger_true_pnl',
+            'method_detail': 'ledger(open=0, realized=100.00, unrealized=23.40)',
+            'has_ledger': True,
+            'is_degraded': False,
+        }
+        mock_gm = _make_grid_manager_mock(sessions={'000001': mock_session})
+        mock_gm.get_pnl_snapshot.return_value = snapshot
+        mock_pm.grid_manager = mock_gm
+
+        resp, ms = self._get('/api/grid/sessions')
+
+        self._record(
+            '/api/grid/sessions', 'GET',
+            '网格会话列表 PnL 字段与统一快照一致',
+            resp, ms,
+            extra_checks=lambda d: (
+                self.assertTrue(d.get('success')),
+                self.assertEqual(len(d.get('sessions', [])), 1),
+                self.assertAlmostEqual(d['sessions'][0]['profit_ratio'], snapshot['profit_ratio']),
+                self.assertAlmostEqual(d['sessions'][0]['grid_profit'], snapshot['total_pnl']),
+                self.assertAlmostEqual(d['sessions'][0]['current_investment'], mock_session.current_investment),
+                self.assertAlmostEqual(d['sessions'][0]['max_investment'], mock_session.max_investment),
+                self.assertEqual(d['sessions'][0]['pnl_snapshot']['method'], 'ledger_true_pnl'),
+                self.assertAlmostEqual(
+                    d['sessions'][0]['pnl_snapshot']['profit_ratio'],
+                    d['sessions'][0]['profit_ratio']
+                ),
+                self.assertAlmostEqual(
+                    d['sessions'][0]['pnl_snapshot']['total_pnl'],
+                    d['sessions'][0]['grid_profit']
+                ),
             ),
         )
         mock_pm.grid_manager = None
@@ -1248,15 +1307,53 @@ class TestGridTrading(WebAPITestBase):
     def test_19_get_grid_trades(self):
         """GET /api/grid/trades/<session_id> 获取网格交易历史"""
         mock_gm = _make_grid_manager_mock()
+        mock_gm.db.get_grid_trades.return_value = [
+            {
+                'session_id': 1,
+                'stock_code': '000001.SZ',
+                'trade_type': 'BUY',
+                'grid_level': 10.10,
+                'trigger_price': 10.11,
+                'volume': 200,
+                'amount': 2022.0,
+                'trade_id': 'GRID_BUY_MOCK',
+                'trade_time': '2026-06-06T10:00:00',
+            },
+            {
+                'session_id': 1,
+                'stock_code': '000001.SZ',
+                'trade_type': 'SELL',
+                'grid_level': 10.85,
+                'trigger_price': 10.92,
+                'volume': 200,
+                'amount': 2184.0,
+                'trade_id': 'GRID_SELL_MOCK',
+                'trade_time': '2026-06-06T10:30:00',
+            },
+        ]
+        mock_gm.db.get_grid_trade_count.return_value = 2
         mock_pm.grid_manager = mock_gm
 
-        resp, ms = self._get('/api/grid/trades/1')
+        resp, ms = self._get('/api/grid/trades/1', params={'limit': 20, 'offset': 0})
         data = self._parse(resp)
         self._record(
-            '/api/grid/trades/<session_id>', 'GET',
-            '获取网格交易历史',
+            '/api/grid/trades/<session_id>?limit=20&offset=0', 'GET',
+            '获取网格交易历史（详情弹窗字段）',
             resp, ms,
-            extra_checks=lambda d: self.assertTrue(d.get('success')),
+            extra_checks=lambda d: (
+                self.assertTrue(d.get('success')),
+                self.assertEqual(d.get('total_count'), 2),
+                self.assertEqual(d.get('pagination', {}).get('limit'), 20),
+                self.assertEqual(d.get('pagination', {}).get('offset'), 0),
+                self.assertFalse(d.get('pagination', {}).get('has_more')),
+                self.assertEqual(len(d.get('trades', [])), 2),
+                self.assertEqual(d['trades'][0]['trade_type'], 'BUY'),
+                self.assertEqual(d['trades'][1]['trade_type'], 'SELL'),
+                self.assertIn('trigger_price', d['trades'][0]),
+                self.assertIn('grid_level', d['trades'][0]),
+                self.assertIn('trade_id', d['trades'][0]),
+                self.assertIn('trade_time', d['trades'][0]),
+            ),
         )
         mock_pm.grid_manager = None
 

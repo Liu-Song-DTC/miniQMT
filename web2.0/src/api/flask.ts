@@ -95,6 +95,16 @@ export async function getAllGridSessions() {
   return r.sessions || []
 }
 
+export async function getGridTrades(sessionId: number, limit = 20, offset = 0) {
+  const r = await apiGet(`/api/grid/trades/${sessionId}?limit=${limit}&offset=${offset}`)
+  if (!r?.success) return { trades: [], totalCount: 0, pagination: { limit, offset, has_more: false } }
+  return {
+    trades: r.trades || [],
+    totalCount: r.total_count || 0,
+    pagination: r.pagination || { limit, offset, has_more: false },
+  }
+}
+
 export async function startGrid(params: any) {
   const { stock_code, duration_days, risk_level, ...config } = params
   return apiPost('/api/grid/start', {

@@ -12,6 +12,7 @@ import HeaderBar from './components/HeaderBar.vue'
 import SimulationBanner from './components/SimulationBanner.vue'
 import ConfigPanel from './components/ConfigPanel.vue'
 import HoldingsTable from './components/HoldingsTable.vue'
+import GridStatusPanel from './components/GridStatusPanel.vue'
 import OrderLog from './components/OrderLog.vue'
 
 const system = useSystemStore()
@@ -56,6 +57,7 @@ watch(() => system.currentAccountId, () => {
     <main class="flex-1 p-3 md:p-5 space-y-3 md:space-y-5 max-w-[1600px] mx-auto w-full">
       <ConfigPanel />
       <HoldingsTable @refresh="refreshAll" />
+      <GridStatusPanel />
       <OrderLog />
     </main>
   </div>

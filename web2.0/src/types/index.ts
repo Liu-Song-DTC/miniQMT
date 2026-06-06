@@ -109,18 +109,51 @@ export interface GridConfig {
 export interface GridSession {
   session_id: number
   stock_code: string
-  status: 'active' | 'stopped' | 'completed'
+  status: 'active' | 'stopping' | 'stopped' | 'completed' | 'paused'
   center_price: number
   current_center_price: number
+  current_investment?: number
+  max_investment?: number
   trade_count: number
   buy_count: number
   sell_count: number
   profit_ratio: number
+  grid_profit?: number
+  pnl_snapshot?: GridPnlSnapshot
   deviation_ratio: number
   start_time: string
   end_time: string
   stop_time?: string
   stop_reason?: string
+}
+
+export interface GridPnlSnapshot {
+  profit_ratio: number
+  total_pnl_ratio?: number
+  total_pnl: number
+  realized_pnl: number
+  unrealized_pnl: number
+  cash_flow_profit?: number
+  cash_flow_ratio?: number
+  method: string
+  method_detail?: string
+  has_ledger?: boolean
+  is_degraded?: boolean
+  open_volume?: number
+  denominator?: number
+  denominator_type?: string
+}
+
+export interface GridTrade {
+  session_id: number
+  stock_code?: string
+  trade_type: 'BUY' | 'SELL' | string
+  grid_level?: number
+  trigger_price?: number
+  volume: number
+  amount: number
+  trade_id?: string
+  trade_time?: string
 }
 
 export interface RiskTemplate {

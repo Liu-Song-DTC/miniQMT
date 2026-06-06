@@ -1942,6 +1942,10 @@ def get_grid_session_status(stock_code):
             db_session = position_manager.db_manager.get_grid_session_by_stock(stock_code)
             risk_level = db_session.get('risk_level', 'moderate') if db_session else 'moderate'
             template_name = db_session.get('template_name') if db_session else None
+            pnl_snapshot = grid_manager.get_pnl_snapshot(
+                session,
+                current_price=session.current_center_price or session.center_price
+            )
 
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
@@ -1967,7 +1971,9 @@ def get_grid_session_status(stock_code):
                     'trade_count': session.trade_count,
                     'buy_count': session.buy_count,
                     'sell_count': session.sell_count,
-                    'profit_ratio': session.get_profit_ratio() * 100,
+                    'profit_ratio': pnl_snapshot['profit_ratio'] * 100,
+                    'grid_profit': pnl_snapshot['total_pnl'],
+                    'pnl_snapshot': pnl_snapshot,
                     'current_investment': session.current_investment
                 }
             })
@@ -2056,6 +2062,10 @@ def get_grid_sessions():
 
         # 1. 从内存获取active sessions
         for stock_code, session in position_manager.grid_manager.sessions.items():
+            pnl_snapshot = position_manager.grid_manager.get_pnl_snapshot(
+                session,
+                current_price=session.current_center_price or session.center_price
+            )
             sessions.append({
                 'session_id': session.id,
                 'stock_code': session.stock_code,
@@ -2065,7 +2075,11 @@ def get_grid_sessions():
                 'trade_count': session.trade_count,
                 'buy_count': session.buy_count,
                 'sell_count': session.sell_count,
-                'profit_ratio': session.get_profit_ratio(),
+                'profit_ratio': pnl_snapshot['profit_ratio'],
+                'grid_profit': pnl_snapshot['total_pnl'],
+                'pnl_snapshot': pnl_snapshot,
+                'current_investment': session.current_investment,
+                'max_investment': session.max_investment,
                 'deviation_ratio': session.get_deviation_ratio(),
                 'start_time': session.start_time.isoformat() if session.start_time else None,
                 'end_time': session.end_time.isoformat() if session.end_time else None,
@@ -2080,6 +2094,16 @@ def get_grid_sessions():
             if not any(s['session_id'] == session_data['id'] for s in sessions):
                 # 将sqlite3.Row转换为字典以支持.get()方法
                 session_dict = dict(session_data)
+                current_center = session_dict.get('current_center_price') or session_dict.get('center_price')
+                pnl_snapshot = position_manager.grid_manager.get_pnl_snapshot(
+                    session_dict,
+                    current_price=current_center
+                )
+                center_price = session_dict.get('center_price') or 0
+                deviation_ratio = (
+                    abs((session_dict.get('current_center_price') or 0) - center_price) / center_price
+                    if center_price > 0 else 0
+                )
                 sessions.append({
                     'session_id': session_dict['id'],
                     'stock_code': session_dict['stock_code'],
@@ -2089,11 +2113,14 @@ def get_grid_sessions():
                     'trade_count': session_dict['trade_count'],
                     'buy_count': session_dict['buy_count'],
                     'sell_count': session_dict['sell_count'],
-                    # 计算盈亏率
-                    'profit_ratio': (session_dict['total_sell_amount'] - session_dict['total_buy_amount']) / session_dict.get('max_investment', 0) if session_dict.get('max_investment', 0) > 0 else 0,
-                    # 计算偏离度
-                    'deviation_ratio': abs(session_dict['current_center_price'] - session_dict['center_price']) / session_dict['center_price'] if session_dict['center_price'] > 0 else 0,
+                    # 历史会话同样使用统一 PnL 快照，避免回退到旧现金流展示口径。
                     'start_time': session_dict['start_time'],
+                    'profit_ratio': pnl_snapshot['profit_ratio'],
+                    'grid_profit': pnl_snapshot['total_pnl'],
+                    'pnl_snapshot': pnl_snapshot,
+                    'current_investment': session_dict.get('current_investment', 0),
+                    'max_investment': session_dict.get('max_investment', 0),
+                    'deviation_ratio': deviation_ratio,
                     'end_time': session_dict['end_time'],
                     'stop_time': session_dict.get('stop_time'),
                     'stop_reason': session_dict.get('stop_reason')
@@ -2157,6 +2184,10 @@ def get_grid_session_detail(session_id):
 
         # 获取网格档位
         levels = session.get_grid_levels()
+        pnl_snapshot = position_manager.grid_manager.get_pnl_snapshot(
+            session,
+            current_price=session.current_center_price or session.center_price
+        )
 
         return jsonify({
             'success': True,
@@ -2179,7 +2210,9 @@ def get_grid_session_detail(session_id):
                 'sell_count': session.sell_count,
                 'total_buy_amount': session.total_buy_amount,
                 'total_sell_amount': session.total_sell_amount,
-                'profit_ratio': session.get_profit_ratio(),
+                'profit_ratio': pnl_snapshot['profit_ratio'],
+                'grid_profit': pnl_snapshot['total_pnl'],
+                'pnl_snapshot': pnl_snapshot,
                 'deviation_ratio': session.get_deviation_ratio(),
                 'start_time': session.start_time.isoformat() if session.start_time else None,
                 'end_time': session.end_time.isoformat() if session.end_time else None,
@@ -2259,6 +2292,10 @@ def get_grid_status(stock_code):
 
         # 获取网格档位
         levels = session.get_grid_levels()
+        pnl_snapshot = position_manager.grid_manager.get_pnl_snapshot(
+            session,
+            current_price=session.current_center_price or session.center_price
+        )
 
         return jsonify({
             'success': True,
@@ -2272,7 +2309,9 @@ def get_grid_status(stock_code):
                 'trade_count': session.trade_count,
                 'buy_count': session.buy_count,
                 'sell_count': session.sell_count,
-                'profit_ratio': session.get_profit_ratio(),
+                'profit_ratio': pnl_snapshot['profit_ratio'],
+                'grid_profit': pnl_snapshot['total_pnl'],
+                'pnl_snapshot': pnl_snapshot,
                 'deviation_ratio': session.get_deviation_ratio()
             }
         })

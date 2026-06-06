@@ -1,10 +1,12 @@
 import { ref, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 import { usePositionsStore } from '../stores/positions'
+import { useGridStore } from '../stores/grid'
 
 export function usePolling() {
   const system = useSystemStore()
   const positions = usePositionsStore()
+  const grid = useGridStore()
   const interval = ref(3000)
   let timer: ReturnType<typeof setInterval> | null = null
   let statusCounter = 0
@@ -45,6 +47,7 @@ export function usePolling() {
     if (holdingCounter >= 10) {
       holdingCounter = 0
       positions.fetchPositions().catch(() => {})
+      grid.fetchSessions().catch(() => {})
     }
   }
 

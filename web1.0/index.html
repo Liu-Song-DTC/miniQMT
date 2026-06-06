@@ -380,6 +380,28 @@
           border: 6px solid transparent;
           border-bottom-color: white;
         }
+
+        .grid-detail-table th,
+        .grid-detail-table td {
+          white-space: nowrap;
+        }
+
+        .grid-detail-method {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 600;
+          background: #eef2ff;
+          color: #3730a3;
+        }
+
+        .grid-detail-method.degraded {
+          background: #fff7ed;
+          color: #9a3412;
+        }
     </style>
 </head>
 <body class="bg-gray-100 p-4">
@@ -744,8 +766,99 @@
             </div>
 
             <div class="flex justify-end space-x-2">
+                <button id="gridDialogDetailBtn" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 hidden">查看详情</button>
                 <button id="gridDialogCancelBtn" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">取消</button>
                 <button id="gridDialogConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">启动网格交易</button>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="gridDetailDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg shadow-xl w-[920px] max-w-[95vw] max-h-[92vh] overflow-hidden">
+            <div class="flex items-start justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">网格交易详情</h3>
+                    <p class="text-sm text-gray-500 mt-1">
+                        <span id="gridDetailStockCode">--</span>
+                        <span class="mx-2">·</span>
+                        <span id="gridDetailStatus">--</span>
+                    </p>
+                </div>
+                <button id="gridDetailCloseBtn" class="px-3 py-1 text-gray-500 hover:text-gray-900 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div id="gridDetailLoading" class="hidden px-6 py-8 text-center text-gray-600">
+                正在加载网格详情...
+            </div>
+
+            <div id="gridDetailContent" class="px-6 py-5 overflow-y-auto max-h-[78vh]">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">总盈亏</div>
+                        <div id="gridDetailTotalPnl" class="text-xl font-semibold mt-1">--</div>
+                        <div id="gridDetailProfitRatio" class="text-xs mt-1">--</div>
+                    </div>
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">已实现</div>
+                        <div id="gridDetailRealizedPnl" class="text-xl font-semibold mt-1">--</div>
+                        <div class="text-xs text-gray-400 mt-1">已配对成交</div>
+                    </div>
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">未实现</div>
+                        <div id="gridDetailUnrealizedPnl" class="text-xl font-semibold mt-1">--</div>
+                        <div id="gridDetailOpenVolume" class="text-xs text-gray-400 mt-1">--</div>
+                    </div>
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">资金使用</div>
+                        <div id="gridDetailInvestment" class="text-xl font-semibold mt-1">--</div>
+                        <div id="gridDetailInvestmentRatio" class="text-xs text-gray-400 mt-1">--</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">交易统计</div>
+                        <div id="gridDetailTradeCount" class="text-sm font-medium mt-2">--</div>
+                    </div>
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">中心价</div>
+                        <div id="gridDetailCenterPrice" class="text-sm font-medium mt-2">--</div>
+                    </div>
+                    <div class="border border-gray-200 rounded p-3">
+                        <div class="text-xs text-gray-500">计算口径</div>
+                        <div class="mt-2">
+                            <span id="gridDetailMethod" class="grid-detail-method">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-5">
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="font-semibold text-gray-800">最近网格交易</h4>
+                        <span id="gridDetailTradeTotal" class="text-xs text-gray-500">--</span>
+                    </div>
+                    <div class="overflow-x-auto border border-gray-200 rounded">
+                        <table class="min-w-full text-sm grid-detail-table">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">时间</th>
+                                    <th class="px-3 py-2 text-left">方向</th>
+                                    <th class="px-3 py-2 text-right">触发价</th>
+                                    <th class="px-3 py-2 text-right">数量</th>
+                                    <th class="px-3 py-2 text-right">金额</th>
+                                    <th class="px-3 py-2 text-right">档位</th>
+                                    <th class="px-3 py-2 text-left">委托/成交ID</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gridDetailTradesBody" class="divide-y divide-gray-100"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded p-3">
+                    说明：停止网格策略只停止自动网格交易与撤销未完成网格委托，不会清空当前股票持仓。
+                </div>
             </div>
         </div>
     </div>
@@ -768,6 +881,10 @@
           <span class="tooltip-value profit" id="tooltipProfit"></span>
         </div>
         <div class="tooltip-row">
+          <span class="tooltip-label">已实现/未实现:</span>
+          <span class="tooltip-value" id="tooltipPnlBreakdown"></span>
+        </div>
+        <div class="tooltip-row">
           <span class="tooltip-label">交易次数:</span>
           <span class="tooltip-value" id="tooltipTrades"></span>
         </div>
@@ -781,7 +898,7 @@
         </div>
       </div>
       <div class="tooltip-footer">
-        点击复选框查看详细信息
+        点击复选框，再点“查看详情”查看交易明细
       </div>
     </div>
 

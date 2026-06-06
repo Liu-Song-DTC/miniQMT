@@ -114,6 +114,7 @@
 
     // 网格交易状态存储
     let gridTradingStatus = {};  // 格式: { stock_code: { sessionId, status, config, lastUpdate } }
+    let gridDetailLastStockCode = null;
 
     // ============ 网格分级策略: 全局变量 ============
     let riskTemplates = {};  // 缓存风险模板数据
@@ -2291,6 +2292,7 @@
             // ⭐ 绑定按钮事件（优雅方式：先移除旧监听器，再添加新监听器）
             const confirmBtn = document.getElementById('gridDialogConfirmBtn');
             const cancelBtn = document.getElementById('gridDialogCancelBtn');
+            const detailBtn = document.getElementById('gridDialogDetailBtn');
 
             // 1. 移除旧的事件监听器（如果存在）
             if (gridConfirmHandler) {
@@ -2306,6 +2308,10 @@
                 confirmBtn.textContent = '停止网格交易';
                 confirmBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
                 confirmBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                if (detailBtn) {
+                    detailBtn.classList.remove('hidden');
+                    detailBtn.onclick = () => showGridDetailDialog(normalizedCode);
+                }
 
                 // 创建命名函数用于停止网格
                 gridConfirmHandler = async () => {
@@ -2320,6 +2326,10 @@
                 confirmBtn.textContent = '启动网格交易';
                 confirmBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
                 confirmBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                if (detailBtn) {
+                    detailBtn.classList.add('hidden');
+                    detailBtn.onclick = null;
+                }
 
                 // 创建命名函数用于启动网格
                 gridConfirmHandler = async () => {
@@ -2550,6 +2560,198 @@
             // 刷新持仓数据以确保状态一致
             await fetchHoldings();
         }
+    }
+
+    function formatGridMoney(value) {
+        const num = Number(value || 0);
+        const sign = num > 0 ? '+' : '';
+        return `${sign}${num.toFixed(2)}元`;
+    }
+
+    function formatGridPercent(value, alreadyPercent = false) {
+        const num = Number(value || 0);
+        const percent = alreadyPercent ? num : num * 100;
+        const sign = percent > 0 ? '+' : '';
+        return `${sign}${percent.toFixed(2)}%`;
+    }
+
+    function formatGridNumber(value, digits = 2) {
+        const num = Number(value || 0);
+        return num.toFixed(digits);
+    }
+
+    function setGridPnlClass(element, value) {
+        if (!element) return;
+        element.classList.remove('text-red-600', 'text-green-600', 'text-gray-900');
+        const num = Number(value || 0);
+        if (num > 0) {
+            element.classList.add('text-red-600');
+        } else if (num < 0) {
+            element.classList.add('text-green-600');
+        } else {
+            element.classList.add('text-gray-900');
+        }
+    }
+
+    function getGridSessionByStock(sessions, stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        return (sessions || []).find(session =>
+            normalizeStockCode(session.stock_code) === normalizedCode &&
+            String(session.status || '').toLowerCase() === 'active'
+        ) || (sessions || []).find(session => normalizeStockCode(session.stock_code) === normalizedCode);
+    }
+
+    async function fetchGridDetailData(stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        const sessionsResponse = await fetch(`${API_BASE_URL}/api/grid/sessions`);
+        if (!sessionsResponse.ok) {
+            throw new Error('获取网格会话列表失败');
+        }
+        const sessionsData = await sessionsResponse.json();
+        if (!sessionsData.success || !Array.isArray(sessionsData.sessions)) {
+            throw new Error(sessionsData.error || '网格会话数据格式错误');
+        }
+
+        const session = getGridSessionByStock(sessionsData.sessions, normalizedCode);
+        if (!session) {
+            throw new Error('未找到该股票的网格会话');
+        }
+
+        const sessionId = session.session_id || session.id;
+        const tradesResponse = await fetch(`${API_BASE_URL}/api/grid/trades/${sessionId}?limit=20&offset=0`);
+        if (!tradesResponse.ok) {
+            throw new Error('获取网格交易记录失败');
+        }
+        const tradesData = await tradesResponse.json();
+        if (!tradesData.success) {
+            throw new Error(tradesData.error || '网格交易记录数据格式错误');
+        }
+
+        return {
+            session,
+            trades: Array.isArray(tradesData.trades) ? tradesData.trades : [],
+            totalCount: Number(tradesData.total_count || 0)
+        };
+    }
+
+    function renderGridDetail(data) {
+        const session = data.session || {};
+        const snapshot = session.pnl_snapshot || {};
+        const statusNames = {
+            active: '运行中',
+            stopping: '停止中',
+            stopped: '已停止',
+            paused: '已暂停'
+        };
+        const status = String(session.status || 'active').toLowerCase();
+
+        document.getElementById('gridDetailStockCode').textContent = session.stock_code || '--';
+        document.getElementById('gridDetailStatus').textContent = statusNames[status] || session.status || '--';
+
+        const totalPnl = Number(snapshot.total_pnl ?? session.grid_profit ?? 0);
+        const realizedPnl = Number(snapshot.realized_pnl ?? 0);
+        const unrealizedPnl = Number(snapshot.unrealized_pnl ?? 0);
+        const profitRatio = Number(snapshot.profit_ratio ?? session.profit_ratio ?? 0);
+        const currentInvestment = Number(session.current_investment || 0);
+        const maxInvestment = Number(session.max_investment || snapshot.denominator || 0);
+        const investmentRatio = maxInvestment > 0 ? currentInvestment / maxInvestment : 0;
+
+        const totalPnlEl = document.getElementById('gridDetailTotalPnl');
+        const realizedEl = document.getElementById('gridDetailRealizedPnl');
+        const unrealizedEl = document.getElementById('gridDetailUnrealizedPnl');
+        totalPnlEl.textContent = formatGridMoney(totalPnl);
+        realizedEl.textContent = formatGridMoney(realizedPnl);
+        unrealizedEl.textContent = formatGridMoney(unrealizedPnl);
+        setGridPnlClass(totalPnlEl, totalPnl);
+        setGridPnlClass(realizedEl, realizedPnl);
+        setGridPnlClass(unrealizedEl, unrealizedPnl);
+
+        const ratioEl = document.getElementById('gridDetailProfitRatio');
+        ratioEl.textContent = `盈亏率 ${formatGridPercent(profitRatio)}`;
+        setGridPnlClass(ratioEl, profitRatio);
+
+        document.getElementById('gridDetailOpenVolume').textContent =
+            `未平网格 ${Number(snapshot.open_volume || 0).toFixed(0)} 股`;
+        document.getElementById('gridDetailInvestment').textContent =
+            `${currentInvestment.toFixed(0)} / ${maxInvestment.toFixed(0)}元`;
+        document.getElementById('gridDetailInvestmentRatio').textContent =
+            `使用率 ${formatGridPercent(investmentRatio)}`;
+        document.getElementById('gridDetailTradeCount').textContent =
+            `${session.trade_count || 0}次（买${session.buy_count || 0}/卖${session.sell_count || 0}）`;
+        document.getElementById('gridDetailCenterPrice').textContent =
+            `初始 ${formatGridNumber(session.center_price)} / 当前 ${formatGridNumber(session.current_center_price)}`;
+
+        const methodEl = document.getElementById('gridDetailMethod');
+        const methodName = snapshot.method === 'ledger_true_pnl'
+            ? '真实账本'
+            : snapshot.method === 'memory_true_pnl'
+                ? '内存真实盈亏'
+                : '兼容降级';
+        methodEl.textContent = `${methodName}${snapshot.is_degraded ? ' · 降级' : ''}`;
+        methodEl.className = `grid-detail-method${snapshot.is_degraded ? ' degraded' : ''}`;
+
+        document.getElementById('gridDetailTradeTotal').textContent =
+            `共 ${data.totalCount || data.trades.length} 条，显示最近 ${data.trades.length} 条`;
+
+        const tbody = document.getElementById('gridDetailTradesBody');
+        if (!data.trades.length) {
+            tbody.innerHTML = `
+                <tr>
+                    <td class="px-3 py-6 text-center text-gray-500" colspan="7">暂无网格交易记录</td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = data.trades.map(trade => {
+            const side = String(trade.trade_type || '').toUpperCase();
+            const sideClass = side === 'BUY' ? 'text-red-600' : 'text-green-600';
+            const sideText = side === 'BUY' ? '买入' : side === 'SELL' ? '卖出' : side || '--';
+            const timeText = trade.trade_time ? String(trade.trade_time).replace('T', ' ').slice(0, 19) : '--';
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-3 py-2 text-gray-700">${timeText}</td>
+                    <td class="px-3 py-2 font-medium ${sideClass}">${sideText}</td>
+                    <td class="px-3 py-2 text-right">${formatGridNumber(trade.trigger_price)}</td>
+                    <td class="px-3 py-2 text-right">${Number(trade.volume || 0).toFixed(0)}</td>
+                    <td class="px-3 py-2 text-right">${formatGridNumber(trade.amount)}</td>
+                    <td class="px-3 py-2 text-right">${formatGridNumber(trade.grid_level)}</td>
+                    <td class="px-3 py-2 text-gray-500">${trade.trade_id || '--'}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    async function showGridDetailDialog(stockCode) {
+        const normalizedCode = normalizeStockCode(stockCode);
+        if (!normalizedCode) {
+            showMessage('股票代码无效', 'error');
+            return;
+        }
+
+        gridDetailLastStockCode = normalizedCode;
+        const dialog = document.getElementById('gridDetailDialog');
+        const loading = document.getElementById('gridDetailLoading');
+        const content = document.getElementById('gridDetailContent');
+        dialog.classList.remove('hidden');
+        loading.classList.remove('hidden');
+        content.classList.add('hidden');
+
+        try {
+            const detailData = await fetchGridDetailData(normalizedCode);
+            renderGridDetail(detailData);
+            loading.classList.add('hidden');
+            content.classList.remove('hidden');
+        } catch (error) {
+            console.error('加载网格详情失败:', error);
+            loading.classList.add('hidden');
+            content.classList.remove('hidden');
+            showMessage('加载网格详情失败: ' + error.message, 'error');
+        }
+    }
+
+    function hideGridDetailDialog() {
+        document.getElementById('gridDetailDialog').classList.add('hidden');
     }
 
     /**
@@ -2839,11 +3041,21 @@
 
         // 网格盈亏
         if (data.stats) {
-            const profitRatio = data.stats.profit_ratio || 0;
+            const snapshot = data.stats.pnl_snapshot || {};
+            const profitRatio = Number(data.stats.profit_ratio || 0);
+            const displayRatio = Math.abs(profitRatio) <= 1 ? profitRatio * 100 : profitRatio;
             const profitElement = document.getElementById('tooltipProfit');
-            const profitSign = profitRatio >= 0 ? '+' : '';
-            profitElement.textContent = `${profitSign}${profitRatio.toFixed(2)}%`;
+            const profitSign = displayRatio >= 0 ? '+' : '';
+            profitElement.textContent = `${profitSign}${displayRatio.toFixed(2)}%`;
             profitElement.className = profitRatio >= 0 ? 'tooltip-value profit' : 'tooltip-value loss';
+
+            const breakdown = document.getElementById('tooltipPnlBreakdown');
+            if (breakdown) {
+                const realized = Number(snapshot.realized_pnl || 0);
+                const unrealized = Number(snapshot.unrealized_pnl || 0);
+                breakdown.textContent = `${formatGridMoney(realized)} / ${formatGridMoney(unrealized)}`;
+                breakdown.className = (realized + unrealized) >= 0 ? 'tooltip-value profit' : 'tooltip-value loss';
+            }
         }
 
         // 交易次数
@@ -2908,6 +3120,19 @@
 
     console.log("Adding event listeners and fetching initial data...");
 
+    const gridDetailCloseBtn = document.getElementById('gridDetailCloseBtn');
+    if (gridDetailCloseBtn) {
+        gridDetailCloseBtn.addEventListener('click', hideGridDetailDialog);
+    }
+    const gridDetailDialog = document.getElementById('gridDetailDialog');
+    if (gridDetailDialog) {
+        gridDetailDialog.addEventListener('click', (event) => {
+            if (event.target === gridDetailDialog) {
+                hideGridDetailDialog();
+            }
+        });
+    }
+
     // ⚠️ 新增: 加载风险模板
     loadRiskTemplates();
 
@@ -2917,6 +3142,7 @@
     window.applyRiskTemplate = applyRiskTemplate;
     window.showGridTooltip = showGridTooltip;
     window.hideGridTooltip = hideGridTooltip;
+    window.showGridDetailDialog = showGridDetailDialog;
 });
 
 console.log("Script loaded");

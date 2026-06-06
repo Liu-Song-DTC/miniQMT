@@ -165,6 +165,70 @@ class TestGridStopCancelClosure(GridLifecycleLedgerBase):
         self.assertEqual(self.db.get_grid_session(session.id)['status'], 'stopped')
         self.assertEqual(self.db.get_grid_order('ORDER_STOP_1')['status'], 'canceled')
 
+    def test_stopping_response_returns_unified_pnl_snapshot(self):
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self.make_session(max_investment=1000)
+        session.buy_count = 1
+        session.sell_count = 1
+        session.total_buy_amount = 1000.0
+        session.total_sell_amount = 1000.0
+        session.total_buy_volume = 100
+        session.total_sell_volume = 100
+        session.current_center_price = 11.0
+        self.executor.cancel_order.return_value = True
+
+        now = datetime.now().isoformat()
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'BUY',
+                'grid_level': 9.5,
+                'trigger_price': 10.0,
+                'volume': 100,
+                'amount': 1000.0,
+                'trade_id': 'STOPPING_BUY',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 10.0,
+            },
+            {'trade_count': 1, 'buy_count': 1, 'total_buy_amount': 1000.0, 'total_buy_volume': 100, 'current_investment': 1000.0}
+        )
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'SELL',
+                'grid_level': 10.5,
+                'trigger_price': 11.0,
+                'volume': 100,
+                'amount': 1100.0,
+                'trade_id': 'STOPPING_SELL',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 11.0,
+            },
+            {'trade_count': 2, 'sell_count': 1, 'total_sell_amount': 1100.0, 'total_sell_volume': 100, 'current_investment': 0.0}
+        )
+        self.manager.pending_grid_orders['ORDER_STOPPING'] = {
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'side': 'BUY',
+            'volume': 100,
+            'expected_price': 10.0,
+            'submitted_at': now,
+        }
+
+        result = self.manager.stop_grid_session(session.id, 'manual')
+
+        self.assertEqual(result['status'], 'stopping')
+        self.assertAlmostEqual(result['profit_ratio'], 0.10, places=6)
+        self.assertAlmostEqual(result['grid_profit'], 100.0, places=2)
+        self.assertEqual(result['pnl_snapshot']['method'], 'ledger_true_pnl')
+        self.assertAlmostEqual(result['pnl_snapshot']['profit_ratio'], result['profit_ratio'], places=6)
+        self.assertAlmostEqual(result['pnl_snapshot']['total_pnl'], result['grid_profit'], places=6)
+
 
 class TestGridOrderOutsideLock(GridLifecycleLedgerBase):
     def test_executor_called_after_grid_lock_released(self):
@@ -287,6 +351,116 @@ class TestGridRealLedger(GridLifecycleLedgerBase):
         )
 
         self.assertEqual(reason, 'target_profit')
+
+    def test_pnl_snapshot_stats_and_exit_share_same_ledger_ratio(self):
+        session = self.make_session(max_investment=1000)
+        session.buy_count = 1
+        session.sell_count = 1
+        session.target_profit = 0.09
+        session.stop_loss = -0.10
+        session.total_buy_amount = 1000.0
+        session.total_sell_amount = 1000.0
+        session.total_buy_volume = 100
+        session.total_sell_volume = 100
+
+        now = datetime.now().isoformat()
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'BUY',
+                'grid_level': 9.5,
+                'trigger_price': 10.0,
+                'volume': 100,
+                'amount': 1000.0,
+                'trade_id': 'SNAPSHOT_BUY',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 10.0,
+            },
+            {'trade_count': 1, 'buy_count': 1, 'total_buy_amount': 1000.0, 'total_buy_volume': 100, 'current_investment': 1000.0}
+        )
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'SELL',
+                'grid_level': 10.5,
+                'trigger_price': 11.0,
+                'volume': 100,
+                'amount': 1100.0,
+                'trade_id': 'SNAPSHOT_SELL',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 11.0,
+            },
+            {'trade_count': 2, 'sell_count': 1, 'total_sell_amount': 1100.0, 'total_sell_volume': 100, 'current_investment': 0.0}
+        )
+
+        snapshot = self.manager.get_pnl_snapshot(session, current_price=11.0)
+        stats = self.manager.get_session_stats(session.id)
+        reason = self.manager._check_exit_conditions(
+            session,
+            current_price=11.0,
+            position_snapshot={'volume': 1000}
+        )
+
+        self.assertEqual(snapshot['method'], 'ledger_true_pnl')
+        self.assertAlmostEqual(snapshot['profit_ratio'], 0.10, places=6)
+        self.assertAlmostEqual(stats['profit_ratio'], snapshot['profit_ratio'], places=6)
+        self.assertAlmostEqual(stats['grid_profit'], snapshot['total_pnl'], places=6)
+        self.assertEqual(stats['pnl_snapshot']['method'], 'ledger_true_pnl')
+        self.assertEqual(reason, 'target_profit')
+
+    def test_stop_session_returns_unified_pnl_snapshot(self):
+        session = self.make_session(max_investment=1000)
+        session.buy_count = 1
+        session.sell_count = 1
+        session.total_buy_amount = 1000.0
+        session.total_sell_amount = 1000.0
+        session.total_buy_volume = 100
+        session.total_sell_volume = 100
+        session.current_center_price = 11.0
+
+        now = datetime.now().isoformat()
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'BUY',
+                'grid_level': 9.5,
+                'trigger_price': 10.0,
+                'volume': 100,
+                'amount': 1000.0,
+                'trade_id': 'STOP_BUY',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 10.0,
+            },
+            {'trade_count': 1, 'buy_count': 1, 'total_buy_amount': 1000.0, 'total_buy_volume': 100, 'current_investment': 1000.0}
+        )
+        self.db.record_grid_trade_and_update_session(
+            {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'trade_type': 'SELL',
+                'grid_level': 10.5,
+                'trigger_price': 11.0,
+                'volume': 100,
+                'amount': 1100.0,
+                'trade_id': 'STOP_SELL',
+                'trade_time': now,
+                'grid_center_before': 10.0,
+                'grid_center_after': 11.0,
+            },
+            {'trade_count': 2, 'sell_count': 1, 'total_sell_amount': 1100.0, 'total_sell_volume': 100, 'current_investment': 0.0}
+        )
+
+        result = self.manager.stop_grid_session(session.id, 'manual')
+
+        self.assertAlmostEqual(result['profit_ratio'], 0.10, places=6)
+        self.assertEqual(result['pnl_snapshot']['method'], 'ledger_true_pnl')
+        self.assertAlmostEqual(result['pnl_snapshot']['total_pnl'], 100.0, places=2)
 
 
 if __name__ == '__main__':

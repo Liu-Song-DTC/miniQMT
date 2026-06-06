@@ -1,12 +1,14 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 import { usePositionsStore } from '../stores/positions'
+import { useGridStore } from '../stores/grid'
 import { loadConnection } from '../api/accounts'
 import type { SSEMessage } from '../types'
 
 export function useSSE() {
   const system = useSystemStore()
   const positions = usePositionsStore()
+  const grid = useGridStore()
   const healthy = ref(false)
   let eventSource: EventSource | null = null
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -43,6 +45,7 @@ export function useSSE() {
           system.lastUpdateTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           if (msg.positions_update?.changed) {
             setTimeout(() => positions.fetchPositions(), 100)
+            setTimeout(() => grid.fetchSessions(), 120)
           }
         } catch { /* ignore parse errors */ }
       }

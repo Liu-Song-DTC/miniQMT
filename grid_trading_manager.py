@@ -292,6 +292,36 @@ class GridTradingManager:
     """网格交易管理器"""
 
     @staticmethod
+    def _session_field(session, name: str, default=None):
+        """兼容 GridSession 对象和数据库 dict/Row 的字段读取。"""
+        if isinstance(session, dict):
+            return session.get(name, default)
+        if hasattr(session, name):
+            return getattr(session, name)
+        try:
+            return session[name]
+        except Exception:
+            return default
+
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
     def _extract_order_id(result) -> str:
         """兼容 executor 返回 dict/str 的订单号"""
         if isinstance(result, dict):
@@ -324,6 +354,133 @@ class GridTradingManager:
         logger.info(f"[GRID] GridTradingManager.__init__: 初始化完成, 已加载 {loaded_count} 个活跃会话")
         if pending_count:
             logger.warning(f"[GRID] GridTradingManager.__init__: 恢复 {pending_count} 个未完成网格委托，等待成交/撤废单回报")
+
+    def get_pnl_snapshot(self, session, current_price: float = None,
+                         position_snapshot=None, ledger_summary: dict = None) -> dict:
+        """返回统一的网格 PnL 快照。
+
+        用户可见利润、退出判断和日志都应使用这个方法，避免同一会话出现
+        "退出按 True PnL，展示按现金流" 的口径不一致。
+        """
+        session_id = self._session_field(session, 'id')
+        stock_code = self._session_field(session, 'stock_code', '')
+        max_investment = self._safe_float(self._session_field(session, 'max_investment'), 0.0)
+        total_buy_amount = self._safe_float(self._session_field(session, 'total_buy_amount'), 0.0)
+        total_sell_amount = self._safe_float(self._session_field(session, 'total_sell_amount'), 0.0)
+        total_buy_volume = self._safe_int(self._session_field(session, 'total_buy_volume'), 0)
+        total_sell_volume = self._safe_int(self._session_field(session, 'total_sell_volume'), 0)
+        current_center = self._safe_float(self._session_field(session, 'current_center_price'), 0.0)
+        center_price = self._safe_float(self._session_field(session, 'center_price'), 0.0)
+
+        mark_price = self._safe_float(current_price, 0.0)
+        if mark_price <= 0:
+            mark_price = current_center if current_center > 0 else center_price
+
+        cash_flow_profit = total_sell_amount - total_buy_amount
+        cash_flow_ratio = cash_flow_profit / max_investment if max_investment > 0 else 0.0
+        open_volume = total_buy_volume - total_sell_volume
+
+        snapshot = {
+            'stock_code': stock_code,
+            'session_id': session_id,
+            'method': 'cash_flow_legacy',
+            'method_detail': 'fallback_mi',
+            'mark_price': mark_price,
+            'profit_ratio': cash_flow_ratio,
+            'total_pnl_ratio': cash_flow_ratio,
+            'total_pnl': cash_flow_profit,
+            'realized_pnl': cash_flow_profit,
+            'unrealized_pnl': 0.0,
+            'cash_flow_profit': cash_flow_profit,
+            'cash_flow_ratio': cash_flow_ratio,
+            'open_volume': open_volume,
+            'matched_volume': 0,
+            'unmatched_volume': 0,
+            'has_ledger': False,
+            'is_degraded': True,
+            'denominator': max_investment,
+            'denominator_type': 'max_investment'
+        }
+
+        if ledger_summary is None and session_id is not None and hasattr(self.db, 'get_grid_ledger_summary'):
+            try:
+                ledger_summary = self.db.get_grid_ledger_summary(session_id, mark_price)
+            except Exception as ledger_err:
+                logger.warning(f"[GRID] get_pnl_snapshot: 账本盈亏汇总失败，降级旧口径: {ledger_err}")
+
+        if ledger_summary and ledger_summary.get('has_ledger'):
+            total_pnl = self._safe_float(ledger_summary.get('true_pnl'), 0.0)
+            profit_ratio = total_pnl / max_investment if max_investment > 0 else 0.0
+            snapshot.update({
+                'method': 'ledger_true_pnl',
+                'method_detail': (
+                    f"ledger(open={ledger_summary.get('open_volume', 0)}, "
+                    f"realized={self._safe_float(ledger_summary.get('realized_pnl')):.2f}, "
+                    f"unrealized={self._safe_float(ledger_summary.get('unrealized_pnl')):.2f})"
+                ),
+                'profit_ratio': profit_ratio,
+                'total_pnl_ratio': profit_ratio,
+                'total_pnl': total_pnl,
+                'realized_pnl': self._safe_float(ledger_summary.get('realized_pnl'), 0.0),
+                'unrealized_pnl': self._safe_float(ledger_summary.get('unrealized_pnl'), 0.0),
+                'open_volume': self._safe_int(ledger_summary.get('open_volume'), 0),
+                'matched_volume': self._safe_int(ledger_summary.get('matched_volume'), 0),
+                'unmatched_volume': self._safe_int(ledger_summary.get('unmatched_volume'), 0),
+                'has_ledger': True,
+                'is_degraded': False,
+                'denominator': max_investment,
+                'denominator_type': 'max_investment'
+            })
+            return snapshot
+
+        if total_buy_volume > 0 or total_sell_volume > 0:
+            if mark_price > 0:
+                realized = cash_flow_profit
+                unrealized = open_volume * mark_price
+                total_pnl = realized + unrealized
+                profit_ratio = total_pnl / max_investment if max_investment > 0 else 0.0
+                snapshot.update({
+                    'method': 'memory_true_pnl',
+                    'method_detail': f"true_pnl(open_vol={open_volume}, price={mark_price:.2f})",
+                    'profit_ratio': profit_ratio,
+                    'total_pnl_ratio': profit_ratio,
+                    'total_pnl': total_pnl,
+                    'realized_pnl': realized,
+                    'unrealized_pnl': unrealized,
+                    'open_volume': open_volume,
+                    'is_degraded': False,
+                    'denominator': max_investment,
+                    'denominator_type': 'max_investment'
+                })
+                return snapshot
+            snapshot.update({
+                'method': 'cash_flow_legacy',
+                'method_detail': 'fallback_no_mark_price',
+                'is_degraded': True
+            })
+            return snapshot
+
+        position_volume = 0
+        if position_snapshot:
+            position_volume = self._safe_float(position_snapshot.get('volume', 0), 0.0)
+        if position_volume > 0 and mark_price > 0:
+            denominator = position_volume * mark_price
+            profit_ratio = cash_flow_profit / denominator if denominator > 0 else 0.0
+            snapshot.update({
+                'method': 'fallback_market_value_ratio',
+                'method_detail': f"fallback_mv({position_volume:.0f}x{mark_price:.2f})",
+                'profit_ratio': profit_ratio,
+                'total_pnl_ratio': profit_ratio,
+                'total_pnl': cash_flow_profit,
+                'realized_pnl': cash_flow_profit,
+                'unrealized_pnl': 0.0,
+                'is_degraded': True,
+                'denominator': denominator,
+                'denominator_type': 'position_market_value'
+            })
+            return snapshot
+
+        return snapshot
 
     @staticmethod
     def _normalize_code(stock_code: str) -> str:
@@ -821,10 +978,17 @@ class GridTradingManager:
             if not still_open and not still_submitting:
                 return self._stop_grid_session_unlocked(session_id, reason)
 
+        pnl_snapshot = self.get_pnl_snapshot(
+            session,
+            current_price=session.current_center_price or session.center_price
+        )
+
         return {
             'stock_code': session.stock_code,
             'trade_count': session.trade_count,
-            'profit_ratio': session.get_profit_ratio(),
+            'profit_ratio': pnl_snapshot['profit_ratio'],
+            'grid_profit': pnl_snapshot['total_pnl'],
+            'pnl_snapshot': pnl_snapshot,
             'stop_reason': reason,
             'status': 'stopping',
             'pending_orders': len(cancel_orders),
@@ -893,14 +1057,22 @@ class GridTradingManager:
         stock_code_key = self._normalize_code(stock_code)  # 用于 sessions 字典操作
         logger.debug(f"[GRID] _stop_grid_session_unlocked: 找到会话 stock_code={stock_code}, key={stock_code_key}")
 
+        pnl_snapshot = self.get_pnl_snapshot(
+            session,
+            current_price=session.current_center_price or session.center_price
+        )
+
         # 记录停止前的统计信息
         logger.info(f"[GRID] _stop_grid_session_unlocked: 停止前统计:")
         logger.info(f"[GRID]   - 股票代码: {stock_code}")
         logger.info(f"[GRID]   - 总交易次数: {session.trade_count} (买入{session.buy_count}/卖出{session.sell_count})")
         logger.info(f"[GRID]   - 总买入金额: {session.total_buy_amount:.2f}")
         logger.info(f"[GRID]   - 总卖出金额: {session.total_sell_amount:.2f}")
-        logger.info(f"[GRID]   - 网格盈亏: {session.get_profit_ratio()*100:.2f}%")
-        logger.info(f"[GRID]   - 网格累计利润: {session.get_grid_profit():.2f}元")
+        logger.info(f"[GRID]   - 网格盈亏: {pnl_snapshot['profit_ratio']*100:.2f}% "
+                    f"({pnl_snapshot['method_detail']})")
+        logger.info(f"[GRID]   - 网格总PnL: {pnl_snapshot['total_pnl']:.2f}元 "
+                    f"(已实现{pnl_snapshot['realized_pnl']:.2f}, 未实现{pnl_snapshot['unrealized_pnl']:.2f})")
+        logger.info(f"[GRID]   - 现金流利润(旧口径): {pnl_snapshot['cash_flow_profit']:.2f}元")
         logger.info(f"[GRID]   - 最大投入额度: {session.max_investment:.2f}元")
         logger.info(f"[GRID]   - 当前投入: {session.current_investment:.2f}/{session.max_investment:.2f}")
         logger.info(f"[GRID]   - 中心价偏离: {session.get_deviation_ratio()*100:.2f}%")
@@ -953,12 +1125,13 @@ class GridTradingManager:
         final_stats = {
             'stock_code': stock_code,
             'trade_count': session.trade_count,
-            'profit_ratio': session.get_profit_ratio(),
+            'profit_ratio': pnl_snapshot['profit_ratio'],
+            'pnl_snapshot': pnl_snapshot,
             'stop_reason': reason
         }
 
         logger.info(f"[GRID] _stop_grid_session_unlocked: 停止完成! stock_code={stock_code}, reason={reason}, "
-                   f"trade_count={session.trade_count}, profit={session.get_profit_ratio()*100:.2f}%")
+                   f"trade_count={session.trade_count}, profit={pnl_snapshot['profit_ratio']*100:.2f}%")
 
         return final_stats
 
@@ -1011,25 +1184,15 @@ class GridTradingManager:
                 except Exception as ledger_err:
                     logger.warning(f"[GRID] _check_exit_conditions: 账本盈亏汇总失败，降级旧口径: {ledger_err}")
 
-            if ledger_summary and ledger_summary.get('has_ledger') and session.max_investment > 0:
-                profit_ratio = ledger_summary['true_pnl'] / session.max_investment
-                _pnl_label = (
-                    f"ledger(open={ledger_summary['open_volume']}, "
-                    f"realized={ledger_summary['realized_pnl']:.2f}, "
-                    f"unrealized={ledger_summary['unrealized_pnl']:.2f})"
-                )
-            else:
-                profit_ratio = session.get_true_pnl_ratio(current_price, _position_volume)
-                _open_vol = session.total_buy_volume - session.total_sell_volume
-                if session.total_buy_volume > 0 or session.total_sell_volume > 0:
-                    _pnl_label = f"true_pnl(open_vol={_open_vol}, price={current_price:.2f})"
-                elif _position_volume > 0:
-                    _pnl_label = f"fallback_mv({_position_volume:.0f}x{current_price:.2f})"
-                else:
-                    _pnl_label = f"fallback_mi({session.max_investment:.0f})"
-            _open_vol = session.total_buy_volume - session.total_sell_volume
+            pnl_snapshot = self.get_pnl_snapshot(
+                session,
+                current_price=current_price,
+                position_snapshot=position_snapshot,
+                ledger_summary=ledger_summary
+            )
+            profit_ratio = pnl_snapshot['profit_ratio']
             logger.debug(f"[GRID] _check_exit_conditions: profit_ratio={profit_ratio*100:.2f}% "
-                        f"method={_pnl_label}, "
+                        f"method={pnl_snapshot['method_detail']}, "
                         f"target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%, "
                         f"buy_count={session.buy_count}, sell_count={session.sell_count}")
 
@@ -2059,8 +2222,15 @@ class GridTradingManager:
                     return False
 
                 # 执行交易前的状态
+                before_pnl = self.get_pnl_snapshot(
+                    session,
+                    current_price=trigger_price,
+                    position_snapshot=position_snapshot
+                )
                 logger.debug(f"[GRID] execute_grid_trade: 交易前状态 trade_count={session.trade_count}, "
-                            f"current_investment={session.current_investment:.2f}, profit_ratio={session.get_profit_ratio()*100:.2f}%")
+                            f"current_investment={session.current_investment:.2f}, "
+                            f"profit_ratio={before_pnl['profit_ratio']*100:.2f}% "
+                            f"({before_pnl['method_detail']})")
 
                 plan = self._build_grid_order_plan(session, signal, position_snapshot=position_snapshot)
                 if not plan:
@@ -2128,8 +2298,15 @@ class GridTradingManager:
                     logger.warning(f"[GRID] execute_grid_trade: signal 中无 grid_level，跳过冷却设置")
 
                 # 执行交易后的状态
+                after_pnl = self.get_pnl_snapshot(
+                    session,
+                    current_price=trigger_price,
+                    position_snapshot=position_snapshot
+                )
                 logger.debug(f"[GRID] execute_grid_trade: 交易后状态 trade_count={session.trade_count}, "
-                            f"current_investment={session.current_investment:.2f}, profit_ratio={session.get_profit_ratio()*100:.2f}%")
+                            f"current_investment={session.current_investment:.2f}, "
+                            f"profit_ratio={after_pnl['profit_ratio']*100:.2f}% "
+                            f"({after_pnl['method_detail']})")
 
                 # 触发数据版本更新
                 self.position_manager._increment_data_version()
@@ -2482,9 +2659,10 @@ class GridTradingManager:
             trade_id=trade_id
         )
         if success:
-            profit = session.get_profit_ratio()
+            pnl_snapshot = self.get_pnl_snapshot(session, current_price=trigger_price)
             logger.info(f"[GRID] _execute_grid_sell: 网格卖出成功! stock_code={stock_code}, volume={sell_volume}, amount={sell_amount:.2f}, "
-                       f"profit={profit*100:.2f}%, trade_id={trade_id}")
+                       f"profit={pnl_snapshot['profit_ratio']*100:.2f}% "
+                       f"({pnl_snapshot['method_detail']}), trade_id={trade_id}")
         return success
 
     def get_session_stats(self, session_id: int) -> dict:
@@ -2498,15 +2676,18 @@ class GridTradingManager:
         if not session:
             return {}
 
+        mark_price = session.current_center_price or session.center_price
         ledger_summary = None
         if hasattr(self.db, 'get_grid_ledger_summary'):
             try:
-                ledger_summary = self.db.get_grid_ledger_summary(
-                    session.id,
-                    session.current_center_price or session.center_price
-                )
+                ledger_summary = self.db.get_grid_ledger_summary(session.id, mark_price)
             except Exception as e:
                 logger.debug(f"[GRID] get_session_stats: 获取账本摘要失败 session_id={session_id}, err={e}")
+        pnl_snapshot = self.get_pnl_snapshot(
+            session,
+            current_price=mark_price,
+            ledger_summary=ledger_summary
+        )
 
         return {
             'session_id': session.id,
@@ -2518,8 +2699,9 @@ class GridTradingManager:
             'trade_count': session.trade_count,
             'buy_count': session.buy_count,
             'sell_count': session.sell_count,
-            'profit_ratio': session.get_profit_ratio(),
-            'grid_profit': session.get_grid_profit(),
+            'profit_ratio': pnl_snapshot['profit_ratio'],
+            'grid_profit': pnl_snapshot['total_pnl'],
+            'pnl_snapshot': pnl_snapshot,
             'deviation_ratio': session.get_deviation_ratio(),
             'current_investment': session.current_investment,
             'max_investment': session.max_investment,

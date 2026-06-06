@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网格详情模拟数据截图</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      color: #111827;
+    }
+    .bg-gray-100 { background: #f3f4f6; }
+    .bg-gray-50 { background: #f9fafb; }
+    .bg-white { background: #ffffff; }
+    .p-6 { padding: 24px; }
+    .p-3 { padding: 12px; }
+    .px-6 { padding-left: 24px; padding-right: 24px; }
+    .py-5 { padding-top: 20px; padding-bottom: 20px; }
+    .py-4 { padding-top: 16px; padding-bottom: 16px; }
+    .px-3 { padding-left: 12px; padding-right: 12px; }
+    .py-2 { padding-top: 8px; padding-bottom: 8px; }
+    .max-w-5xl { max-width: 1024px; }
+    .mx-auto { margin-left: auto; margin-right: auto; }
+    .mb-2 { margin-bottom: 8px; }
+    .mb-4 { margin-bottom: 16px; }
+    .mb-5 { margin-bottom: 20px; }
+    .mt-1 { margin-top: 4px; }
+    .mt-2 { margin-top: 8px; }
+    .grid { display: grid; }
+    .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+    .gap-3 { gap: 12px; }
+    .gap-4 { gap: 16px; }
+    .flex { display: flex; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .rounded { border-radius: 4px; }
+    .rounded-lg { border-radius: 8px; }
+    .shadow-xl { box-shadow: 0 20px 35px rgba(15, 23, 42, 0.12), 0 8px 12px rgba(15, 23, 42, 0.08); }
+    .overflow-hidden { overflow: hidden; }
+    .overflow-x-auto { overflow-x: auto; }
+    .border { border: 1px solid #e5e7eb; }
+    .border-b { border-bottom: 1px solid #e5e7eb; }
+    .border-gray-200 { border-color: #e5e7eb; }
+    .text-2xl { font-size: 24px; line-height: 32px; }
+    .text-xl { font-size: 20px; line-height: 28px; }
+    .text-lg { font-size: 18px; line-height: 28px; }
+    .text-sm { font-size: 14px; line-height: 20px; }
+    .text-xs { font-size: 12px; line-height: 16px; }
+    .font-semibold { font-weight: 600; }
+    .font-medium { font-weight: 500; }
+    .text-gray-900 { color: #111827; }
+    .text-gray-800 { color: #1f2937; }
+    .text-gray-600 { color: #4b5563; }
+    .text-gray-500 { color: #6b7280; }
+    .text-gray-400 { color: #9ca3af; }
+    .text-red-600 { color: #dc2626; }
+    .text-green-600 { color: #16a34a; }
+    .text-left { text-align: left; }
+    .text-right { text-align: right; }
+    .min-w-full { min-width: 100%; }
+    h1, h2, h4, p { margin: 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th { font-weight: 600; }
+    tbody tr + tr { border-top: 1px solid #f3f4f6; }
+    @media (min-width: 768px) {
+      .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    .grid-detail-table th, .grid-detail-table td { white-space: nowrap; }
+    .grid-detail-method {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #eef2ff;
+      color: #3730a3;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 p-6">
+  <div class="max-w-5xl mx-auto">
+    <div class="mb-4">
+      <h1 class="text-2xl font-semibold text-gray-900">网格交易详情</h1>
+      <p class="text-sm text-gray-500 mt-1">模拟数据 · 000001.SZ · 运行中</p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+        <h2 class="text-lg font-semibold text-gray-900">平安银行 网格策略</h2>
+        <p class="text-sm text-gray-500 mt-1">会话 #42 · 稳健型 · 中心价 10.00 → 10.80</p>
+      </div>
+
+      <div class="px-6 py-5">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">总盈亏</div>
+            <div class="text-xl font-semibold mt-1 text-red-600">+342.80元</div>
+            <div class="text-xs mt-1 text-red-600">盈亏率 +3.43%</div>
+          </div>
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">已实现</div>
+            <div class="text-xl font-semibold mt-1 text-red-600">+268.00元</div>
+            <div class="text-xs text-gray-400 mt-1">已配对成交</div>
+          </div>
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">未实现</div>
+            <div class="text-xl font-semibold mt-1 text-red-600">+74.80元</div>
+            <div class="text-xs text-gray-400 mt-1">未平网格 200 股</div>
+          </div>
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">资金使用</div>
+            <div class="text-xl font-semibold mt-1">3,280 / 10,000元</div>
+            <div class="text-xs text-gray-400 mt-1">使用率 32.80%</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">交易统计</div>
+            <div class="text-sm font-medium mt-2">8次（买4/卖4）</div>
+          </div>
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">中心价</div>
+            <div class="text-sm font-medium mt-2">初始 10.00 / 当前 10.80</div>
+          </div>
+          <div class="border border-gray-200 rounded p-3">
+            <div class="text-xs text-gray-500">计算口径</div>
+            <div class="mt-2"><span class="grid-detail-method">真实账本</span></div>
+          </div>
+        </div>
+
+        <div class="mb-5">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="font-semibold text-gray-800">最近网格交易</h4>
+            <span class="text-xs text-gray-500">共 8 条，显示最近 6 条</span>
+          </div>
+          <div class="overflow-x-auto border border-gray-200 rounded">
+            <table class="min-w-full text-sm grid-detail-table">
+              <thead class="bg-gray-50 text-gray-600">
+                <tr>
+                  <th class="px-3 py-2 text-left">时间</th>
+                  <th class="px-3 py-2 text-left">方向</th>
+                  <th class="px-3 py-2 text-right">触发价</th>
+                  <th class="px-3 py-2 text-right">数量</th>
+                  <th class="px-3 py-2 text-right">金额</th>
+                  <th class="px-3 py-2 text-right">档位</th>
+                  <th class="px-3 py-2 text-left">委托/成交ID</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr><td class="px-3 py-2">2026-06-06 10:31:20</td><td class="px-3 py-2 font-medium text-green-600">卖出</td><td class="px-3 py-2 text-right">10.92</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2184.00</td><td class="px-3 py-2 text-right">10.85</td><td class="px-3 py-2 text-gray-500">GRID_SELL_008</td></tr>
+                <tr><td class="px-3 py-2">2026-06-06 10:04:51</td><td class="px-3 py-2 font-medium text-red-600">买入</td><td class="px-3 py-2 text-right">10.58</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2116.00</td><td class="px-3 py-2 text-right">10.60</td><td class="px-3 py-2 text-gray-500">GRID_BUY_007</td></tr>
+                <tr><td class="px-3 py-2">2026-06-05 14:42:36</td><td class="px-3 py-2 font-medium text-green-600">卖出</td><td class="px-3 py-2 text-right">10.74</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2148.00</td><td class="px-3 py-2 text-right">10.70</td><td class="px-3 py-2 text-gray-500">GRID_SELL_006</td></tr>
+                <tr><td class="px-3 py-2">2026-06-05 13:18:02</td><td class="px-3 py-2 font-medium text-red-600">买入</td><td class="px-3 py-2 text-right">10.33</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2066.00</td><td class="px-3 py-2 text-right">10.35</td><td class="px-3 py-2 text-gray-500">GRID_BUY_005</td></tr>
+                <tr><td class="px-3 py-2">2026-06-04 14:07:44</td><td class="px-3 py-2 font-medium text-green-600">卖出</td><td class="px-3 py-2 text-right">10.46</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2092.00</td><td class="px-3 py-2 text-right">10.45</td><td class="px-3 py-2 text-gray-500">GRID_SELL_004</td></tr>
+                <tr><td class="px-3 py-2">2026-06-04 11:16:09</td><td class="px-3 py-2 font-medium text-red-600">买入</td><td class="px-3 py-2 text-right">10.11</td><td class="px-3 py-2 text-right">200</td><td class="px-3 py-2 text-right">2022.00</td><td class="px-3 py-2 text-right">10.10</td><td class="px-3 py-2 text-gray-500">GRID_BUY_003</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded p-3">
+          说明：停止网格策略只停止自动网格交易与撤销未完成网格委托，不会清空当前股票持仓。
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
