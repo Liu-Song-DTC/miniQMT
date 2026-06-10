@@ -762,8 +762,8 @@ class DataManager:
                         # 匹配带后缀（如 301399.SZ）和不带后缀（301399）两种格式
                         for sc in stock_codes:
                             if sc.split('.')[0] == code_simple and sc not in self.stock_names_cache:
-                                self.stock_names_cache[sc] = name
-                                filled += 1
+                                if self._cache_stock_name(sc, name):
+                                    filled += 1
         except Exception as e:
             logger.debug(f"warm_stock_name_cache: QMT持仓来源跳过: {e}")
 
@@ -776,8 +776,7 @@ class DataManager:
                         detail = self.xt.get_instrument_detail(sc)
                         if detail and isinstance(detail, dict):
                             name = detail.get('InstrumentName') or detail.get('instrumentName') or detail.get('name')
-                            if name:
-                                self.stock_names_cache[sc] = name
+                            if self._cache_stock_name(sc, name):
                                 filled += 1
                     except Exception:
                         pass
@@ -785,6 +784,60 @@ class DataManager:
                 logger.debug(f"warm_stock_name_cache: xtdata来源跳过: {e}")
 
         logger.info(f"股票名称缓存预热完成: 共 {len(stock_codes)} 只，成功填充 {filled} 只，缓存大小 {len(self.stock_names_cache)}")
+
+    @staticmethod
+    def _is_valid_stock_name(stock_code, stock_name):
+        """判断股票名称是否是可持久化的真实名称。"""
+        if stock_name is None:
+            return False
+        name = str(stock_name).strip()
+        if not name or name in ('--', 'None', 'nan'):
+            return False
+        code = str(stock_code).strip()
+        code_simple = code.split('.')[0] if '.' in code else code
+        name_simple = name.split('.')[0] if '.' in name else name
+        return name_simple != code_simple
+
+    def _cache_stock_name(self, stock_code, stock_name):
+        """仅缓存真实名称，避免把查询失败时的股票代码固化进缓存。"""
+        if not self._is_valid_stock_name(stock_code, stock_name):
+            return None
+        name = str(stock_name).strip()
+        self.stock_names_cache[stock_code] = name
+        try:
+            xt_code = self._adjust_stock(stock_code)
+            self.stock_names_cache[xt_code] = name
+            self.stock_names_cache[xt_code.split('.')[0]] = name
+        except Exception:
+            pass
+        return name
+
+    def _get_stock_name_from_xtdata(self, stock_code):
+        """优先从 xtdata 合约基础信息获取股票名称。"""
+        if self.xt is None or not hasattr(self.xt, 'get_instrument_detail'):
+            return None
+        try:
+            codes = []
+            xt_code = self._adjust_stock(stock_code)
+            codes.append(xt_code)
+            raw_code = str(stock_code).strip()
+            if raw_code not in codes:
+                codes.append(raw_code)
+
+            for code in codes:
+                detail = self.xt.get_instrument_detail(code)
+                if detail and isinstance(detail, dict):
+                    stock_name = (
+                        detail.get('InstrumentName')
+                        or detail.get('instrumentName')
+                        or detail.get('name')
+                    )
+                    cached_name = self._cache_stock_name(stock_code, stock_name)
+                    if cached_name:
+                        return cached_name
+        except Exception as e:
+            logger.debug(f"通过xtdata获取股票 {stock_code} 名称失败: {e}")
+        return None
 
     def _baostock_login_with_timeout(self, timeout=None):
         """带超时的 baostock login，防止网络异常时无限阻塞。
@@ -839,7 +892,10 @@ class DataManager:
         try:
             # 尝试从缓存获取名称
             if stock_code in self.stock_names_cache:
-                return self.stock_names_cache[stock_code]
+                cached_name = self.stock_names_cache[stock_code]
+                if self._is_valid_stock_name(stock_code, cached_name):
+                    return cached_name
+                self.stock_names_cache.pop(stock_code, None)
 
             # 从QMT交易接口获取（仅实盘模式）
             try:
@@ -858,11 +914,15 @@ class DataManager:
                         stock_info = positions_df[positions_df['证券代码'] == stock_code_simple]
                         if not stock_info.empty:
                             stock_name = stock_info.iloc[0]['证券名称']
-                            # 保存到缓存
-                            self.stock_names_cache[stock_code] = stock_name
-                            return stock_name
+                            cached_name = self._cache_stock_name(stock_code, stock_name)
+                            if cached_name:
+                                return cached_name
             except Exception as e:
                 logger.debug(f"通过qmt_trader获取股票名称出错: {str(e)}")
+
+            stock_name = self._get_stock_name_from_xtdata(stock_code)
+            if stock_name:
+                return stock_name
 
             # 尝试使用baostock查询（带超时保护和冷却机制）
             try:
@@ -873,8 +933,7 @@ class DataManager:
                 max_failures = getattr(config, 'BAOSTOCK_MAX_CONSECUTIVE_FAILURES', 3)
 
                 if time.time() < self._bs_cooldown_until:
-                    # 冷却期内，降级缓存并直接返回
-                    self.stock_names_cache[stock_code] = stock_code
+                    # 冷却期内只临时降级返回代码，不污染名称缓存。
                     return stock_code
 
                 # 带超时的 login
@@ -891,8 +950,6 @@ class DataManager:
                             f"进入冷却期 {cooldown} 秒"
                         )
 
-                    # 降级缓存：避免同一个 stock_code 重复触发 baostock
-                    self.stock_names_cache[stock_code] = stock_code
                     self._baostock_logout_safe()
                     return stock_code
 
@@ -913,7 +970,6 @@ class DataManager:
                 rs = bs.query_stock_basic(code=formatted_code)
                 if rs.error_code != '0':
                     logger.warning(f"查询股票基本信息失败: {rs.error_msg}")
-                    self.stock_names_cache[stock_code] = stock_code
                     self._baostock_logout_safe()
                     return stock_code
 
@@ -925,24 +981,21 @@ class DataManager:
 
                 if data_list:
                     stock_name = data_list[0][1] if len(data_list[0]) > 1 else stock_code
-                    self.stock_names_cache[stock_code] = stock_name
-                    return stock_name
+                    cached_name = self._cache_stock_name(stock_code, stock_name)
+                    if cached_name:
+                        return cached_name
 
-                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
 
             except ImportError:
                 logger.warning("未安装baostock，无法获取股票名称")
-                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
             except Exception as e:
                 logger.error(f"获取股票 {stock_code} 名称时出错: {str(e)}")
-                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
 
         except Exception as e:
             logger.error(f"获取股票 {stock_code} 名称时出错: {str(e)}")
-            self.stock_names_cache[stock_code] = stock_code
             return stock_code
     
     def save_history_data(self, stock_code, data_df):

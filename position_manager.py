@@ -1291,12 +1291,22 @@ class PositionManager:
             def _fmt_optional_price(value):
                 return f"{value:.2f}" if value is not None else "None"
 
+            def _is_valid_stock_name(name):
+                if name is None:
+                    return False
+                name = str(name).strip()
+                if not name or name in ('--', 'None', 'nan'):
+                    return False
+                stock_code_simple = str(stock_code).split('.')[0]
+                name_simple = name.split('.')[0] if '.' in name else name
+                return name_simple != stock_code_simple
+
             with self.memory_conn_lock:
                 cursor = self.memory_conn.cursor()
 
                 # P0修复: 不修改全局row_factory，使用cursor.description手动构建字典
                 dict_cursor = self.memory_conn.cursor()
-                dict_cursor.execute("SELECT open_date, profit_triggered, highest_price, cost_price, stop_loss_price FROM positions WHERE stock_code=?", (stock_code,))
+                dict_cursor.execute("SELECT open_date, profit_triggered, highest_price, cost_price, stop_loss_price, stock_name FROM positions WHERE stock_code=?", (stock_code,))
                 row = dict_cursor.fetchone()
 
                 # 手动构建字典以避免修改全局row_factory
@@ -1352,6 +1362,13 @@ class PositionManager:
                         calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
+                    existing_stock_name = result_row.get('stock_name')
+                    final_stock_name = stock_name
+                    if not _is_valid_stock_name(final_stock_name) and _is_valid_stock_name(existing_stock_name):
+                        final_stock_name = existing_stock_name
+                    elif not _is_valid_stock_name(final_stock_name):
+                        final_stock_name = stock_code
+
 
                     # 使用普通cursor执行更新
                     # 修复：同步更新 base_cost_price，确保加仓后"基准成本"字段保持最新
@@ -1361,7 +1378,7 @@ class PositionManager:
                             profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?, profit_triggered=?, stock_name=?
                         WHERE stock_code=?
                     """, (int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value, int(p_available),
-                        p_profit_ratio, now, final_highest_price, final_stop_loss_price, final_profit_triggered, stock_name, stock_code))
+                        p_profit_ratio, now, final_highest_price, final_stop_loss_price, final_profit_triggered, final_stock_name, stock_code))
 
                     # 【关键修改】使用字典访问记录变化
                     if final_profit_triggered != existing_profit_triggered:
@@ -1385,7 +1402,7 @@ class PositionManager:
                     calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, profit_triggered)
                     final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
-                    if stock_name is None:
+                    if not _is_valid_stock_name(stock_name):
                         stock_name = stock_code
 
                     cursor.execute("""

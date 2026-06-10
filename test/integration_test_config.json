@@ -201,7 +201,8 @@
       "name": "xtdata 行情数据源测试",
       "description": "验证 DataManager.ensure_subscribed 动态订阅（去重/异常处理）、get_latest_data xtdata->Mootdx fallback 三条路径、以及盘中新持仓加入时自动订阅的集成行为",
       "modules": [
-        "test.test_xtdata_data_source"
+        "test.test_xtdata_data_source",
+        "test.test_stock_name_resolution"
       ],
       "priority": "high"
     },
