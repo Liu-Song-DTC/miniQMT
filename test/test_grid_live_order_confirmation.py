@@ -56,6 +56,15 @@ class FakeOrderInfo:
         self.order_status = status
 
 
+class FakeBrokerOrder:
+    def __init__(self, order_id, status=54, stock_code='000001.SZ', traded_volume=0, traded_price=0):
+        self.order_id = order_id
+        self.stock_code = stock_code
+        self.order_status = status
+        self.traded_volume = traded_volume
+        self.traded_price = traded_price
+
+
 class TestGridLiveOrderConfirmation(unittest.TestCase):
     def setUp(self):
         self.db = DatabaseManager(':memory:')
@@ -194,6 +203,52 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         ))
         self.assertNotIn('ORDER_RESTART', restarted.pending_grid_orders)
         self.assertEqual(self.db.get_grid_order('ORDER_RESTART')['status'], 'filled')
+
+    def test_startup_reconcile_replays_broker_trade_and_closes_canceled_order(self):
+        config.ENABLE_SIMULATION_MODE = False
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+        session = self._make_session()
+        signal = self._buy_signal(session)
+
+        self.db.create_grid_order({
+            'order_id': 'ORDER_RECON_FILLED',
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'side': 'BUY',
+            'status': 'submitted',
+            'requested_volume': 200,
+            'expected_price': 10.0,
+            'reserved_price': 10.2,
+            'submitted_at': datetime.now().isoformat(),
+            'raw_signal': __import__('json').dumps(signal),
+        })
+        self.db.create_grid_order({
+            'order_id': 'ORDER_RECON_CANCELED',
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'side': 'BUY',
+            'status': 'submitted',
+            'requested_volume': 100,
+            'expected_price': 10.0,
+            'reserved_price': 10.2,
+            'submitted_at': datetime.now().isoformat(),
+            'raw_signal': __import__('json').dumps(signal),
+        })
+        self.executor.query_stock_trades.return_value = [
+            FakeTrade('ORDER_RECON_FILLED', volume=200, price=10.1, trade_id='DEAL_RECON_1')
+        ]
+        self.executor.query_stock_orders.return_value = [
+            FakeBrokerOrder('ORDER_RECON_FILLED', status=56, traded_volume=200, traded_price=10.1),
+            FakeBrokerOrder('ORDER_RECON_CANCELED', status=54),
+        ]
+
+        restarted = GridTradingManager(self.db, self.position_manager, self.executor)
+
+        self.assertNotIn('ORDER_RECON_FILLED', restarted.pending_grid_orders)
+        self.assertNotIn('ORDER_RECON_CANCELED', restarted.pending_grid_orders)
+        self.assertEqual(self.db.get_grid_order('ORDER_RECON_FILLED')['status'], 'filled')
+        self.assertEqual(self.db.get_grid_order('ORDER_RECON_CANCELED')['status'], 'canceled')
+        self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 1)
 
     def test_duplicate_deal_ignored_by_db_idempotency(self):
         config.ENABLE_SIMULATION_MODE = False

@@ -45,7 +45,9 @@
         "test.test_grid_trade_fund_management",
         "test.test_grid_trade_statistics",
         "test.test_grid_trade_rebuild",
-        "test.test_grid_order_lifecycle_and_ledger"
+        "test.test_grid_order_lifecycle_and_ledger",
+        "test.test_grid_live_order_confirmation",
+        "test.test_grid_counterparty_price_and_limit_guard"
       ],
       "priority": "high"
     },
@@ -255,6 +257,8 @@
         "test.test_grid_signal_price_tracker",
         "test.test_grid_session_lifecycle",
         "test.test_grid_trade_buy",
+        "test.test_grid_live_order_confirmation",
+        "test.test_grid_counterparty_price_and_limit_guard",
         "test.test_grid_exit_deviation",
         "test.test_grid_validation_params",
         "test.test_trader_callback",

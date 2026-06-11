@@ -68,6 +68,7 @@ class _GridGuardTestBase(unittest.TestCase):
                 'GRID_PRICE_LIMIT_EPS', 'GRID_SIGNAL_MAX_AGE_SECONDS',
                 'GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO', 'GRID_BUY_COOLDOWN',
                 'GRID_SELL_COOLDOWN', 'GRID_LEVEL_COOLDOWN',
+                'GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO',
             )
         }
         # 默认实盘 + 确认模式 + 两项防护开启；放宽冷却与时效避免干扰
@@ -81,6 +82,7 @@ class _GridGuardTestBase(unittest.TestCase):
         config.GRID_BUY_COOLDOWN = 0
         config.GRID_SELL_COOLDOWN = 0
         config.GRID_LEVEL_COOLDOWN = 0
+        config.GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO = 0.02
 
     def tearDown(self):
         for k, v in self._orig.items():
@@ -191,6 +193,28 @@ class TestGridCounterpartyPrice(_GridGuardTestBase):
         self._set_latest_price(10.0)
         session = self._make_session()
         self.manager.execute_grid_trade(self._buy_signal(session, trigger_price=10.0))
+        self.executor.buy_stock.assert_not_called()
+
+    def test_counterparty_buy_reserves_by_risk_price_and_reduces_volume(self):
+        """对手价买入按风险价预占，避免成交价高于触发价时突破资金上限。"""
+        self._set_latest_price(10.0)
+        session = self._make_session()
+        session.max_investment = 2000
+        session.position_ratio = 1.0
+
+        ok = self.manager.execute_grid_trade(self._buy_signal(session, trigger_price=10.0))
+
+        self.assertTrue(ok)
+        self.executor.buy_stock.assert_called_once()
+        self.assertIsNone(self.executor.buy_stock.call_args.kwargs['price'])
+        self.assertEqual(self.executor.buy_stock.call_args.kwargs['volume'], 100)
+        pending = self.manager.pending_grid_orders['ORDER_BUY']
+        self.assertAlmostEqual(pending['reserved_price'], 10.2, places=4)
+        self.assertAlmostEqual(self.manager._get_reserved_buy_amount_unlocked(session.id), 1020.0, places=2)
+
+        self.executor.buy_stock.reset_mock()
+        ok2 = self.manager.execute_grid_trade(self._buy_signal(session, trigger_price=10.0))
+        self.assertFalse(ok2)
         self.executor.buy_stock.assert_not_called()
 
 

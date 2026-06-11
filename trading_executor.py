@@ -337,6 +337,20 @@ class TradingExecutor:
         except Exception as e:
             logger.error(f"处理委托回调时出错: {str(e)}")
     
+    def query_stock_orders(self):
+        """查询当日委托，供网格启动对账使用。"""
+        qmt_trader = getattr(self.position_manager, 'qmt_trader', None)
+        if qmt_trader and hasattr(qmt_trader, 'query_stock_orders'):
+            return qmt_trader.query_stock_orders()
+        return []
+
+    def query_stock_trades(self):
+        """查询当日成交，供网格启动对账使用。"""
+        qmt_trader = getattr(self.position_manager, 'qmt_trader', None)
+        if qmt_trader and hasattr(qmt_trader, 'query_stock_trades'):
+            return qmt_trader.query_stock_trades()
+        return []
+
     def _on_account_callback(self, account_info):
         """
         账户资金回调函数

@@ -309,6 +309,7 @@ class DatabaseManager:
                 status TEXT NOT NULL DEFAULT 'submitted',
                 requested_volume INTEGER NOT NULL,
                 expected_price REAL NOT NULL,
+                reserved_price REAL,
                 filled_volume INTEGER DEFAULT 0,
                 filled_amount REAL DEFAULT 0,
                 last_error TEXT,
@@ -333,6 +334,15 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_grid_orders_stock
             ON grid_orders(stock_code)
         """)
+
+        try:
+            cursor.execute("ALTER TABLE grid_orders ADD COLUMN reserved_price REAL")
+            logger.info("数据库迁移: 添加 grid_orders.reserved_price 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass
+            else:
+                raise
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grid_lots (
@@ -645,9 +655,9 @@ class DatabaseManager:
             cursor.execute("""
                 INSERT INTO grid_orders
                 (order_id, session_id, stock_code, side, status,
-                 requested_volume, expected_price, filled_volume, filled_amount,
+                 requested_volume, expected_price, reserved_price, filled_volume, filled_amount,
                  submitted_at, raw_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(order_id) DO UPDATE SET
                     session_id=excluded.session_id,
                     stock_code=excluded.stock_code,
@@ -655,6 +665,7 @@ class DatabaseManager:
                     status=excluded.status,
                     requested_volume=excluded.requested_volume,
                     expected_price=excluded.expected_price,
+                    reserved_price=excluded.reserved_price,
                     filled_volume=excluded.filled_volume,
                     filled_amount=excluded.filled_amount,
                     submitted_at=excluded.submitted_at,
@@ -668,6 +679,7 @@ class DatabaseManager:
                 order_data.get('status', 'submitted'),
                 int(order_data['requested_volume']),
                 float(order_data['expected_price']),
+                float(order_data.get('reserved_price') or order_data['expected_price']),
                 int(order_data.get('filled_volume', 0)),
                 float(order_data.get('filled_amount', 0.0)),
                 order_data.get('submitted_at', datetime.now().isoformat()),

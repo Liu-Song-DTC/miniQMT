@@ -659,6 +659,7 @@ GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO = 0.01  # 执行前最新价相对触发价最
 #       因为成交以真实回报价落账(handle_deal_callback)，统计才准确；
 #       非确认模式下用 trigger_price 估算落账，强制回退限价以保持 V1/V1-SELL 修复的统计一致性。
 GRID_USE_COUNTERPARTY_PRICE = True
+GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO = 0.02  # 对手价买入资金预占缓冲，防止成交价高于触发价时突破最大投入
 
 # 网格涨跌停/停牌防护(仅实盘生效)
 # True: 实盘下单前检查标的涨跌停/停牌状态，封板时跳过本次交易，避免无效挂单

@@ -27,7 +27,8 @@ class TestHighestPriceUpdate(TestBase):
 
     def setUp(self):
         super().setUp()
-        self.pm = PositionManager()
+        with patch.object(PositionManager, "start_sync_thread", return_value=None):
+            self.pm = PositionManager()
         # 停止同步线程，避免后台影响测试
         self.pm.stop_sync_thread()
 
@@ -86,10 +87,13 @@ class TestHighestPriceUpdate(TestBase):
 
         with patch("position_manager.Methods.getStockData", return_value=history_df) as mock_history:
 
+            history_calls = mock_history.call_count
+            tick_calls = mock_tick.call_count
+
             # 第一次调用：应拉取历史数据 + tick
             self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count, 1, "首次应拉取历史数据")
-            self.assertEqual(mock_tick.call_count, 1, "tick数据应实时获取")
+            self.assertEqual(mock_history.call_count - history_calls, 1, "首次应拉取历史数据")
+            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据应实时获取")
 
             # 最高价应更新到tick高点 12.5
             cursor = self.pm.memory_conn.cursor()
@@ -98,15 +102,21 @@ class TestHighestPriceUpdate(TestBase):
             self.assertIsNotNone(row, "持仓应存在")
             self.assertAlmostEqual(row[0], 12.5, places=2, msg="最高价应更新为tick高点")
 
+            history_calls = mock_history.call_count
+            tick_calls = mock_tick.call_count
+
             # TTL内再次调用：历史数据不应重复拉取，tick仍应获取
             self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count, 1, "TTL内不应重复拉取历史数据")
-            self.assertEqual(mock_tick.call_count, 2, "tick数据每次应实时获取")
+            self.assertEqual(mock_history.call_count - history_calls, 0, "TTL内不应重复拉取历史数据")
+            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
 
             # 让缓存过期
             self.pm.history_high_cache[stock_code]["ts"] = time.time() - 2
+            history_calls = mock_history.call_count
+            tick_calls = mock_tick.call_count
+
             self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count, 2, "缓存过期后应重新拉取历史数据")
-            self.assertEqual(mock_tick.call_count, 3, "tick数据每次应实时获取")
+            self.assertEqual(mock_history.call_count - history_calls, 1, "缓存过期后应重新拉取历史数据")
+            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
 
         logger.info("最高价更新机制专项测试通过")
