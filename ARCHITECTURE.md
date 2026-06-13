@@ -477,7 +477,7 @@ Level 2        reconnect()      ← 指数退避重连(60s→3600s)
 | 需要统一可观测指标 | 设为 `True` |
 | 网络隔离部署 | 设为 `True`（通过局域网访问） |
 
-详细说明见 [docs/xtquant_manager.md](docs/xtquant_manager.md)
+**v3.x 网关增强**: 内嵌托管 `web2.0/dist/`（`:8888` 即开即用 + SPA fallback）、提供 Flask 兼容端点（`/api/positions` `/api/status` 等）使 web2.0 网关模式零改造、网关模式动态止盈止损后台线程（`xtquant_manager/stop_profit.py`，复用 position_manager 算法）。详见 [docs/xtquant_manager.md](docs/xtquant_manager.md) 与[在线文档站 · XtQuantManager](https://weihong-su.github.io/miniQMT/)。
 
 ---
 
@@ -745,7 +745,7 @@ sequenceDiagram
 | 优先级 | 条件 | 触发阶段 | 公式 | 默认值 | 说明 |
 |--------|------|---------|------|--------|------|
 | 1 | **偏离度** | 任意阶段 | `max(drift_dev, market_dev) > max_deviation` | 15% | 双重偏离：网格漂移偏离 + 市价偏离，取最大值 |
-| 2 | **止盈** | 买卖配对后 | `profit_ratio >= target_profit` (True P&L，需 `sell_count > 0`) | 8% | 必须至少完成1笔买入+1笔卖出后才检测 |
+| 2 | **止盈** | 买卖配对后 | `profit_ratio >= target_profit` (True P&L，需 `sell_count > 0`) | 10% | 必须至少完成1笔买入+1笔卖出后才检测 |
 | 2 | **止损** | 仅买入后即可 | `profit_ratio <= stop_loss` (True P&L，需 `buy_count > 0`) | -10% | 允许"仅买未卖"阶段触发，防止单边下跌风险扩大 |
 | 3 | **超时** | 任意阶段 | `now > end_time` | 7天 | 会话运行时长超限 |
 | 4 | **持仓清空** | 任意阶段 | `volume == 0` | - | 持仓被外部清空（止盈止损策略卖出） |
@@ -842,6 +842,48 @@ GRID_STOP_LOSS_RATIO = -0.10         # 止损-10%
 GRID_DEFAULT_DURATION_DAYS = 7       # 默认运行7天
 ```
 
+### 网格实盘交易机制
+
+模拟模式在内存中即时撮合；**实盘模式**（`ENABLE_SIMULATION_MODE = False`）则以「**成交回报为准**」重构订单闭环，应对委托被拒、部分成交、撤单、滑点、涨跌停封板等真实场景。
+
+```mermaid
+sequenceDiagram
+    participant GT as 网格线程
+    participant EX as trading_executor
+    participant QMT as QMT xttrader
+    participant CB as 成交/委托回调
+    participant GDB as grid_database
+
+    GT->>GT: _validate_grid_signal_before_execute()
+    Note over GT: 信号有效期60s + 价格漂移1% 复核
+    GT->>GT: _check_tradable()
+    Note over GT: 涨跌停/停牌防护
+    GT->>EX: 对手价下单(买卖三价)
+    EX->>QMT: order_stock()
+    QMT-->>GT: order_id
+    GT->>GDB: _register_pending_grid_order() 登记 grid_orders
+    QMT-->>CB: 成交回报
+    CB->>GDB: handle_deal_callback() 事务落账
+    Note over GDB: grid_trades + sessions统计<br/>+ grid_orders状态 + grid_lots/matches账本
+```
+
+| 机制 | 配置项 | 说明 |
+|------|--------|------|
+| **委托成交确认** | `GRID_CONFIRM_LIVE_ORDER_BY_DEAL` | 下单先登记 `grid_orders`，成交回报到达再落账；`trade_id` 幂等去重，部分成交累计 |
+| **对手价下单** | `GRID_USE_COUNTERPARTY_PRICE` `..._BUFFER_RATIO` | 买取卖三价/卖取买三价提高成交率；按风险价 `reserved_price` 预占资金防超 `max_investment` |
+| **涨跌停/停牌防护** | `GRID_ENABLE_PRICE_LIMIT_GUARD` `GRID_PRICE_LIMIT_EPS` | `_check_tradable` 封板/停牌跳过；涨跌停价获取失败 fail-open |
+| **信号执行前复核** | `GRID_SIGNAL_MAX_AGE_SECONDS` `..._PRICE_DRIFT_RATIO` | 超龄(60s)/价格漂移(1%)信号丢弃 |
+| **启动对账** | — | 重启从 `grid_orders` 恢复未完成委托，查券商当日成交/委托补记差异 |
+| **对手方预留** | — | 下单计划扣除待成交委托占用的资金(买)/持仓(卖)，防锁外窗口期重复下单 |
+
+**真实盈亏账本与统一视图**：`grid_lots`（买入批次）+ `grid_lot_matches`（FIFO 卖出配对）记录每笔买卖配对，`get_pnl_snapshot` 按数据可用性分级输出盈亏：
+
+| 方法 | 触发条件 |
+|------|---------|
+| `ledger_true_pnl` | 账本可用（最准确，FIFO 已实现 + 未实现） |
+| `memory_true_pnl` | 有会话买卖量 + 行情价（现金流 + 浮动市值估算） |
+| `cash_flow_legacy` / `fallback_market_value_ratio` | 仅现金流 / 仅持仓市值（降级，标记 `is_degraded`） |
+
 ### 线程安全保护
 
 网格数据库操作使用独立锁保护:
@@ -853,7 +895,7 @@ class GridDatabase:
 
     def create_grid_session(self, ...):
         with self.db_lock:
-            cursor.execute("INSERT INTO grid_sessions ...")
+            cursor.execute("INSERT INTO grid_trading_sessions ...")
             conn.commit()
 ```
 
@@ -971,6 +1013,8 @@ CREATE TABLE grid_trading_sessions (
     sell_count INTEGER DEFAULT 0,          -- 卖出次数
     total_buy_amount REAL DEFAULT 0,       -- 累计买入金额
     total_sell_amount REAL DEFAULT 0,      -- 累计卖出金额
+    total_buy_volume INTEGER DEFAULT 0,    -- 累计买入股数(真实盈亏计算用)
+    total_sell_volume INTEGER DEFAULT 0,   -- 累计卖出股数
 
     -- 时间戳
     start_time TEXT NOT NULL,              -- 会话开始时间
@@ -1024,8 +1068,82 @@ CREATE TABLE grid_trades (
 ```
 
 **trade_type 说明**:
-- `BUY`: 网格买入
-- `SELL`: 网格卖出(退出)
+- `BUY`: 网格买入(低吸)
+- `SELL`: 网格卖出(高抛)
+
+#### grid_orders (网格委托表，实盘订单闭环)
+
+```sql
+CREATE TABLE grid_orders (
+    order_id TEXT PRIMARY KEY,             -- 委托ID(券商返回)
+    session_id INTEGER NOT NULL,           -- 所属会话ID
+    stock_code TEXT NOT NULL,
+    side TEXT NOT NULL,                    -- BUY / SELL
+    status TEXT NOT NULL DEFAULT 'submitted',
+        -- submitted | partial_filled | filled | canceled
+        -- | rejected | cancel_requested | cancel_failed ...
+    requested_volume INTEGER NOT NULL,     -- 委托数量
+    expected_price REAL NOT NULL,          -- 期望价格
+    reserved_price REAL,                   -- 对手价资金预占风险价
+    filled_volume INTEGER DEFAULT 0,       -- 已成交数量
+    filled_amount REAL DEFAULT 0,          -- 已成交金额
+    last_error TEXT,                       -- 最近错误信息
+    submitted_at TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    raw_signal TEXT,                       -- 触发信号(JSON)
+    FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
+)
+```
+
+**用途**: 实盘下单后登记待确认委托，成交回报 `handle_deal_callback` 到达后再落账并重建网格；系统重启时据此对账恢复未完成委托。
+
+#### grid_lots (网格买入批次表，FIFO 库存)
+
+```sql
+CREATE TABLE grid_lots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    buy_trade_id TEXT NOT NULL,            -- 买入成交ID
+    buy_order_id TEXT,                     -- 买入委托ID
+    buy_price REAL NOT NULL,
+    original_volume INTEGER NOT NULL,      -- 买入数量
+    remaining_volume INTEGER NOT NULL,     -- 剩余未卖数量
+    realized_volume INTEGER DEFAULT 0,     -- 已卖出数量
+    buy_amount REAL NOT NULL,
+    opened_at TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL DEFAULT 'open',   -- open | closed
+    FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE
+)
+```
+
+#### grid_lot_matches (FIFO 卖出配对表，真实盈亏)
+
+```sql
+CREATE TABLE grid_lot_matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    buy_lot_id INTEGER,                    -- 对应买入批次(NULL=底仓卖出)
+    sell_trade_id TEXT NOT NULL,
+    sell_order_id TEXT,
+    match_type TEXT NOT NULL DEFAULT 'matched',  -- matched | unmatched
+    volume INTEGER NOT NULL,
+    buy_price REAL,
+    sell_price REAL NOT NULL,
+    buy_amount REAL DEFAULT 0,
+    sell_amount REAL NOT NULL,
+    realized_pnl REAL DEFAULT 0,           -- (sell_price - buy_price) × volume
+    matched_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES grid_trading_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (buy_lot_id) REFERENCES grid_lots(id) ON DELETE SET NULL
+)
+```
+
+**账本用途**: `grid_lots` + `grid_lot_matches` 按先进先出逐笔配对卖出与买入，计算真实已实现/未实现盈亏，供 `get_pnl_snapshot` 统一盈亏视图使用（详见[网格实盘交易机制](#网格实盘交易机制)）。
+
+> 此外 `grid_config_templates` 表持久化用户保存的网格参数模板；`init_risk_level_templates()` 预置「激进型网格 / 稳健型网格 / 保守型网格」三档风险模板。
 
 #### system_config (系统配置表)
 
@@ -1154,9 +1272,11 @@ if (data.version > lastVersion) {
 CREATE INDEX idx_positions_code ON positions(stock_code);
 CREATE INDEX idx_trade_records_time ON trade_records(trade_time);
 CREATE INDEX idx_trade_records_code ON trade_records(stock_code);
-CREATE INDEX idx_grid_sessions_code ON grid_sessions(stock_code);
-CREATE INDEX idx_grid_sessions_status ON grid_sessions(status);
+CREATE INDEX idx_grid_sessions_stock ON grid_trading_sessions(stock_code);
+CREATE INDEX idx_grid_sessions_status ON grid_trading_sessions(status);
 CREATE INDEX idx_grid_trades_session ON grid_trades(session_id);
+CREATE INDEX idx_grid_orders_status ON grid_orders(status);
+CREATE INDEX idx_grid_lots_session_status ON grid_lots(session_id, status);
 CREATE INDEX idx_config_history_key ON config_history(config_key);
 ```
 
@@ -1290,6 +1410,13 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | `GRID_STOP_LOSS_RATIO` | `-0.10` | 止损比例(-10%) |
 | `GRID_DEFAULT_DURATION_DAYS` | `7` | 默认运行天数 |
 | `GRID_DEFAULT_MAX_INVESTMENT_RATIO` | `0.5` | 默认最大投入为持仓市值50% |
+| `GRID_CONFIRM_LIVE_ORDER_BY_DEAL` | `True` | 实盘以成交回报为准更新统计 |
+| `GRID_SIGNAL_MAX_AGE_SECONDS` | `60` | 网格信号最长有效期(秒) |
+| `GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO` | `0.01` | 执行前最大容忍价格偏离(1%) |
+| `GRID_USE_COUNTERPARTY_PRICE` | `True` | 对手价下单(买卖三价) |
+| `GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO` | `0.02` | 对手价买入资金预占缓冲(2%) |
+| `GRID_ENABLE_PRICE_LIMIT_GUARD` | `True` | 涨跌停/停牌防护 |
+| `GRID_PRICE_LIMIT_EPS` | `0.001` | 涨跌停判定容差(元) |
 
 #### 委托单管理
 
@@ -1322,18 +1449,19 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 - 每个关闭步骤都有独立的异常处理
 - 单个步骤失败不影响其他资源清理
 - 线程监控器必须先于业务线程关闭
-- 详见 [优雅关闭优化文档](docs/graceful_shutdown_optimization.md)
+- 详见[在线文档站 · 无人值守运行](https://weihong-su.github.io/miniQMT/miniqmt/unattended/)
 
 ---
 
-**文档版本**: v1.4
-**最后更新**: 2026-03-28
+**文档版本**: v1.5
+**最后更新**: 2026-06-13
 **维护者**: miniQMT Team
 
 ### 变更记录
 
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
+| v1.5 | 2026-06-13 | 新增「网格实盘交易机制」章节（成交确认/对手价/涨跌停防护/信号复核/启动对账/FIFO真实盈亏账本）；新增 grid_orders/grid_lots/grid_lot_matches 表及 grid_config_templates；grid_trading_sessions 补 total_buy_volume/total_sell_volume；修正错误表名 grid_sessions→grid_trading_sessions、目标盈利 8%→10%；修正失效文档死链 |
 | v1.4 | 2026-03-28 | 修正数据库表结构（grid_trading_sessions/grid_trades真实字段）；修正会话状态值（active/stopped）；更新网格交易配置参数（GRID_DEFAULT_PRICE_INTERVAL等）；修正ENABLE_GRID_TRADING/ENABLE_SELL_MONITOR默认值 |
 | v1.3 | 2026-03-25 | 更新网格退出条件（止盈/止损非对称设计、双重偏离度）；新增信号三级优先级体系；记录 stop_loss 硬优先级防死锁机制 |
 | v1.2 | 2026-03-13 | 新增 QMT Fail-Safe 重连架构；XtQuantManager 三级健康监控 |

@@ -72,6 +72,21 @@ DYNAMIC_TAKE_PROFIT = [
 | `GRID_TARGET_PROFIT_RATIO` | `0.10` | 网格目标盈利比例（10%） |
 | `GRID_STOP_LOSS_RATIO` | `-0.10` | 网格止损比例（-10%） |
 
+### 网格实盘交易参数（仅 `ENABLE_SIMULATION_MODE = False` 生效）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `GRID_CONFIRM_LIVE_ORDER_BY_DEAL` | `True` | 实盘下单后以**成交回报**为准更新统计（推荐保持开启） |
+| `GRID_SIGNAL_MAX_AGE_SECONDS` | `60` | 网格信号最长有效期（秒），超龄丢弃 |
+| `GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO` | `0.01` | 执行前最新价相对触发价最大容忍偏离（1%） |
+| `GRID_USE_COUNTERPARTY_PRICE` | `True` | 实盘用对手价下单（买取卖三价/卖取买三价）提高成交概率 |
+| `GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO` | `0.02` | 对手价买入资金预占缓冲（2%），防止超 `max_investment` |
+| `GRID_ENABLE_PRICE_LIMIT_GUARD` | `True` | 下单前检查涨跌停/停牌，封板跳过本次交易 |
+| `GRID_PRICE_LIMIT_EPS` | `0.001` | 涨跌停判定容差（元），补偿浮点误差 |
+
+!!! info "对手价依赖成交确认"
+    `GRID_USE_COUNTERPARTY_PRICE` 仅在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时启用——成交以真实回报价落账，统计才准确。详见[网格交易 · 实盘交易机制](grid-trading.md)。
+
 ---
 
 ## 线程与监控参数
@@ -86,6 +101,7 @@ DYNAMIC_TAKE_PROFIT = [
 | `MONITOR_NON_TRADE_SLEEP` | `60` | 非交易时段休眠（秒） |
 | `QMT_POSITION_QUERY_INTERVAL` | `10.0` | QMT 持仓查询间隔（秒） |
 | `POSITION_SYNC_INTERVAL` | `15.0` | SQLite 同步间隔（秒） |
+| `CLEARED_POSITION_WARNING_INTERVAL` | `1800` | 清仓残留持仓成本价告警限频（秒），`0` 不限频；券商盘后可能仍返回已清仓行，超频降为 DEBUG |
 | `ENABLE_SELL_MONITOR` | `True` | 卖出委托超时监控 |
 | `ENABLE_HEARTBEAT_LOG` | `True` | 心跳日志 |
 | `HEARTBEAT_INTERVAL` | `1800` | 心跳间隔（30 分钟） |

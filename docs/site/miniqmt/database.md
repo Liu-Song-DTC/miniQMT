@@ -44,7 +44,7 @@
 
 ## 网格交易表
 
-### grid_sessions（网格会话表）
+### grid_trading_sessions（网格会话表）
 
 | 字段 | 说明 |
 |------|------|
@@ -52,26 +52,96 @@
 | `stock_code` | 股票代码 |
 | `status` | `active` / `stopped` / `completed` |
 | `center_price` | 网格中心价格 |
-| `current_center_price` | 当前中心价格（可能调整） |
+| `current_center_price` | 当前中心价格（成交后调整） |
 | `price_interval` | 档位间距 |
-| `position_ratio` | 仓位比例 |
+| `position_ratio` | 每档仓位比例 |
+| `callback_ratio` | 回调触发比例 |
 | `max_investment` | 最大投入金额 |
+| `current_investment` | 当前已投入金额 |
 | `max_deviation` | 最大偏离比例 |
 | `target_profit` | 目标盈利比例 |
 | `stop_loss` | 止损比例 |
-| `end_time` | 会话结束时间 |
+| `trade_count` / `buy_count` / `sell_count` | 成交次数统计 |
+| `total_buy_amount` / `total_sell_amount` | 累计买入/卖出金额 |
+| `total_buy_volume` / `total_sell_volume` | 累计买入/卖出股数（真实盈亏计算用） |
+| `start_time` / `end_time` / `stop_time` / `stop_reason` | 会话时间与停止原因 |
+| `risk_level` | 风险等级 `conservative` / `moderate` / `aggressive` |
+| `template_name` | 关联的配置模板名称 |
 
-### grid_trades（网格交易表）
+### grid_trades（网格成交明细表）
 
 | 字段 | 说明 |
 |------|------|
 | `session_id` | 关联的网格会话 ID |
 | `stock_code` | 股票代码 |
 | `trade_type` | `BUY` / `SELL` |
-| `price` | 成交价格 |
-| `volume` | 成交数量 |
 | `grid_level` | 触发的网格档位 |
-| `timestamp` | 交易时间 |
+| `trigger_price` | 触发价格 |
+| `volume` / `amount` | 成交数量 / 金额 |
+| `peak_price` / `valley_price` / `callback_ratio` | 信号回调追踪上下文 |
+| `trade_id` | 成交 ID（实盘为券商回报 ID） |
+| `grid_center_before` / `grid_center_after` | 成交前后的网格中心价 |
+| `trade_time` | 交易时间 |
+
+---
+
+## 网格实盘订单与账本表 ⭐
+
+实盘模式以**成交回报**为准的订单闭环依赖以下三张表（详见[网格交易 · 实盘交易机制](grid-trading.md)）。
+
+### grid_orders（网格委托表）
+
+登记每笔实盘委托，待成交回报到达后更新状态。
+
+| 字段 | 说明 |
+|------|------|
+| `order_id` | 委托 ID（主键，券商返回） |
+| `session_id` | 关联会话 |
+| `stock_code` | 股票代码 |
+| `side` | `BUY` / `SELL` |
+| `status` | `submitted` / `partial_filled` / `filled` / `canceled` / `rejected` / `cancel_requested` 等 |
+| `requested_volume` | 委托数量 |
+| `expected_price` | 期望价格 |
+| `reserved_price` | 对手价资金预占风险价 |
+| `filled_volume` / `filled_amount` | 已成交数量 / 金额 |
+| `last_error` | 最近错误信息 |
+| `submitted_at` / `updated_at` | 提交 / 更新时间 |
+| `raw_signal` | 触发信号（JSON） |
+
+### grid_lots（网格买入批次表）
+
+记录每笔网格买入形成的库存批次，供 FIFO 配对。
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 批次 ID |
+| `session_id` / `stock_code` | 关联会话 / 股票代码 |
+| `buy_trade_id` / `buy_order_id` | 买入成交 / 委托 ID |
+| `buy_price` / `buy_amount` | 买入价 / 买入总额 |
+| `original_volume` | 买入数量 |
+| `remaining_volume` | 剩余未卖数量 |
+| `realized_volume` | 已卖出数量 |
+| `status` | `open` / `closed` |
+| `opened_at` / `updated_at` | 建仓 / 更新时间 |
+
+### grid_lot_matches（FIFO 卖出配对表）
+
+记录卖出与买入批次的 FIFO 配对，计算真实已实现盈亏。
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 配对 ID |
+| `session_id` / `stock_code` | 关联会话 / 股票代码 |
+| `buy_lot_id` | 对应买入批次（`NULL` 表示底仓卖出） |
+| `sell_trade_id` / `sell_order_id` | 卖出成交 / 委托 ID |
+| `match_type` | `matched`（配对买单）/ `unmatched`（底仓/余量） |
+| `volume` | 配对数量 |
+| `buy_price` / `sell_price` | 买入价 / 卖出价 |
+| `buy_amount` / `sell_amount` | 买入额 / 卖出额 |
+| `realized_pnl` | 已实现盈亏 `(sell_price − buy_price) × volume` |
+| `matched_at` | 配对时间 |
+
+> 此外还有 `grid_config_templates`（网格配置模板表）持久化用户保存的参数模板。
 
 ---
 

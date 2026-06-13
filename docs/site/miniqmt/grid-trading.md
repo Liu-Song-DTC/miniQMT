@@ -55,6 +55,74 @@
 
 ---
 
+## 实盘交易机制 ⭐
+
+模拟模式下网格在内存中直接撮合，落账即时。**实盘模式**则面临委托被拒、部分成交、撤单、滑点、涨跌停封板等真实场景，因此引入了一整套以「**成交回报为准**」的订单闭环机制。下列功能仅在 `ENABLE_SIMULATION_MODE = False` 时生效。
+
+### 委托成交确认（GRID_CONFIRM_LIVE_ORDER_BY_DEAL）
+
+默认 `True`。实盘网格下单成功后**不立即更新网格统计**，而是先把委托登记为「待确认」（`_register_pending_grid_order`，持久化到 `grid_orders` 表），等真正的成交回报 `handle_deal_callback` 到达后才落账并重建网格中心价。
+
+- **幂等保护**：按 `trade_id` 去重，并检查 `grid_trades` 是否已落账，避免重复回报导致重复统计
+- **部分成交**：按 `min(本次回报量, 委托剩余量)` 逐笔累计，全部成交后才从待确认队列移除
+- **事务落账**：`_record_confirmed_grid_trade_with_order` 在单个事务内同时更新 `grid_trades`（成交明细）、`grid_trading_sessions`（会话统计）、`grid_orders`（委托状态）、`grid_lots`/`grid_lot_matches`（账本）
+
+!!! warning "为何必须以成交回报为准"
+    若按「下单即落账」处理，遇到撤单/拒单/部分成交时网格统计会与真实持仓偏离，进而导致重复下单或超额投入。确认机制是实盘网格安全的基石。
+
+### 对手价下单（GRID_USE_COUNTERPARTY_PRICE）
+
+默认 `True`。实盘下单不指定限价，由 executor 取**卖三价（买入）/ 买三价（卖出）**，参考动态止盈的下单逻辑提高成交概率。
+
+- 仅在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时启用（成交以真实回报价落账，统计才准确）
+- **资金预占缓冲**（`GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO`，默认 2%）：买入按「风险价」`reserved_price = max(触发价, 现价) × (1 + 缓冲)`（上限不超过涨停价）预占资金校验 `max_investment`，防止成交价高于触发价时突破最大投入。实际落账仍按真实成交价。
+
+### 涨跌停 / 停牌防护（GRID_ENABLE_PRICE_LIMIT_GUARD）
+
+默认 `True`，下单前由 `_check_tradable` 检查标的盘口状态：
+
+| 场景 | 行为 |
+|------|------|
+| 买入且现价 ≥ 涨停价（封板买不进） | 跳过本次买入 |
+| 卖出且现价 ≤ 跌停价（封板卖不出） | 跳过本次卖出 |
+| 停牌 / 无有效现价 | 买卖均跳过 |
+
+涨跌停价（`_get_price_limits`）获取失败时 **fail-open**（放行，交由 executor 盘口兜底），仅保留停牌判断。判定容差由 `GRID_PRICE_LIMIT_EPS`（默认 0.001 元）补偿浮点误差。
+
+### 信号执行前复核
+
+信号从检测到执行存在时间差，实盘前由 `_validate_grid_signal_before_execute` 复核：
+
+- **信号有效期**（`GRID_SIGNAL_MAX_AGE_SECONDS`，默认 60 秒）：超龄信号丢弃；时间戳早于现在 5 秒以上（疑似时钟错误）也丢弃
+- **价格漂移**（`GRID_SIGNAL_MAX_PRICE_DRIFT_RATIO`，默认 1%）：最新价相对触发价偏离超过阈值时丢弃，避免在已大幅移动的盘口上按陈旧价格成交
+- 同时复核会话状态为 `active` 且 `session_id` 匹配
+
+### 启动对账与对手方预留
+
+系统重启后会从 `grid_orders` 表恢复未完成委托（`submitted` / `partial_filled` / `cancel_requested` 等状态），并执行对账补偿（`_reconcile_open_grid_orders`）：
+
+1. 查询券商当日**成交**，对缺失的成交补调 `handle_deal_callback`
+2. 查询券商当日**委托**，对已成交但本地未落账的委托合成成交回报补记，对终态委托关闭
+
+**对手方预留（reserve）**：下单计划生成时会扣除「待成交委托」占用的资金（买）和持仓（卖），防止锁外下单窗口期重复下单导致超额。
+
+### 真实盈亏账本（Ledger）
+
+`grid_lots`（买入批次库存）+ `grid_lot_matches`（FIFO 卖出配对）构成网格账本，按先进先出逐笔匹配卖出与买入，计算真实已实现/未实现盈亏。
+
+`get_pnl_snapshot` 提供**统一盈亏视图**，按数据可用性自动降级：
+
+| 方法 | 触发条件 | 说明 |
+|------|---------|------|
+| `ledger_true_pnl` | 账本可用 | FIFO 配对的真实已实现 + 未实现盈亏（最准确） |
+| `memory_true_pnl` | 有会话买卖量 + 行情价 | 按内存现金流 + 浮动市值估算 |
+| `cash_flow_legacy` | 仅有现金流 | 卖出额 − 买入额，标记为降级 |
+| `fallback_market_value_ratio` | 仅有持仓市值 | 现金流 / 持仓市值，标记为降级 |
+
+快照含 `realized_pnl` / `unrealized_pnl` / `total_pnl` / `profit_ratio` / `open_volume` / `is_degraded` 等字段，供 Web 前端（GridStatusPanel）展示利润来源与降级提示。
+
+---
+
 ## 通过 Web 界面使用
 
 1. 访问 `http://localhost:5000`
@@ -113,5 +181,6 @@ curl -X POST http://localhost:5000/api/grid/stop \
 
 - 网格交易需要先触发首次止盈（`GRID_REQUIRE_PROFIT_TRIGGERED = True`）
 - 每只股票同一时间只能有一个活跃网格会话
-- 网格数据持久化在 SQLite `grid_sessions` / `grid_trades` 表中
+- 网格数据持久化在 SQLite `grid_trading_sessions` / `grid_trades` / `grid_orders` / `grid_lots` / `grid_lot_matches` 表中（详见[数据库表结构](database.md)）
+- 实盘下单以**成交回报**为准（`GRID_CONFIRM_LIVE_ORDER_BY_DEAL`），系统重启自动对账恢复未完成委托
 - 建议在模拟模式下充分验证策略后再切换实盘

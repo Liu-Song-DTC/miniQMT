@@ -58,9 +58,14 @@ python main.py
 
 首次运行会自动创建 `data/positions.db` 数据库文件。
 
-### 方式二：一键启动（推荐）
+### 方式二：交互式总控台（推荐）
 
-配置 `launcher.ini`，然后双击 `launcher.bat`：
+```bash
+miniqmt.bat                       # 打开交互式菜单（环境检查/配置校验/启动/停止/网关管理）
+python scripts/_launcher.py menu  # 等效命令
+```
+
+也可配置 `launcher.ini` 后双击 `launcher.bat` 直接拉起 `main.py`：
 
 ```ini
 [Environment]
@@ -77,8 +82,10 @@ PYTHON_SCRIPT=main.py
 ### 访问 Web 界面
 
 ```
-http://localhost:5000
+http://localhost:5000          # web1.0 (Flask)，随系统自动启动
 ```
+
+> web2.0 (Vue3 + PWA) 需先构建：`cd web2.0 && npm install && npm run build`，再由 Flask / xtquant_manager 托管，或独立部署到 Vercel。
 
 ---
 
@@ -166,14 +173,8 @@ python test/run_single_test.py test.test_unattended_operation
 # 检查依赖安装
 python utils/check_dependencies.py
 
-# 检查系统状态
-python test/check_system_status.py
-
-# 诊断 QMT 连接
-python test/diagnose_qmt_connection.py
-
-# 诊断系统问题
-python test/diagnose_system_issues.py
+# 查看运行状态（Web 界面或总控台菜单 [6]）
+miniqmt.bat
 
 # 查看实时日志
 Get-Content logs/qmt_trading.log -Wait   # Windows PowerShell
@@ -236,8 +237,8 @@ XTQUANT_MANAGER_URL = "http://127.0.0.1:8888"
 
 ## 9. 相关文档
 
+- **[在线文档站](https://weihong-su.github.io/miniQMT/)** - 完整文档（无人值守/网格/止盈止损/Web 双模式/数据库）
 - **[README.md](README.md)** - 项目总览、功能特性、常见问题
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - 系统架构、数据流、数据库设计
 - **[CLAUDE.md](CLAUDE.md)** - 开发规范（面向 AI 助手和开发者）
 - **[docs/xtquant_manager.md](docs/xtquant_manager.md)** - XtQuantManager 多账户网关
-- **[docs/quick_start_unattended.md](docs/quick_start_unattended.md)** - 无人值守运行详细指南
