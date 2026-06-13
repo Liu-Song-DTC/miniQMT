@@ -149,6 +149,8 @@ class PositionManager:
         self._deleting_stocks = set()  # 正在删除的股票代码集合
 
         # 网格交易数据库管理器(用于网格交易会话和记录)
+        self._cleared_position_cost_warning_ts = {}
+
         if config.ENABLE_GRID_TRADING:
             try:
                 from grid_database import DatabaseManager
@@ -1177,6 +1179,18 @@ class PositionManager:
         except Exception as e:
             logger.error(f"更新出错 {self.stock_positions_file}: {str(e)}")
 
+    def _log_cleared_position_cost_warning(self, stock_code, message):
+        """对清仓残留持仓的成本价告警限频，避免非交易时段刷屏。"""
+        interval = getattr(config, 'CLEARED_POSITION_WARNING_INTERVAL', 1800)
+        now = time.time()
+        last_ts = self._cleared_position_cost_warning_ts.get(stock_code, 0)
+
+        if interval <= 0 or (now - last_ts) >= interval:
+            logger.warning(message)
+            self._cleared_position_cost_warning_ts[stock_code] = now
+        else:
+            logger.debug(message)
+
     def update_position(self, stock_code, volume, cost_price, current_price=None,
                    profit_ratio=None, market_value=None, available=None, open_date=None,
                    profit_triggered=None, highest_price=None, stop_loss_price=None,
@@ -1231,10 +1245,16 @@ class PositionManager:
                                 logger.info(f"{stock_code} 持仓已清空,从数据库保留cost_price: {final_cost_price:.2f}")
                             else:
                                 final_cost_price = 0.0
-                                logger.warning(f"{stock_code} 持仓已清空且无有效成本价,设为0(建议删除此持仓记录)")
+                                self._log_cleared_position_cost_warning(
+                                    stock_code,
+                                    f"{stock_code} 持仓已清空且无有效成本价,设为0(建议删除此持仓记录)"
+                                )
                         else:
                             final_cost_price = 0.0
-                            logger.warning(f"{stock_code} 持仓已清空且数据库无记录,成本价设为0")
+                            self._log_cleared_position_cost_warning(
+                                stock_code,
+                                f"{stock_code} 持仓已清空且数据库无记录,成本价设为0"
+                            )
                     except Exception as e:
                         logger.error(f"{stock_code} 查询数据库历史成本时出错: {e}")
                         final_cost_price = 0.0

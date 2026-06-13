@@ -566,6 +566,10 @@ QMT_POSITION_QUERY_INTERVAL = 10.0  # ↓70% API调用
 # SQLite同步间隔(秒) - 从5秒延长到15秒
 POSITION_SYNC_INTERVAL = 15.0       # ↓87% I/O操作
 
+# 清仓残留持仓成本价告警限频(秒)。券商 miniQMT 在非交易时段可能仍返回已清仓行。
+# 0 表示不限制频率；默认 30 分钟只告警一次，其余降为 DEBUG。
+CLEARED_POSITION_WARNING_INTERVAL = 1800
+
 # 缓存配置
 CACHE_CONFIG = {
     'positions_ttl': 5.0,      # 持仓数据缓存5秒

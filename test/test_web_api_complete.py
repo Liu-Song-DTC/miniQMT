@@ -498,6 +498,39 @@ class TestPositions(WebAPITestBase):
         )
         mock_pm.get_data_version_info.return_value = {'version': 1, 'changed': False}
 
+    def test_04a_realtime_push_skips_qmt_refresh_after_hours(self):
+        """非交易时段推送只读内存快照，不触发实盘持仓刷新"""
+        mock_pm.update_all_positions_price.reset_mock()
+        mock_pm.get_all_positions_with_all_fields.reset_mock()
+        mock_pm.grid_manager = None
+        mock_pm.get_all_positions_with_all_fields.return_value = pd.DataFrame([{
+            'stock_code': '002815',
+            'volume': 0,
+            'available': 0,
+            'cost_price': 0,
+        }])
+
+        with patch.object(config, 'is_trade_time', return_value=False):
+            positions = web_server._refresh_realtime_positions_once(mock_pm)
+
+        mock_pm.update_all_positions_price.assert_not_called()
+        mock_pm.get_all_positions_with_all_fields.assert_called_once()
+        self.assertEqual(positions[0]['stock_code'], '002815')
+        self.assertFalse(positions[0]['grid_session_active'])
+
+    def test_04b_realtime_push_refreshes_qmt_during_trade_time(self):
+        """交易时段推送仍刷新实盘价格与持仓"""
+        mock_pm.update_all_positions_price.reset_mock()
+        mock_pm.get_all_positions_with_all_fields.reset_mock()
+        mock_pm.grid_manager = None
+        mock_pm.get_all_positions_with_all_fields.return_value = pd.DataFrame()
+
+        with patch.object(config, 'is_trade_time', return_value=True):
+            web_server._refresh_realtime_positions_once(mock_pm)
+
+        mock_pm.update_all_positions_price.assert_called_once()
+        mock_pm.get_all_positions_with_all_fields.assert_called_once()
+
     def test_05_update_holding_no_stock(self):
         """POST /api/holdings/update 缺少 stock_code 应返回 400"""
         resp, ms = self._post('/api/holdings/update', json_data={})
