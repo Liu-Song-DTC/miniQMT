@@ -1,6 +1,14 @@
 {
   "python_env": "C:\\Users\\PC\\Anaconda3\\envs\\python39",
   "test_groups": {
+    "autobuy": {
+      "name": "自动买入模块测试",
+      "description": "验证 miniqmt_autobuy 候选池筛选/条件检查/防重/HTTP下单",
+      "modules": [
+        "test.test_autobuy"
+      ],
+      "priority": "high"
+    },
     "stop_profit": {
       "name": "动态止盈止损测试",
       "description": "验证动态止盈止损策略的正确性",

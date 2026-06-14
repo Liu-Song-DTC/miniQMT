@@ -15,6 +15,10 @@ miniQMT 总控制台后端（被 miniqmt.bat 调用）。
   xqm-stop                   停止 xtquant_manager 网关
   xqm-status                 查看 xtquant_manager 运行状态
   xqm-ui                     在浏览器打开 web2.0/1.0 界面
+  autobuy-start              启动自动买入服务
+  autobuy-stop               停止自动买入服务
+  autobuy-status             查看自动买入服务状态
+  autobuy-log                查看自动买入服务日志
 
 进程跟踪:
   main.py 启动时自己把 PID 写到 data_<account_id>/pid.txt；
@@ -840,6 +844,122 @@ def cmd_xqm_logs(_args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 自动买入服务 (miniqmt_autobuy) 管理
+# ---------------------------------------------------------------------------
+AUTOBUY_APP    = PROJECT_ROOT / "autobuy" / "app.py"
+AUTOBUY_CFG    = PROJECT_ROOT / "autobuy" / "miniqmt_autobuy.cfg"
+AUTOBUY_LOG    = PROJECT_ROOT / "logs" / "miniqmt_autobuy.log"
+AUTOBUY_STATUS = PROJECT_ROOT / "data" / ".autobuy_status.json"
+
+
+def _autobuy_pid_file() -> Path:
+    return PROJECT_ROOT / "data" / ".autobuy.pid"
+
+
+def _autobuy_read_pid() -> int | None:
+    p = _autobuy_pid_file()
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text(encoding="ascii").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def cmd_autobuy_start(_args) -> int:
+    pid = _autobuy_read_pid()
+    if pid and pid_alive(pid):
+        print(f"  ✓ 自动买入服务已在运行 (PID={pid})")
+        return 0
+    if not AUTOBUY_APP.exists():
+        print(f"  ✗ 未找到 {AUTOBUY_APP}")
+        return 1
+    if not AUTOBUY_CFG.exists():
+        print("  ✗ 未找到配置文件 autobuy/miniqmt_autobuy.cfg，请先创建/检查")
+        return 1
+
+    (PROJECT_ROOT / "data").mkdir(exist_ok=True)
+    creationflags = 0x00000010  # CREATE_NEW_CONSOLE，独立控制台
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "autobuy.app"],
+            cwd=str(PROJECT_ROOT),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    except OSError as e:
+        print(f"  ✗ 启动自动买入服务失败: {e}")
+        return 1
+
+    try:
+        _autobuy_pid_file().write_text(str(proc.pid), encoding="ascii")
+    except OSError:
+        pass
+    print(f"  ✓ 自动买入服务已启动 (PID={proc.pid})")
+    print(f"    日志: {AUTOBUY_LOG}")
+    print("    ⚠ 需保证目标 web_server 已运行 (见 autobuy/miniqmt_autobuy.cfg [web] base_url)")
+    return 0
+
+
+def cmd_autobuy_stop(_args) -> int:
+    pid = _autobuy_read_pid()
+    if pid and pid_alive(pid):
+        print(f"  停止自动买入服务 (PID={pid})...")
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+        time.sleep(0.5)
+    else:
+        print("  自动买入服务未在运行")
+    _autobuy_pid_file().unlink(missing_ok=True)
+    try:
+        AUTOBUY_STATUS.unlink(missing_ok=True)
+    except OSError:
+        pass
+    print("  ✓ 已停止")
+    return 0
+
+
+def cmd_autobuy_status(_args) -> int:
+    print("=" * 48)
+    print("  自动买入服务 (miniqmt_autobuy) 状态")
+    print("=" * 48)
+    pid = _autobuy_read_pid()
+    if pid and pid_alive(pid):
+        print(f"  运行中 (PID={pid})")
+    else:
+        print("  未运行")
+    if AUTOBUY_STATUS.exists():
+        try:
+            st = json.loads(AUTOBUY_STATUS.read_text(encoding="utf-8"))
+            print(f"  最近触发 : {st.get('last_run')} [{st.get('trigger')}]")
+            print(f"  候选/通过 : {st.get('candidates')} / {st.get('passed')}")
+            print(f"  本轮买入 : {st.get('bought')}")
+            print(f"  更新时间 : {st.get('updated_at')}")
+        except Exception as e:
+            print(f"  读取状态文件失败: {e}")
+    else:
+        print("  暂无运行记录 (状态文件不存在)")
+    return 0
+
+
+def cmd_autobuy_logs(_args) -> int:
+    if not AUTOBUY_LOG.exists():
+        print("  日志文件不存在: logs/miniqmt_autobuy.log")
+        print("  启动自动买入服务后会自动生成日志")
+        return 0
+    try:
+        lines = AUTOBUY_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+        tail = lines[-40:]
+        print(f"  日志文件: {AUTOBUY_LOG}")
+        print(f"  共 {len(lines)} 行, 显示最后 {len(tail)} 行")
+        print("=" * 64)
+        for line in tail:
+            print(f"  {line}")
+    except Exception as e:
+        print(f"  读取日志失败: {e}")
+    return 0
+
+
 def cmd_menu(_args) -> int:
     """交互式中文菜单循环（由 miniqmt.bat 启动）。
 
@@ -944,11 +1064,17 @@ def cmd_menu(_args) -> int:
         print("   [g] 打开 web2.0 UI")
         print("   [h] 重启 xtquant_manager 服务")
         print("   [i] 查看 xtquant_manager 实时日志")
+        print()
+        print("  [自动买入服务 miniqmt_autobuy]")
+        print("   [j] 启动自动买入服务")
+        print("   [k] 停止自动买入服务")
+        print("   [l] 查看自动买入状态")
+        print("   [m] 查看自动买入日志")
         print(DASH)
         print("   [0] 退出")
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-i]: ").lower()
+        choice = ask("请选择 [0-9, a-m]: ").lower()
 
         if choice == "0":
             print("\n再见!")
@@ -1081,6 +1207,27 @@ def cmd_menu(_args) -> int:
             cmd_xqm_logs(None)
             pause_return()
 
+        # ---- 自动买入服务 ----
+        elif choice == "j":
+            print()
+            cmd_autobuy_start(None)
+            pause_return()
+
+        elif choice == "k":
+            print()
+            cmd_autobuy_stop(None)
+            pause_return()
+
+        elif choice == "l":
+            print()
+            cmd_autobuy_status(None)
+            pause_return()
+
+        elif choice == "m":
+            print()
+            cmd_autobuy_logs(None)
+            pause_return()
+
         else:
             print(f"\n[警告] 无效选择: {choice!r}")
             time.sleep(1)
@@ -1135,6 +1282,11 @@ def main() -> int:
     sub.add_parser("xqm-status")
     sub.add_parser("xqm-ui")
     sub.add_parser("xqm-log")
+    sub.add_parser("autobuy-start")
+    sub.add_parser("autobuy-stop")
+    sub.add_parser("autobuy-status")
+    sub.add_parser("autobuy-log")
+    sub.add_parser("autobuy-logs")
 
     args = parser.parse_args()
     return {
@@ -1152,6 +1304,11 @@ def main() -> int:
         "xqm-status":    cmd_xqm_status,
         "xqm-ui":        cmd_xqm_ui,
         "xqm-log":       cmd_xqm_logs,
+        "autobuy-start":  cmd_autobuy_start,
+        "autobuy-stop":   cmd_autobuy_stop,
+        "autobuy-status": cmd_autobuy_status,
+        "autobuy-log":    cmd_autobuy_logs,
+        "autobuy-logs":   cmd_autobuy_logs,
     }[args.cmd](args)
 
 
