@@ -458,7 +458,85 @@ class DataManager:
         '''
         调整代码
         '''
+        stock = str(stock).strip()
+        lower_stock = stock.lower()
+        if lower_stock.startswith('sh.'):
+            return f"{stock.split('.', 1)[1].upper()}.SH"
+        if lower_stock.startswith('sz.'):
+            return f"{stock.split('.', 1)[1].upper()}.SZ"
         return Methods.add_xt_suffix(stock)
+
+    def _normalize_history_dates(self, data_df, stock_code, source='history'):
+        """
+        统一清洗历史行情日期列。
+
+        xtdata/Mootdx 偶发返回非法日期（如 13598-74-57 15:00、0-00-00 15:00），
+        不能让单行脏数据导致整只指数历史行情失败。
+        """
+        if data_df is None or data_df.empty:
+            return data_df
+
+        work_df = data_df.copy()
+        if 'date' not in work_df.columns and 'time' in work_df.columns:
+            work_df = work_df.rename(columns={'time': 'date'})
+
+        if 'date' not in work_df.columns:
+            return work_df
+
+        raw_dates = work_df['date'].astype(str).str.strip()
+        parsed = pd.Series(pd.NaT, index=work_df.index, dtype='datetime64[ns]')
+
+        compact = raw_dates.str.replace(r'\D', '', regex=True)
+        mask_yyyymmdd = compact.str.len().eq(8)
+        if mask_yyyymmdd.any():
+            parsed.loc[mask_yyyymmdd] = pd.to_datetime(
+                compact.loc[mask_yyyymmdd],
+                format='%Y%m%d',
+                errors='coerce'
+            )
+
+        mask_yyyymmddhhmmss = compact.str.len().ge(14)
+        if mask_yyyymmddhhmmss.any():
+            parsed.loc[mask_yyyymmddhhmmss] = pd.to_datetime(
+                compact.loc[mask_yyyymmddhhmmss].str.slice(0, 14),
+                format='%Y%m%d%H%M%S',
+                errors='coerce'
+            )
+
+        mask_epoch_ms = raw_dates.str.fullmatch(r'\d{13}', na=False)
+        if mask_epoch_ms.any():
+            parsed.loc[mask_epoch_ms] = pd.to_datetime(
+                pd.to_numeric(compact.loc[mask_epoch_ms], errors='coerce'),
+                unit='ms',
+                utc=True,
+                errors='coerce'
+            ).dt.tz_convert('Asia/Shanghai').dt.tz_localize(None)
+
+        mask_epoch_s = raw_dates.str.fullmatch(r'\d{10}', na=False)
+        if mask_epoch_s.any():
+            parsed.loc[mask_epoch_s] = pd.to_datetime(
+                pd.to_numeric(compact.loc[mask_epoch_s], errors='coerce'),
+                unit='s',
+                utc=True,
+                errors='coerce'
+            ).dt.tz_convert('Asia/Shanghai').dt.tz_localize(None)
+
+        fallback_mask = parsed.isna() & raw_dates.ne('') & raw_dates.str.lower().ne('nan')
+        if fallback_mask.any():
+            parsed.loc[fallback_mask] = pd.to_datetime(
+                raw_dates.loc[fallback_mask],
+                errors='coerce'
+            )
+
+        initial_count = len(work_df)
+        work_df['date'] = parsed.dt.strftime('%Y-%m-%d')
+        work_df = work_df.dropna(subset=['date'])
+        dropped = initial_count - len(work_df)
+
+        if dropped > 0:
+            logger.warning(f"{stock_code} 过滤了 {dropped} 行非法历史日期数据({source})")
+
+        return work_df
 
     def download_history_data(self, stock_code, period=None, start_date=None, end_date=None):
         """
@@ -561,9 +639,10 @@ class DataManager:
                 'amount': 'amount'
             })
 
-            # Ensure date column is in the correct format
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+            df = self._normalize_history_dates(df, stock_code, source='Mootdx')
+            if df.empty:
+                logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据清洗后为空")
+                return None
 
             # Ensure 'close' column is numeric
             df['close'] = pd.to_numeric(df['close'], errors='coerce')
@@ -708,18 +787,7 @@ class DataManager:
                 else:
                     return None
             
-            # 确保日期列格式正确
-            if 'date' in df.columns:
-                try:
-                    df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-                except Exception as e:
-                    logger.warning(f"转换日期格式失败: {str(e)}")
-            elif 'time' in df.columns:
-                try:
-                    df = df.rename(columns={'time': 'date'})
-                    df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-                except Exception as e:
-                    logger.warning(f"转换time列为日期格式失败: {str(e)}")
+            df = self._normalize_history_dates(df, xt_stock_code, source='xtdata')
             
             if not df.empty:
                 logger.info(f"成功下载 {xt_stock_code} 的历史数据, 共 {len(df)} 条记录")

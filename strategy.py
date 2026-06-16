@@ -524,8 +524,8 @@ class TradingStrategy:
                     buy_amount = config.POSITION_UNIT
                     logger.info(f"执行 {stock_code} 首次建仓，金额: {buy_amount:.2f}")
                 
-                # 执行买入
-                order_id = self.trading_executor.buy_stock(stock_code, amount=buy_amount, price_type=0)
+                # 执行买入：与动态止盈/止损一致走对手价模式，买单由执行器取卖三价
+                order_id = self.trading_executor.buy_stock(stock_code, amount=buy_amount, price_type=5)
                 
                 if order_id:
                     # 记录已处理信号

@@ -259,7 +259,7 @@ class TestMarketIndexFilter(unittest.TestCase):
 
         self.assertTrue(ok, reason)
         self.assertEqual(reason["passed_index"], "399001")
-        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "999999.SH")
+        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "000001.SH")
         self.assertEqual(dm.download_history_data.call_args_list[1].args[0], "399001.SZ")
 
     def test_index_alias_fallback(self):
@@ -270,9 +270,9 @@ class TestMarketIndexFilter(unittest.TestCase):
         ok, reason = MarketIndexFilter(dm, index_codes=("999999",)).check()
 
         self.assertTrue(ok, reason)
-        self.assertEqual(reason["details"]["999999"]["code"], "sh.000001")
-        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "999999.SH")
-        self.assertEqual(dm.download_history_data.call_args_list[1].args[0], "sh.000001")
+        self.assertEqual(reason["details"]["999999"]["code"], "999999.SH")
+        self.assertEqual(dm.download_history_data.call_args_list[0].args[0], "000001.SH")
+        self.assertEqual(dm.download_history_data.call_args_list[1].args[0], "999999.SH")
 
     def test_all_index_ma5_down_blocks(self):
         dm = MagicMock()

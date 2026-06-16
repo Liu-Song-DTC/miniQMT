@@ -1,0 +1,29 @@
+import unittest
+from unittest.mock import MagicMock, patch
+
+from strategy import TradingStrategy
+
+
+class TestStrategyBuyPriceType(unittest.TestCase):
+    def test_initial_buy_uses_counterparty_price_type(self):
+        strategy = TradingStrategy.__new__(TradingStrategy)
+        strategy.indicator_calculator = MagicMock()
+        strategy.position_manager = MagicMock()
+        strategy.position_manager.get_position.return_value = None
+        strategy.trading_executor = MagicMock()
+        strategy.trading_executor.buy_stock.return_value = "ORDER-1"
+        strategy.processed_signals = set()
+
+        with patch("strategy.config.POSITION_UNIT", 10000):
+            ok = strategy.execute_buy_strategy("002815.SZ", buy_signal=True)
+
+        self.assertTrue(ok)
+        strategy.trading_executor.buy_stock.assert_called_once_with(
+            "002815.SZ",
+            amount=10000,
+            price_type=5,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

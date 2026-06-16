@@ -5,7 +5,9 @@
       "name": "自动买入模块测试",
       "description": "验证 miniqmt_autobuy 候选池筛选/条件检查/防重/HTTP下单",
       "modules": [
-        "test.test_autobuy"
+        "test.test_autobuy",
+        "test.test_data_manager_history_dates",
+        "test.test_strategy_buy_price_type"
       ],
       "priority": "high"
     },
