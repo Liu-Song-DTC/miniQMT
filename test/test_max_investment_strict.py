@@ -45,7 +45,9 @@ class MaxInvTestBase(TestBase):
         config.GRID_REQUIRE_PROFIT_TRIGGERED = False
 
         self.position_manager = PositionManager()
+        self.position_manager.stop_sync_thread()
         self._patch_get_position()
+        self._patch_latest_quote()
 
         self.test_db_path = f"data/test_maxinv_{int(time.time()*1000)}.db"
         self.db = DatabaseManager(db_path=self.test_db_path)
@@ -67,6 +69,11 @@ class MaxInvTestBase(TestBase):
                 'market_value': volume * price,
             }
         self.position_manager.get_position = _get
+
+    def _patch_latest_quote(self):
+        def _quote(stock_code):
+            return None
+        self.position_manager.data_manager.get_latest_data = _quote
 
     def tearDown(self):
         if hasattr(self, 'grid_manager'):
@@ -512,7 +519,9 @@ class TestDBLoadConsistency(MaxInvTestBase):
 
         # 创建新 position_manager（模拟重启）
         self.position_manager = PositionManager()
+        self.position_manager.stop_sync_thread()
         self._patch_get_position()
+        self._patch_latest_quote()
 
         new_db = DatabaseManager(db_path=self.test_db_path)
         new_db.init_grid_tables()

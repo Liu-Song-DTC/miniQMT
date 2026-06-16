@@ -547,6 +547,9 @@ def main():
     parser.add_argument('--no-backup', action='store_true', help='不备份生产数据库')
     parser.add_argument('--skip-env-prep', action='store_true', help='跳过环境准备步骤')
 
+    parser.add_argument('--all-with-fast', action='store_true',
+                        help='Run all groups including the duplicate fast group')
+
     args = parser.parse_args()
 
     # 加载配置
@@ -568,6 +571,8 @@ def main():
     # 确定要运行的测试组
     groups_to_run = []
     if args.all:
+        groups_to_run = [name for name in test_groups.keys() if name != 'fast']
+    elif args.all_with_fast:
         groups_to_run = list(test_groups.keys())
     elif args.fast:
         groups_to_run = ['fast']
