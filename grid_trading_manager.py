@@ -680,6 +680,23 @@ class GridTradingManager:
                         end_time=end_time
                     )
 
+                    # 重启恢复时重建账本，修复历史“先卖后买”未反向配对的数据。
+                    if hasattr(self.db, 'rebuild_grid_ledger_for_session'):
+                        try:
+                            ledger_rebuild = self.db.rebuild_grid_ledger_for_session(session_id)
+                            rebuilt_investment = self._safe_float(
+                                ledger_rebuild.get('current_investment'),
+                                session.current_investment
+                            )
+                            if abs(rebuilt_investment - session.current_investment) > 0.01:
+                                logger.warning(
+                                    f"[GRID] 账本重建修正资金占用 session_id={session_id} "
+                                    f"{session.current_investment:.2f} -> {rebuilt_investment:.2f}"
+                                )
+                            session.current_investment = rebuilt_investment
+                        except Exception as ledger_err:
+                            logger.warning(f"[GRID] 重启恢复时账本重建失败，保留原账本: {ledger_err}")
+
                     # ── V2 修复：DB 加载时校验 current_investment ───────────────────────────
                     # 场景：上次运行中买入成功但 DB 写入 current_investment 失败（磁盘/网络异常），
                     # 重启后 current_investment 偏低，如不校正将允许超出 max_investment 的额外买入。
@@ -1926,12 +1943,21 @@ class GridTradingManager:
         old_total_sell_vol = session.total_sell_volume
         old_investment = session.current_investment
 
+        unmatched_sell_volume = 0
+        if side == 'BUY' and hasattr(self.db, 'get_unmatched_grid_sell_volume'):
+            try:
+                unmatched_sell_volume = self.db.get_unmatched_grid_sell_volume(session.id)
+            except Exception as ledger_err:
+                logger.warning(f"[GRID] 查询未匹配卖出数量失败，按普通买入处理: {ledger_err}")
+                unmatched_sell_volume = 0
+
         session.trade_count += 1
         if side == 'BUY':
             session.buy_count += 1
             session.total_buy_amount += amount
             session.total_buy_volume += volume
-            session.current_investment += amount
+            open_buy_volume = max(0, volume - unmatched_sell_volume)
+            session.current_investment += open_buy_volume * price
             reserved_price = self._safe_float(signal.get('reserved_price'), 0.0)
             if reserved_price > 0 and price > reserved_price + 0.0001:
                 logger.error(

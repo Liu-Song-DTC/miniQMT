@@ -424,6 +424,157 @@ class TestGridLedgerMece(GridMeceRegressionBase):
         self.assertAlmostEqual(summary['realized_pnl'], 0.0, places=2)
         self.assertAlmostEqual(summary['true_pnl'], 0.0, places=2)
 
+    def test_sell_first_then_buy_back_is_realized_profit(self):
+        session = self.make_session(stock_code='003025.SZ', max_investment=25000, position_ratio=0.2)
+
+        self.assertTrue(self.manager._record_confirmed_grid_trade(
+            session=session,
+            signal=self.sell_signal(session, price=17.93),
+            side='SELL',
+            price=17.93,
+            volume=200,
+            trade_id='PROD_SELL_FIRST'
+        ))
+        self.assertTrue(self.manager._record_confirmed_grid_trade(
+            session=session,
+            signal=self.buy_signal(session, price=17.10),
+            side='BUY',
+            price=17.10,
+            volume=200,
+            trade_id='PROD_BUY_BACK'
+        ))
+
+        lots = self.db.get_grid_lots(session.id)
+        matches = self.db.get_grid_lot_matches(session.id)
+        summary = self.db.get_grid_ledger_summary(session.id, current_price=17.10)
+        db_session = self.db.get_grid_session(session.id)
+
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0]['original_volume'], 200)
+        self.assertEqual(lots[0]['remaining_volume'], 0)
+        self.assertEqual(lots[0]['realized_volume'], 200)
+        self.assertEqual(lots[0]['status'], 'closed')
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['match_type'], 'matched')
+        self.assertEqual(matches[0]['volume'], 200)
+        self.assertAlmostEqual(matches[0]['sell_price'], 17.93, places=2)
+        self.assertAlmostEqual(matches[0]['buy_price'], 17.10, places=2)
+        self.assertAlmostEqual(matches[0]['realized_pnl'], 166.0, places=2)
+        self.assertEqual(summary['matched_volume'], 200)
+        self.assertEqual(summary['unmatched_volume'], 0)
+        self.assertEqual(summary['open_volume'], 0)
+        self.assertAlmostEqual(summary['realized_pnl'], 166.0, places=2)
+        self.assertAlmostEqual(summary['true_pnl'], 166.0, places=2)
+        self.assertAlmostEqual(session.current_investment, 0.0, places=2)
+        self.assertAlmostEqual(db_session['current_investment'], 0.0, places=2)
+
+    def test_rebuild_ledger_repairs_historical_sell_first_open_buy_lot(self):
+        session = self.make_session(stock_code='003025.SZ', max_investment=25000, position_ratio=0.2)
+        sell_time = '2026-06-16T09:34:33.589241'
+        buy_time = '2026-06-17T09:32:04.390301'
+        sell_trade = {
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'trade_type': 'SELL',
+            'grid_level': 17.7765,
+            'trigger_price': 17.93,
+            'volume': 200,
+            'amount': 3586.0,
+            'trade_id': '70600105000007919492',
+            'trade_time': sell_time,
+            'grid_center_before': 16.93,
+            'grid_center_after': 17.93,
+        }
+        buy_trade = {
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'trade_type': 'BUY',
+            'grid_level': 17.0335,
+            'trigger_price': 17.10,
+            'volume': 200,
+            'amount': 3420.0,
+            'trade_id': '70730101000005117310',
+            'trade_time': buy_time,
+            'grid_center_before': 17.93,
+            'grid_center_after': 17.10,
+        }
+        self.db.record_grid_trade(sell_trade)
+        self.db.record_grid_trade(buy_trade)
+        self.db.update_grid_session(session.id, {
+            'trade_count': 2,
+            'buy_count': 1,
+            'sell_count': 1,
+            'total_buy_amount': 3420.0,
+            'total_sell_amount': 3586.0,
+            'total_buy_volume': 200,
+            'total_sell_volume': 200,
+            'current_investment': 3420.0,
+            'current_center_price': 17.10,
+        })
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO grid_lot_matches
+                (session_id, stock_code, buy_lot_id, sell_trade_id, sell_order_id,
+                 match_type, volume, buy_price, sell_price, buy_amount, sell_amount,
+                 realized_pnl, matched_at)
+                VALUES (?, ?, NULL, ?, ?, 'unmatched', 200, NULL, 17.93, 0, 3586, 0, ?)
+            """, (session.id, session.stock_code, sell_trade['trade_id'], '135266305', sell_time))
+            cursor.execute("""
+                INSERT INTO grid_lots
+                (session_id, stock_code, buy_trade_id, buy_order_id, buy_price,
+                 original_volume, remaining_volume, realized_volume, buy_amount,
+                 opened_at, status)
+                VALUES (?, ?, ?, ?, 17.10, 200, 200, 0, 3420, ?, 'open')
+            """, (session.id, session.stock_code, buy_trade['trade_id'], '403701761', buy_time))
+            self.db.conn.commit()
+
+        stale_summary = self.db.get_grid_ledger_summary(session.id, current_price=17.10)
+        self.assertEqual(stale_summary['open_volume'], 200)
+        self.assertEqual(stale_summary['unmatched_volume'], 200)
+        self.assertAlmostEqual(stale_summary['true_pnl'], 0.0, places=2)
+
+        rebuild_summary = self.db.rebuild_grid_ledger_for_session(session.id)
+        fixed_summary = self.db.get_grid_ledger_summary(session.id, current_price=17.10)
+        fixed_session = self.db.get_grid_session(session.id)
+
+        self.assertEqual(rebuild_summary['trade_count'], 2)
+        self.assertEqual(fixed_summary['open_volume'], 0)
+        self.assertEqual(fixed_summary['unmatched_volume'], 0)
+        self.assertEqual(fixed_summary['matched_volume'], 200)
+        self.assertAlmostEqual(fixed_summary['realized_pnl'], 166.0, places=2)
+        self.assertAlmostEqual(fixed_summary['true_pnl'], 166.0, places=2)
+        self.assertAlmostEqual(fixed_session['current_investment'], 0.0, places=2)
+
+    def test_rebuild_ledger_noops_when_session_has_no_trades(self):
+        session = self.make_session(stock_code='700022.SH', max_investment=5000, current_investment=3000)
+        self.db.update_grid_session(session.id, {'current_investment': 3000.0})
+        opened_at = '2026-06-18T09:30:00'
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO grid_lots
+                (session_id, stock_code, buy_trade_id, buy_order_id, buy_price,
+                 original_volume, remaining_volume, realized_volume, buy_amount,
+                 opened_at, status)
+                VALUES (?, ?, 'LEGACY_BUY', 'LEGACY_ORDER',
+                        10.00, 300, 300, 0, 3000, ?, 'open')
+            """, (session.id, session.stock_code, opened_at))
+            self.db.conn.commit()
+
+        before = self.db.get_grid_ledger_summary(session.id, current_price=10.0)
+        rebuild_summary = self.db.rebuild_grid_ledger_for_session(session.id)
+        after = self.db.get_grid_ledger_summary(session.id, current_price=10.0)
+        fixed_session = self.db.get_grid_session(session.id)
+
+        self.assertEqual(rebuild_summary['trade_count'], 0)
+        self.assertEqual(before['open_volume'], 300)
+        self.assertEqual(after['open_volume'], 300)
+        self.assertEqual(after['lot_count'], before['lot_count'])
+        self.assertAlmostEqual(after['open_cost'], 3000.0, places=2)
+        self.assertAlmostEqual(rebuild_summary['current_investment'], 3000.0, places=2)
+        self.assertAlmostEqual(fixed_session['current_investment'], 3000.0, places=2)
+
     def test_ledger_failure_rolls_back_trade_session_and_order_updates(self):
         session = self.make_session(max_investment=10000)
         self.db.create_grid_order({
@@ -489,6 +640,76 @@ class TestGridRecoveryAndExitMece(GridMeceRegressionBase):
         order = self.db.get_grid_order('ORDER_ORPHAN')
         self.assertEqual(order['status'], 'orphaned')
         self.assertIn('active session not found', order['last_error'])
+
+    def test_restart_rebuilds_sell_first_ledger_and_repairs_investment(self):
+        session = self.make_session(stock_code='003025.SZ', max_investment=25000, position_ratio=0.2)
+        sell_time = '2026-06-16T09:34:33.589241'
+        buy_time = '2026-06-17T09:32:04.390301'
+        self.db.record_grid_trade({
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'trade_type': 'SELL',
+            'grid_level': 17.7765,
+            'trigger_price': 17.93,
+            'volume': 200,
+            'amount': 3586.0,
+            'trade_id': 'PROD_RESTART_SELL',
+            'trade_time': sell_time,
+            'grid_center_before': 16.93,
+            'grid_center_after': 17.93,
+        })
+        self.db.record_grid_trade({
+            'session_id': session.id,
+            'stock_code': session.stock_code,
+            'trade_type': 'BUY',
+            'grid_level': 17.0335,
+            'trigger_price': 17.10,
+            'volume': 200,
+            'amount': 3420.0,
+            'trade_id': 'PROD_RESTART_BUY',
+            'trade_time': buy_time,
+            'grid_center_before': 17.93,
+            'grid_center_after': 17.10,
+        })
+        self.db.update_grid_session(session.id, {
+            'trade_count': 2,
+            'buy_count': 1,
+            'sell_count': 1,
+            'total_buy_amount': 3420.0,
+            'total_sell_amount': 3586.0,
+            'total_buy_volume': 200,
+            'total_sell_volume': 200,
+            'current_investment': 3420.0,
+            'current_center_price': 17.10,
+        })
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO grid_lot_matches
+                (session_id, stock_code, buy_lot_id, sell_trade_id, sell_order_id,
+                 match_type, volume, buy_price, sell_price, buy_amount, sell_amount,
+                 realized_pnl, matched_at)
+                VALUES (?, ?, NULL, 'PROD_RESTART_SELL', '135266305',
+                        'unmatched', 200, NULL, 17.93, 0, 3586, 0, ?)
+            """, (session.id, session.stock_code, sell_time))
+            cursor.execute("""
+                INSERT INTO grid_lots
+                (session_id, stock_code, buy_trade_id, buy_order_id, buy_price,
+                 original_volume, remaining_volume, realized_volume, buy_amount,
+                 opened_at, status)
+                VALUES (?, ?, 'PROD_RESTART_BUY', '403701761',
+                        17.10, 200, 200, 0, 3420, ?, 'open')
+            """, (session.id, session.stock_code, buy_time))
+            self.db.conn.commit()
+
+        restarted = GridTradingManager(self.db, self.position_manager, self.executor)
+        restored = restarted.sessions[restarted._normalize_code(session.stock_code)]
+        summary = self.db.get_grid_ledger_summary(session.id, current_price=17.10)
+
+        self.assertAlmostEqual(restored.current_investment, 0.0, places=2)
+        self.assertEqual(summary['open_volume'], 0)
+        self.assertEqual(summary['unmatched_volume'], 0)
+        self.assertAlmostEqual(summary['true_pnl'], 166.0, places=2)
 
     def test_exit_conditions_fall_back_to_legacy_true_pnl_when_ledger_query_fails(self):
         session = self.make_session(max_investment=1000)
