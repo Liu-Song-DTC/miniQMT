@@ -25,6 +25,7 @@ miniQMT 是一个专为A股市场设计的**无人值守量化交易系统**,集
 - **🎯 信号分离**: 信号检测与执行分离,策略逻辑清晰可控
 - **📈 智能止盈止损**: 动态止盈策略,最大化收益同时控制风险
 - **🌐 网格交易**: 智能网格策略,自动低吸高抛
+- **🤖 自动买入**: 独立 `miniqmt_autobuy` 进程,从外部候选池筛选并复用 Web 买入 API 下单
 - **⚙️ 配置管理**: Web界面动态配置,无需重启系统
 - **🔍 卖出监控**: 委托单超时监控与自动撤单
 - **🧪 模拟交易**: 完整的模拟交易功能,策略验证零风险
@@ -39,6 +40,8 @@ miniQMT 是一个专为A股市场设计的**无人值守量化交易系统**,集
 - ✅ **动态止盈止损**: 首次止盈 + 动态止盈双重保护
 - ✅ **网格交易**: 智能网格会话管理,自动低吸高抛
 - ✅ **网格实盘闭环**: 以成交回报为准的委托确认、对手价下单、涨跌停/停牌防护、启动对账、FIFO 真实盈亏账本
+- ✅ **网格账本详情**: Web 前端和 `/api/grid/ledger/<session_id>` 展示买入批次、FIFO 配对、已实现/未实现盈亏
+- ✅ **自动买入模块**: 支持候选池多表并集、大盘指数门禁、惰性条件检查、防重买入和复盘日志
 - ✅ **信号验证机制**: 防止重复执行,确保交易安全
 - ✅ **委托单管理**: 卖出委托单超时监控与自动撤单
 
@@ -118,12 +121,22 @@ http://localhost:5000          # web1.0 (Flask)，随系统自动启动
 
 ### 一键启动（推荐）
 
-项目提供交互式总控台 `miniqmt.bat`，覆盖环境检查、依赖安装、配置校验、启动/停止、XtQuantManager 网关管理等：
+项目提供交互式总控台 `miniqmt.bat`，覆盖环境检查、依赖安装、配置校验、启动/停止、XtQuantManager 网关和自动买入服务管理等：
 
 ```bash
 miniqmt.bat                       # 打开交互式菜单
 python scripts/_launcher.py menu  # 等效命令
 ```
+
+常用菜单入口：
+
+| 分区 | 选项 | 功能 |
+|------|------|------|
+| 部署/环境 | `[1]`-`[4]` | 检查环境、安装依赖、校验配置、拉取代码 |
+| 交易进程 | `[7]`-`[9]` | 启动所有/指定账号，支持实盘/模拟和 web1.0/web2.0 选择 |
+| 停止 | `[a]`-`[c]` | 优雅停止/强制停止账号进程 |
+| XtQuantManager | `[d]`-`[i]` | 启动、停止、状态、打开 UI、重启、查看日志 |
+| 自动买入 | `[j]`-`[m]` | 启动、停止、查看状态、查看日志 |
 
 也保留旧的 `launcher.bat`（配合 `launcher.ini`）用于直接拉起 `main.py`：
 
@@ -268,6 +281,18 @@ profit_ratio = True P&L / max_investment
 ENABLE_SELL_MONITOR = True      # 卖出监控开关（默认已启用）
 ```
 
+### 自动买入模块
+
+`autobuy/` 是独立进程模块，不嵌入主交易线程。它从外部 SQLite 候选池读取最近 N 个交易日入池股票，先做大盘指数门禁（`999999` / `399001` / `399005` 至少一个 MA5 向上），再做持仓/历史买入防重、技术条件检查，最后复用 web1.0 的 `/api/actions/execute_buy` 下单。
+
+```bash
+# 启动前先确保目标账号 web_server 已运行
+miniqmt.bat                         # 菜单 [j] 启动、[l] 查看状态、[m] 查看日志
+python -m autobuy.app --once        # 单次触发，便于测试配置
+```
+
+配置文件为 `autobuy/miniqmt_autobuy.cfg`，运行状态写入 `data/.autobuy_status.json`，日志写入 `logs/miniqmt_autobuy.log`，复盘库为 `data/autobuy.db`。详细说明见 [autobuy/README.md](autobuy/README.md) 和在线文档。
+
 ---
 
 ## 📚 文档
@@ -278,8 +303,9 @@ ENABLE_SELL_MONITOR = True      # 卖出监控开关（默认已启用）
 - **[QUICK_START.md](QUICK_START.md)** - 快速入门指南
 - **[CHANGELOG.md](CHANGELOG.md)** - 版本变更日志
 - **[docs/xtquant_manager.md](docs/xtquant_manager.md)** - XtQuantManager 多账户网关说明
+- **[autobuy/README.md](autobuy/README.md)** - 自动买入模块说明
 
-> 无人值守运行、网格交易、止盈止损、Web 双模式、数据库表结构等详细文档已迁移至[在线文档站](https://weihong-su.github.io/miniQMT/)，本地源码位于 `docs/site/`。
+> 无人值守运行、网格交易、自动买入、止盈止损、Web 双模式、数据库表结构等详细文档已迁移至[在线文档站](https://weihong-su.github.io/miniQMT/)，本地源码位于 `docs/site/`。
 
 ---
 
@@ -287,7 +313,7 @@ ENABLE_SELL_MONITOR = True      # 卖出监控开关（默认已启用）
 
 ### 回归测试框架（推荐）
 
-项目集成了完整的回归测试框架,支持按模块运行、快速验证和失败重试。
+项目集成了完整的回归测试框架,支持按模块运行、快速验证和失败重试。当前回归配置覆盖 29 个测试组、62 个唯一测试模块。
 
 ```bash
 # 快速验证（5分钟内完成，检查关键功能）
@@ -296,9 +322,15 @@ python test/run_integration_regression_tests.py --fast
 # 运行所有回归测试
 python test/run_integration_regression_tests.py --all
 
+# 运行所有回归测试，并包含 fast 组
+python test/run_integration_regression_tests.py --all-with-fast
+
 # 按组运行
+python test/run_integration_regression_tests.py --group autobuy             # 自动买入
 python test/run_integration_regression_tests.py --group system_integration  # 系统集成
 python test/run_integration_regression_tests.py --group stop_profit         # 止盈止损
+python test/run_integration_regression_tests.py --group grid_trade          # 网格交易执行
+python test/run_integration_regression_tests.py --group grid_true_pnl       # 真实盈亏账本
 python test/run_integration_regression_tests.py --group grid_comprehensive  # 网格综合
 python test/run_integration_regression_tests.py --group grid_full_range_coverage  # 全区间覆盖（114用例）
 

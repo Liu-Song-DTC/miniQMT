@@ -92,6 +92,7 @@ nav:
     - 配置参考: miniqmt/configuration.md
     - 止盈止损策略: miniqmt/stop-profit-loss.md
     - 网格交易: miniqmt/grid-trading.md
+    - 自动买入: miniqmt/autobuy.md
     - Web 前端（web1.0 / web2.0）: miniqmt/web-frontend.md
     - Web API: miniqmt/web-api.md
     - 无人值守运行: miniqmt/unattended.md

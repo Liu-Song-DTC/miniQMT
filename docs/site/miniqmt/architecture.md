@@ -45,6 +45,7 @@
 | Web 服务 | RESTful API | 持续 | — |
 | 心跳日志 | 定期输出系统运行状态 | 30 分钟 | `ENABLE_HEARTBEAT_LOG` |
 | 盘前同步 | 重新初始化 xtquant | 每日 9:25 | `ENABLE_PREMARKET_XTQUANT_REINIT` |
+| 自动买入 | 候选池筛选与 Web API 买入 | 独立进程定时触发 | `autobuy/miniqmt_autobuy.cfg` |
 
 ---
 
@@ -68,6 +69,7 @@ sell_monitor.py        # 卖出委托单超时监控与撤单
 grid_trading_manager.py # 网格交易会话管理
 grid_database.py       # 网格交易数据持久化（SQLite）
 grid_validation.py     # 网格交易参数校验
+autobuy/               # 自动买入独立进程：候选池筛选、防重、HTTP 下单
 xtquant_manager/       # XtQuantManager HTTP 网关（可选）
 ```
 

@@ -1,0 +1,135 @@
+# 自动买入模块
+
+`miniqmt_autobuy` 是独立进程模块，负责从外部候选池中筛选标的并复用 miniQMT 的 Web 买入 API 下单。它不直接改主程序持仓状态；买入完成后，后续持仓同步、止盈止损和网格接管仍由主程序负责。
+
+---
+
+## 工作流程
+
+```text
+候选池 SQLite
+  -> 最近 N 个交易日多表并集
+  -> 大盘指数门禁
+  -> 已持仓/历史买入防重
+  -> 洗牌后惰性条件检查
+  -> POST /api/actions/execute_buy
+  -> data/autobuy.db 记录复盘
+```
+
+### 关键设计
+
+- **独立进程**：通过 `python -m autobuy.app` 运行，由 `miniqmt.bat` 菜单管理。
+- **下单复用 Web API**：最终下单走目标账号 `web_server.py` 的 `/api/actions/execute_buy`，因此需要目标账号 Web 服务已启动。
+- **大候选池惰性求值**：候选可能上百只，模块先洗牌，再逐只检查，达到 `max_buys_per_run` 后停止，避免无意义拉取全量行情。
+- **防重安全优先**：如果 `/api/positions` 持仓查询失败，本轮不下单，避免重复买入。
+
+---
+
+## 启动与管理
+
+```bash
+miniqmt.bat
+```
+
+菜单入口：
+
+| 菜单 | 功能 |
+|------|------|
+| `[j]` | 启动自动买入服务 |
+| `[k]` | 停止自动买入服务 |
+| `[l]` | 查看状态（`data/.autobuy_status.json`） |
+| `[m]` | 查看日志（`logs/miniqmt_autobuy.log`） |
+
+手动单次触发：
+
+```bash
+python -m autobuy.app --once
+```
+
+!!! warning "启动前检查"
+    先启动目标账号主程序或 web1.0 Flask 服务，并确认 `autobuy/miniqmt_autobuy.cfg` 中 `[web].base_url` 指向正确端口。多账号场景通常是 `:5000`、`:5001` 依次对应账号。
+
+---
+
+## 配置文件
+
+配置文件位于 `autobuy/miniqmt_autobuy.cfg`，INI 格式，修改后需重启 autobuy 进程。
+
+### Web 下单通道
+
+| 参数 | 说明 |
+|------|------|
+| `base_url` | 目标账号 Web 服务地址，如 `http://127.0.0.1:5000` |
+| `api_token` | 对应主程序环境变量 `QMT_API_TOKEN`，未启用鉴权时留空 |
+| `timeout` | HTTP 请求超时秒数 |
+
+### 候选池
+
+| 参数 | 说明 |
+|------|------|
+| `db_path` | 外部候选池 SQLite 文件路径 |
+| `tables` | 候选表名，多表并集，逗号分隔 |
+| `code_column` / `date_column` | 股票代码列和日期列 |
+| `latest_n_dates` | 每张表各自取运行日前最近 N 个交易日 |
+
+候选代码支持 `sh.600025` / `sz.000626` 这类前缀格式，模块会转换为系统标准 `600025.SH` / `000626.SZ`。
+
+### 筛选条件
+
+| 条件 | 配置 |
+|------|------|
+| 大盘指数门禁 | 固定检查 `999999` / `399001` / `399005`，至少一个指数 MA5 向上才继续 |
+| 换手率 | `enable_turnover_rate` / `min_turnover_rate` / `volume_unit_multiplier` |
+| 量比 | `enable_volume_ratio` / `min_volume_ratio` |
+| 当日涨幅 | `enable_pct_change` / `min_pct_change`，默认关闭 |
+| MA8 方向 | `enable_ma8_uptrend` |
+| 现价相对 MA8 | `enable_price_below_ma8_ratio` / `max_price_to_ma8_ratio` |
+| 涨停/停牌 | `skip_limit_up` |
+
+### 风控与调度
+
+| 参数 | 说明 |
+|------|------|
+| `dedup_by_position` | 已持仓则跳过 |
+| `dedup_window_days` | 最近 N 天买过则跳过；`0` = 当天，`-1` = 永久 |
+| `max_buys_per_run` | 每次触发最多买入数量 |
+| `mode` | `daily` / `interval` / `both` |
+| `daily_times` | 每日定点时间，逗号分隔 |
+| `interval_minutes` | 固定间隔分钟数 |
+| `only_trade_time` | 仅真实交易时段触发，使用 `config.is_market_hours()` |
+
+---
+
+## 复盘数据
+
+运行数据写入项目根目录：
+
+| 文件 | 说明 |
+|------|------|
+| `logs/miniqmt_autobuy.log` | 自动买入运行日志 |
+| `data/.autobuy_status.json` | 最近一轮状态摘要，供菜单 `[l]` 读取 |
+| `data/autobuy.db` | 买入历史与决策日志 |
+
+`data/autobuy.db` 主要包含：
+
+- `buy_history`：每次买入尝试、触发源、HTTP 状态、订单结果、金额。
+- `decision_log`：实际检查过的标的及条件明细。由于采用惰性求值，未检查的候选不会写入该表。
+
+---
+
+## 端到端验证
+
+1. 确认外部候选池 `chan.db` 路径、表名、列名正确。
+2. 启动目标账号主程序，确认 `GET /api/positions` 可访问。
+3. 运行 `python -m autobuy.app --once` 做单次验证。
+4. 查看 `logs/miniqmt_autobuy.log`，确认大盘门禁、候选数量、通过数量和下单结果。
+5. 查看 `data/autobuy.db`，复核 `buy_history` 与 `decision_log`。
+
+---
+
+## 常见注意事项
+
+- 候选池数据量较大时，将 `latest_n_dates` 调小到 `1` 可以明显降低检查量。
+- `volume_unit_multiplier` 默认按“手”转“股”处理；如果数据源成交量已是股，应改为 `1`。
+- 科创板/创业板标的需要账户权限；无权限或最小交易单位不满足时由 QMT 拒单，模块只记录结果。
+- 自动买入只负责“买入入口”，风险控制仍依赖主程序配置，如 `POSITION_UNIT`、止盈止损和最大持仓限制。

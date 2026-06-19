@@ -50,11 +50,11 @@ thread_monitor.register_thread(
 
 ## 超时保护
 
-持仓监控线程中的 API 调用有 3 秒超时保护：
+持仓监控线程中的 API 调用有超时保护（当前默认 8 秒）：
 
 ```python
 try:
-    future.result(timeout=config.MONITOR_CALL_TIMEOUT)  # 默认 3 秒
+    future.result(timeout=config.MONITOR_CALL_TIMEOUT)  # 默认 8 秒
 except TimeoutError:
     logger.warning("API 调用超时，跳过本次更新")
 ```
@@ -116,8 +116,8 @@ tail -f logs/qmt_trading.log             # Git Bash
 
 ```bash
 # 系统状态检查
-python test/check_system_status.py
+python -m unittest test.test_system_integration -v
 
 # QMT 连接诊断
-python test/diagnose_qmt_connection.py
+python -m unittest test.test_qmt_connection -v
 ```
