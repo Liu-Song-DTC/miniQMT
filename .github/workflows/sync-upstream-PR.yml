@@ -1,0 +1,56 @@
+name: Sync upstream by PR
+
+on:
+  schedule:
+    # 每天 UTC 00:00 自动检查并同步上游
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/weihong-su/miniQMT.git
+          git fetch upstream
+
+      - name: Create sync branch
+        run: |
+          git checkout main
+          git checkout -B sync-upstream
+          git merge upstream/main --no-edit
+          git push origin sync-upstream --force
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: sync-upstream
+          base: main
+          title: "Sync upstream changes"
+          body: |
+            This PR syncs changes from the upstream repository.
+
+            Upstream:
+            https://github.com/UPSTREAM_OWNER/UPSTREAM_REPO
+
+            Please review the changes before merging.
+          labels: |
+            automated
+            sync
