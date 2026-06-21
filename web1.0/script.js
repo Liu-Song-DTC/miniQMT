@@ -1285,6 +1285,12 @@
         }[ch]));
     }
 
+    function getLogStrategyClass(strategyLabel) {
+        if (strategyLabel === '浮盈' || strategyLabel === '止盈') return 'profit-action';
+        if (strategyLabel === '止损') return 'stop-loss-action';
+        return '';
+    }
+
     // 将 YYYY-MM-DD 转为 今天 / 昨天 / MM-DD
     function formatLogDayLabel(dayStr) {
         const today = new Date();
@@ -1346,7 +1352,6 @@
 
             const isBuy = entry.trade_type === 'BUY';
             const isSell = entry.trade_type === 'SELL';
-            const sideClass = isBuy ? 'buy' : (isSell ? 'sell' : '');
             const sideText = isBuy ? 'B' : (isSell ? 'S' : escapeLogHtml(entry.trade_type || '?'));
 
             const price = entry.price != null ? Number(entry.price).toFixed(2) : '--';
@@ -1362,20 +1367,20 @@
 
             const strategyRaw = entry.strategy || '';
             const strategyLabel = LOG_STRATEGY_LABELS[strategyRaw] || strategyRaw;
+            const strategyClass = getLogStrategyClass(strategyLabel);
 
             const sideTitle = isBuy ? '买入' : (isSell ? '卖出' : escapeLogHtml(entry.trade_type || ''));
             const name = escapeLogHtml(entry.stock_name || entry.stock_code || '');
             const code = escapeLogHtml(entry.stock_code || '');
-
             // 单行紧凑：B/S | 平安银行 | ¥31,500 | 10.50×3000 | 网格 | HH:MM
             parts.push(
-                `<div class="log-row ${sideClass}" title="${sideTitle} ${name} ${code}  ¥${amountText}  ${price}×${volume}  ${strategyLabel}">` +
-                    `<span class="log-col-side ${sideClass}">${sideText}</span>` +
+                `<div class="log-row ${strategyClass}" title="${sideTitle} ${name} ${code}  ¥${amountText}  ${price}×${volume}  ${strategyLabel}">` +
+                    `<span class="log-col-side ${strategyClass}">${sideText}</span>` +
                     `<span class="log-col-name">${name}</span>` +
-                    `<span class="log-col-dir ${sideClass}">${sideText}</span>` +
-                    `<span class="log-col-money ${sideClass}">${amountText}</span>` +
+                    `<span class="log-col-dir ${strategyClass}">${sideText}</span>` +
+                    `<span class="log-col-money ${strategyClass}">${amountText}</span>` +
                     `<span class="log-col-price">${price}×${volume}</span>` +
-                    `<span class="log-col-tag">${escapeLogHtml(strategyLabel)}</span>` +
+                    `<span class="log-col-tag ${strategyClass}">${escapeLogHtml(strategyLabel)}</span>` +
                     `<span class="log-col-time">${timePart}</span>` +
                 `</div>`
             );
