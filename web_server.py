@@ -10,7 +10,7 @@ from functools import wraps
 import json
 import threading
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, make_response, Response, stream_with_context
 from flask_cors import CORS
 import pandas as pd
@@ -522,8 +522,9 @@ def get_positions():
 def get_trade_records():
     """获取交易记录"""
     try:
-        # 从交易执行器获取交易记录
-        trades_df = trading_executor.get_trades()
+        # 仅返回最近N天（约2个月）的交易记录，避免下单日志清单过长
+        start_date = (datetime.now() - timedelta(days=config.WEB_TRADE_RECORDS_DISPLAY_DAYS)).strftime('%Y-%m-%d')
+        trades_df = trading_executor.get_trades(start_date=start_date)
         
         # 如果没有交易记录，返回空列表
         if trades_df.empty:

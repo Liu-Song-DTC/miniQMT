@@ -399,6 +399,7 @@ WEB_SERVER_HOST = "127.0.0.1"
 WEB_SERVER_PORT = 5000
 WEB_SERVER_DEBUG = False
 WEB_API_TOKEN = os.environ.get("QMT_API_TOKEN", "")  # 设置后启用 Token 验证，空字符串=不验证（仅限内网部署）
+WEB_TRADE_RECORDS_DISPLAY_DAYS = 60  # 下单日志仅展示最近N天（约2个月）的交易记录，避免清单过长
 
 # ======================= 日志清理配置 =======================
 LOG_CLEANUP_DAYS = 30  # 保留最近30天的日志

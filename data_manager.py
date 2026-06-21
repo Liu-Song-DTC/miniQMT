@@ -663,7 +663,11 @@ class DataManager:
         if not xt_start_date:
             xt_start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d')
 
-        if self.xt:
+        # ⚠️ 仅在 XtQuantManager 网关模式下用 xtdata 拉历史数据。
+        # 标准模式(ENABLE_XTQUANT_MANAGER=False)走 Mootdx：部分 QMT 客户端的
+        # xtdata.get_market_data_ex 会触发底层 BSON 断言 "u < 1000000"
+        # (bsonobj.cpp) 直接 abort 整个进程，且 try/except 与超时均无法拦截。
+        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False) and self.xt:
             xt_df = self.download_history_xtdata(
                 stock_code,
                 period=xt_period,

@@ -50,17 +50,148 @@
         }
         
         #orderLog {
-            height: 400px;
-            min-height: 400px;
-            max-height: 400px;
-            overflow-y: scroll;
-            overflow-y: overlay;
-            white-space: pre-wrap;
-            overflow-wrap: break-word;
+            height: 100%;
+            overflow-y: auto;
+            background: #ffffff;
         }
 
         #orderLog::-webkit-scrollbar {
             width: 8px;
+        }
+
+        #orderLog::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        /* 下单日志 - 日期分组标题 */
+        .log-day-header {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        /* 下单日志 - 单条记录 */
+        .log-entry {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-bottom: 1px solid #f1f5f9;
+            border-left: 3px solid transparent;
+        }
+
+        .log-entry:hover {
+            background: #f8fafc;
+        }
+
+        .log-entry.buy {
+            border-left-color: #ef4444;
+        }
+
+        .log-entry.sell {
+            border-left-color: #22c55e;
+        }
+
+        /* 方向徽章 */
+        .log-side {
+            flex-shrink: 0;
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 13px;
+            color: #ffffff;
+        }
+
+        .log-side.buy {
+            background: #ef4444;
+        }
+
+        .log-side.sell {
+            background: #22c55e;
+        }
+
+        .log-main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .log-line1 {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .log-name {
+            font-weight: 600;
+            color: #1f2937;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .log-code {
+            color: #94a3b8;
+            font-weight: 400;
+            font-size: 11px;
+        }
+
+        .log-amount {
+            flex-shrink: 0;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .log-amount.buy {
+            color: #ef4444;
+        }
+
+        .log-amount.sell {
+            color: #22c55e;
+        }
+
+        .log-line2 {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #94a3b8;
+            font-size: 11px;
+            margin-top: 2px;
+        }
+
+        .log-line2 .num {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .log-strategy {
+            margin-left: auto;
+            background: #eef2ff;
+            color: #4338ca;
+            padding: 1px 6px;
+            border-radius: 999px;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+
+        /* 下单日志 - 空状态 */
+        .log-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #94a3b8;
+            font-size: 13px;
         }
         
         /* 状态消息样式 */
@@ -605,7 +736,7 @@
                     <span id="logError" class="ml-2 text-xs text-red-500 hidden">加载失败</span>
                 </h3>
                 <div class="flex-grow relative">
-                    <textarea id="orderLog" class="w-full h-full border rounded p-2 text-xs bg-white resize-none" readonly></textarea>
+                    <div id="orderLog" class="w-full h-full border rounded bg-white overflow-y-auto text-xs"></div>
                 </div>
             </div>
         </section>

@@ -1268,6 +1268,35 @@
         });
     }
 
+    // 策略标识 → 友好中文标签
+    const LOG_STRATEGY_LABELS = {
+        simu: '模拟',
+        auto_partial: '浮盈',
+        auto_full: '止盈',
+        stop_loss: '止损',
+        grid: '网格',
+        manual: '手动',
+        default: '默认'
+    };
+
+    function escapeLogHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    // 将 YYYY-MM-DD 转为 今天 / 昨天 / MM-DD
+    function formatLogDayLabel(dayStr) {
+        const today = new Date();
+        const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const todayStr = fmt(today);
+        const yestStr = fmt(new Date(today.getTime() - 86400000));
+        if (dayStr === todayStr) return '今天';
+        if (dayStr === yestStr) return '昨天';
+        const parts = dayStr.split('-');
+        return parts.length === 3 ? `${parts[1]}-${parts[2]}` : dayStr;
+    }
+
     function updateLogs(logEntries) {
         // 检查数据是否实际发生变化
         const logsStr = JSON.stringify(logEntries);
@@ -1277,61 +1306,77 @@
         }
         window._lastLogsStr = logsStr;
 
-        // 记住当前滚动位置和是否在底部
-        const isAtBottom = elements.orderLog.scrollTop + elements.orderLog.clientHeight >= elements.orderLog.scrollHeight - 10;
-        const currentScrollTop = elements.orderLog.scrollTop;
+        const container = elements.orderLog;
+        // 记住当前滚动位置（最新记录在顶部，更新后保持原位）
+        const prevScrollTop = container.scrollTop;
 
         elements.logLoading.classList.add('hidden');
         elements.logError.classList.add('hidden');
 
-        // 格式化日志内容
-        if (Array.isArray(logEntries)) {
-            // 新的格式化逻辑，符合要求的格式
-            const formattedLogs = logEntries.map(entry => {
-                if (typeof entry === 'object' && entry !== null) {
-                    // 修改：转换日期格式为 MM-DD HH:MM:SS
-                    let dateStr = '';
-                    if (entry.trade_time) {
-                        const date = new Date(entry.trade_time);
-                        const month = String(date.getMonth() + 1).padStart(2, '0');
-                        const day = String(date.getDate()).padStart(2, '0');
-                        const hours = String(date.getHours()).padStart(2, '0');
-                        const minutes = String(date.getMinutes()).padStart(2, '0');
-                        const seconds = String(date.getSeconds()).padStart(2, '0');
-                        dateStr = `${month}-${day} ${hours}:${minutes}:${seconds}`;
-                    }                   
-                    // 转换交易类型
-                    const actionType = entry.trade_type === 'BUY' ? '买' : 
-                                    (entry.trade_type === 'SELL' ? '卖' : entry.trade_type);
-                    
-                    // 格式化为要求的格式
-                    const formattedPrice = entry.price ? Number(entry.price).toFixed(2) : '';
-                    const formattedVolume = entry.volume ? Number(entry.volume).toFixed(0) : '';
-                    return `${dateStr}, ${entry.stock_code || ''}, ${entry.stock_name || ''}, ${actionType}, 价: ${formattedPrice}, 量: ${formattedVolume}, 策略: ${entry.strategy || ''}`;
-                } else {
-                    return String(entry); // 如果不是对象，直接转换为字符串
-                }
-            });
-            elements.orderLog.value = formattedLogs.join('\n');
-            
-            // 标记数据已更新
-            console.log("Logs updated with new data");
-        } else {
-            elements.orderLog.value = "无可识别的日志数据";
-            console.error("未知的日志数据格式:", logEntries);
+        if (!Array.isArray(logEntries) || logEntries.length === 0) {
+            container.innerHTML = '<div class="log-empty">暂无交易记录</div>';
+            return;
         }
 
-        // 只有当之前在底部时，才自动滚动到底部
-        if (isAtBottom) {
-            setTimeout(() => {
-                elements.orderLog.scrollTop = elements.orderLog.scrollHeight;
-            }, 10);
-        } else {
-            // 否则保持原来的滚动位置
-            setTimeout(() => {
-                elements.orderLog.scrollTop = currentScrollTop;
-            }, 10);
-        }
+        const parts = [];
+        let lastDay = null;
+
+        logEntries.forEach(entry => {
+            if (typeof entry !== 'object' || entry === null) return;
+
+            const tradeTime = entry.trade_time || '';
+            const dayPart = tradeTime.slice(0, 10);   // YYYY-MM-DD
+            const timePart = tradeTime.slice(11, 19); // HH:MM:SS
+
+            // 日期分组标题
+            if (dayPart && dayPart !== lastDay) {
+                lastDay = dayPart;
+                parts.push(`<div class="log-day-header">${escapeLogHtml(formatLogDayLabel(dayPart))}</div>`);
+            }
+
+            const isBuy = entry.trade_type === 'BUY';
+            const isSell = entry.trade_type === 'SELL';
+            const sideClass = isBuy ? 'buy' : (isSell ? 'sell' : '');
+            const sideText = isBuy ? '买' : (isSell ? '卖' : escapeLogHtml(entry.trade_type || '?'));
+
+            const price = entry.price != null ? Number(entry.price).toFixed(2) : '--';
+            const volume = entry.volume != null ? Number(entry.volume).toLocaleString('zh-CN') : '--';
+
+            // 金额：优先用 amount 字段，缺失时用 价×量 估算
+            let amount = entry.amount;
+            if (amount == null && entry.price != null && entry.volume != null) {
+                amount = Number(entry.price) * Number(entry.volume);
+            }
+            const amountText = amount != null
+                ? '¥' + Number(amount).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+                : '--';
+
+            const strategyRaw = entry.strategy || '';
+            const strategyLabel = LOG_STRATEGY_LABELS[strategyRaw] || strategyRaw;
+
+            parts.push(
+                `<div class="log-entry ${sideClass}">` +
+                    `<div class="log-side ${sideClass}">${sideText}</div>` +
+                    `<div class="log-main">` +
+                        `<div class="log-line1">` +
+                            `<span class="log-name">${escapeLogHtml(entry.stock_name || entry.stock_code || '')} ` +
+                            `<span class="log-code">${escapeLogHtml(entry.stock_code || '')}</span></span>` +
+                            `<span class="log-amount ${sideClass}">${amountText}</span>` +
+                        `</div>` +
+                        `<div class="log-line2">` +
+                            `<span class="num">${timePart}</span>` +
+                            `<span>·</span>` +
+                            `<span class="num">${price} × ${volume}</span>` +
+                            (strategyLabel ? `<span class="log-strategy">${escapeLogHtml(strategyLabel)}</span>` : '') +
+                        `</div>` +
+                    `</div>` +
+                `</div>`
+            );
+        });
+
+        container.innerHTML = parts.join('');
+        container.scrollTop = prevScrollTop;
+        console.log("Logs updated with new data");
     }
 
     // --- 数据获取函数 ---
@@ -1721,7 +1766,7 @@
             
             if (data.status === 'success') {
                 showMessage(data.message || "日志已清空", 'success');
-                elements.orderLog.value = ''; // 立即清空前端显示
+                elements.orderLog.innerHTML = '<div class="log-empty">暂无交易记录</div>'; // 立即清空前端显示
                 window._lastLogsStr = ''; // 重置日志缓存
             } else {
                 showMessage(data.message || "清空日志失败", 'error');

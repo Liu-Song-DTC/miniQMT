@@ -91,7 +91,10 @@ class TestHistoryDateNormalization(unittest.TestCase):
         self.assertEqual(len(warning_logs), 1)
         self.assertEqual(len(debug_logs), 1)
 
-    def test_download_history_prefers_xtdata_when_available(self):
+    def test_download_history_prefers_xtdata_when_gateway_enabled(self):
+        """网关模式(ENABLE_XTQUANT_MANAGER=True)下才优先 xtdata。
+        标准模式走 Mootdx 以规避 get_market_data_ex 的 BSON 崩溃，
+        路由不变量见 test_history_data_source_routing。"""
         xt_df = pd.DataFrame({
             "date": ["2026-06-16"],
             "close": [10],
@@ -99,7 +102,8 @@ class TestHistoryDateNormalization(unittest.TestCase):
         self.dm.xt = MagicMock()
         self.dm.download_history_xtdata = MagicMock(return_value=xt_df)
 
-        with patch("Methods.getStockData") as mock_mootdx:
+        with patch("config.ENABLE_XTQUANT_MANAGER", True), \
+             patch("Methods.getStockData") as mock_mootdx:
             result = self.dm.download_history_data("003025", start_date="20260616")
 
         self.dm.download_history_xtdata.assert_called_once()
