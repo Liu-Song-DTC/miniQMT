@@ -183,6 +183,29 @@ class TestGridSessionLifecycle(unittest.TestCase):
 
         print(f"[OK] 测试通过: 未触发止盈时拒绝启动")
 
+    def test_start_session_profit_not_triggered_allowed_by_default(self):
+        """测试默认配置下未触发首次止盈也允许启动网格会话"""
+        mock_position = {
+            'stock_code': self.test_stock,
+            'cost_price': 9.0,
+            'current_price': 9.5,
+            'volume': 1000,
+            'profit_triggered': False,
+            'highest_price': 9.8,
+            'market_value': 9500
+        }
+
+        self.mock_position_manager.get_position.return_value = mock_position
+
+        user_config = {**self.test_config, 'center_price': None}
+        session = self.grid_manager.start_grid_session(self.test_stock, user_config)
+
+        self.assertIsNotNone(session.id)
+        self.assertEqual(session.stock_code, self.test_stock)
+        self.assertEqual(session.status, 'active')
+        self.assertEqual(session.center_price, 9.8)
+        self.assertIn(self.grid_manager._normalize_code(self.test_stock), self.grid_manager.sessions)
+
     def test_start_session_duplicate(self):
         """测试启动失败：重复启动同一股票"""
         mock_position = {

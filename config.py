@@ -650,7 +650,7 @@ GRID_SELL_COOLDOWN = 300  # 0=不限制；建议实盘设为 300
 GRID_SELL_COOLDOWN_PRICE_THRESHOLD = 0.02  # 2%涨幅触发自适应缩短；0=禁用
 
 # 启动条件配置
-GRID_REQUIRE_PROFIT_TRIGGERED = True  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
+GRID_REQUIRE_PROFIT_TRIGGERED = False  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
 
 # 混合退出机制 - 默认值
 GRID_MAX_DEVIATION_RATIO = 0.15    # 网格中心最大偏离±15%

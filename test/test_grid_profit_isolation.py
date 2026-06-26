@@ -795,34 +795,25 @@ class TestGridProfitIsolation(TestBase):
 
     # ==================== TC09: Sequential Constraint ====================
 
-    def test_tc09_sequential_constraint(self):
+    def test_tc09_profit_not_triggered_allowed_by_default(self):
         """
-        TC09: 时序约束 - profit_triggered=False时无法启动网格
-
-        场景:
-        - 尝试在profit_triggered=False的持仓上启动网格
-
-        预期:
-        - start_grid_session应该失败或返回None
-        - 记录错误日志
+        TC09: 默认配置下，profit_triggered=False 也允许启动网格。
         """
         logger.info("\n" + "=" * 60)
-        logger.info("TC09: Sequential Constraint - Cannot Start Grid Before Profit Triggered")
+        logger.info("TC09: Default Allows Grid Before Profit Triggered")
         logger.info("=" * 60)
 
         stock_code = 'TEST009.SZ'
 
-        # 创建持仓: profit_triggered=False
         self._create_test_position(
             stock_code=stock_code,
-            volume=1000,  # 全仓持有
+            volume=1000,
             cost_price=10.00,
             current_price=10.50,
-            profit_triggered=False,  # 关键: 未触发首次止盈
+            profit_triggered=False,
             highest_price=10.50
         )
 
-        # 尝试启动网格交易
         user_config = {
             'center_price': 10.50,
             'price_interval': 0.05,
@@ -835,16 +826,48 @@ class TestGridProfitIsolation(TestBase):
             'duration_days': 7
         }
 
-        # 尝试启动网格交易（应该失败并抛出ValueError）
-        with self.assertRaises(ValueError) as cm:
-            grid_session = self.grid_manager.start_grid_session(stock_code, user_config)
+        grid_session = self.grid_manager.start_grid_session(stock_code, user_config)
 
-        # 断言: 异常消息应该包含关键词
-        error_message = str(cm.exception)
-        self.assertIn('未触发止盈', error_message,
-                     "Error message should mention profit_triggered requirement")
+        self.assertIsNotNone(grid_session)
+        self.assertEqual(grid_session.stock_code, stock_code)
+        self.assertEqual(grid_session.status, 'active')
+        self.assertEqual(grid_session.center_price, 10.50)
 
-        logger.info(f"[PASS] Grid session correctly rejected: {error_message}")
+        logger.info("[PASS] Grid session started when profit_triggered=False")
+
+    def test_tc09_profit_not_triggered_rejected_when_guard_enabled(self):
+        """
+        TC09b: 显式开启 GRID_REQUIRE_PROFIT_TRIGGERED 时，仍拒绝未触发止盈的持仓。
+        """
+        stock_code = 'TEST009B.SZ'
+
+        self._create_test_position(
+            stock_code=stock_code,
+            volume=1000,
+            cost_price=10.00,
+            current_price=10.50,
+            profit_triggered=False,
+            highest_price=10.50
+        )
+
+        user_config = {
+            'center_price': 10.50,
+            'price_interval': 0.05,
+            'position_ratio': 0.25,
+            'callback_ratio': 0.005,
+            'max_investment': 3000.0,
+            'max_deviation': 0.20,
+            'target_profit': 0.15,
+            'stop_loss': -0.15,
+            'duration_days': 7
+        }
+
+        with unittest.mock.patch.object(config, 'GRID_REQUIRE_PROFIT_TRIGGERED', True):
+            with self.assertRaises(ValueError) as cm:
+                self.grid_manager.start_grid_session(stock_code, user_config)
+
+        self.assertIn('未触发止盈', str(cm.exception))
+        logger.info("[PASS] Grid session rejected when profit-trigger guard is enabled")
 
     # ==================== TC10: Concurrent Execution ====================
 
