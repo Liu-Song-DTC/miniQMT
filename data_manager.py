@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import sqlite3
 import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 import threading
 import xtquant.xtdata as xt
@@ -40,6 +41,200 @@ def _create_xtdata():
         import xtquant.xtdata as _xtdata
         return _xtdata
 
+
+class MarketDataHealthTracker:
+    """内存版行情源健康评分器，不落库，重启即清空。"""
+
+    def __init__(self):
+        self._events = defaultdict(
+            lambda: deque(maxlen=getattr(config, "MARKET_HEALTH_MAX_EVENTS", 100))
+        )
+        self._lock = threading.Lock()
+
+    def record(self, source, purpose, stock_code, ok, latency_ms=0, reason="", data_quality_ok=True):
+        if not getattr(config, "MARKET_HEALTH_ENABLED", True):
+            return
+
+        key = (
+            str(source or "unknown"),
+            str(purpose or "unknown"),
+            self._normalize_stock_code(stock_code),
+        )
+        event = {
+            "ts": time.time(),
+            "ok": bool(ok),
+            "latency_ms": max(0, int(latency_ms or 0)),
+            "reason": str(reason or ("success" if ok else "unknown")),
+            "data_quality_ok": bool(data_quality_ok),
+        }
+        with self._lock:
+            self._events[key].append(event)
+
+    def get_score(self, source=None, purpose=None, stock_code=None):
+        events = self._collect_events(source, purpose, stock_code)
+        return self._score_events(events)
+
+    def snapshot(self):
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            keys = list(self._events.keys())
+
+        overall = self.get_score()
+        sources = {}
+        stocks = {}
+        for source in sorted({k[0] for k in keys}):
+            sources[source] = self.get_score(source=source)
+
+        for stock_code in sorted({k[2] for k in keys}):
+            stock_entry = stocks.setdefault(stock_code, {})
+            for purpose in sorted({k[1] for k in keys if k[2] == stock_code}):
+                purpose_entry = self.get_score(purpose=purpose, stock_code=stock_code)
+                purpose_entry["sources"] = {}
+                for source in sorted({k[0] for k in keys if k[1] == purpose and k[2] == stock_code}):
+                    purpose_entry["sources"][source] = self.get_score(
+                        source=source,
+                        purpose=purpose,
+                        stock_code=stock_code,
+                    )
+                stock_entry[purpose] = purpose_entry
+
+        return {
+            "enabled": getattr(config, "MARKET_HEALTH_ENABLED", True),
+            "observe_only": getattr(config, "MARKET_HEALTH_OBSERVE_ONLY", True),
+            "generated_at": generated_at,
+            "overall": overall,
+            "sources": sources,
+            "stocks": stocks,
+            "trading": {
+                "min_score": getattr(config, "MARKET_HEALTH_TRADING_MIN_SCORE", 70),
+                "allow_mootdx": getattr(config, "MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING", False),
+            },
+        }
+
+    def format_summary(self):
+        snapshot = self.snapshot()
+        sources = snapshot.get("sources", {})
+        if not sources:
+            return "行情健康: 暂无样本"
+
+        parts = []
+        bad_stocks = []
+        unstable_score = getattr(config, "MARKET_HEALTH_UNSTABLE_SCORE", 40)
+        for source, info in sorted(sources.items()):
+            score = info.get("score")
+            score_text = "unknown" if score is None else str(score)
+            parts.append(f"{source}={info.get('status', 'unknown')}({score_text})")
+
+        for stock_code, purposes in snapshot.get("stocks", {}).items():
+            realtime = purposes.get("realtime", {})
+            score = realtime.get("score")
+            if score is not None and score < unstable_score:
+                bad_stocks.append(stock_code)
+
+        if bad_stocks:
+            parts.append("异常股票:" + ",".join(bad_stocks[:5]))
+        return "行情健康: " + " | ".join(parts)
+
+    def _collect_events(self, source=None, purpose=None, stock_code=None):
+        stock_code = self._normalize_stock_code(stock_code) if stock_code else None
+        now = time.time()
+        window_seconds = getattr(config, "MARKET_HEALTH_WINDOW_SECONDS", 300)
+        events = []
+        with self._lock:
+            for key, values in self._events.items():
+                key_source, key_purpose, key_stock = key
+                if source and key_source != source:
+                    continue
+                if purpose and key_purpose != purpose:
+                    continue
+                if stock_code and key_stock != stock_code:
+                    continue
+                events.extend(event for event in values if now - event["ts"] <= window_seconds)
+        events.sort(key=lambda event: event["ts"])
+        return events
+
+    def _score_events(self, events):
+        if not events:
+            return {
+                "score": None,
+                "status": "unknown",
+                "event_count": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "consecutive_failures": 0,
+                "last_success_at": None,
+                "last_event_at": None,
+                "avg_latency_ms": None,
+                "last_reason": None,
+            }
+
+        total = len(events)
+        success_events = [event for event in events if event["ok"] and event["data_quality_ok"]]
+        success_count = len(success_events)
+        failure_count = total - success_count
+        success_rate_score = 100 * success_count / total
+        quality_score = 100 * sum(1 for event in events if event["data_quality_ok"]) / total
+
+        if success_events:
+            avg_latency = sum(event["latency_ms"] for event in success_events) / success_count
+            latency_score = max(0, 100 - (avg_latency / 30))
+            last_success_ts = success_events[-1]["ts"]
+            age = max(0, time.time() - last_success_ts)
+            window_seconds = max(1, getattr(config, "MARKET_HEALTH_WINDOW_SECONDS", 300))
+            freshness_score = max(0, 100 - (age / window_seconds * 100))
+            last_success_at = datetime.fromtimestamp(last_success_ts).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            avg_latency = None
+            latency_score = 0
+            freshness_score = 0
+            last_success_at = None
+
+        consecutive_failures = 0
+        for event in reversed(events):
+            if event["ok"] and event["data_quality_ok"]:
+                break
+            consecutive_failures += 1
+        consecutive_score = max(0, 100 - consecutive_failures * 25)
+
+        score = (
+            success_rate_score * 0.45
+            + latency_score * 0.20
+            + freshness_score * 0.20
+            + quality_score * 0.10
+            + consecutive_score * 0.05
+        )
+        score = int(round(max(0, min(100, score))))
+
+        return {
+            "score": score,
+            "status": self._status_for_score(score),
+            "event_count": total,
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "consecutive_failures": consecutive_failures,
+            "last_success_at": last_success_at,
+            "last_event_at": datetime.fromtimestamp(events[-1]["ts"]).strftime("%Y-%m-%d %H:%M:%S"),
+            "avg_latency_ms": None if avg_latency is None else int(round(avg_latency)),
+            "last_reason": events[-1]["reason"],
+        }
+
+    def _status_for_score(self, score):
+        if score is None:
+            return "unknown"
+        if score >= getattr(config, "MARKET_HEALTH_HEALTHY_SCORE", 80):
+            return "healthy"
+        if score >= getattr(config, "MARKET_HEALTH_DEGRADED_SCORE", 60):
+            return "degraded"
+        if score >= getattr(config, "MARKET_HEALTH_UNSTABLE_SCORE", 40):
+            return "unstable"
+        return "down"
+
+    def _normalize_stock_code(self, stock_code):
+        if not stock_code:
+            return "unknown"
+        return str(stock_code).upper()
+
+
 class DataManager:
     """数据管理类，处理历史行情数据的获取与存储"""
     
@@ -66,6 +261,9 @@ class DataManager:
         # baostock 连续失败冷却机制（防止网络异常时反复阻塞）
         self._bs_consecutive_failures = 0
         self._bs_cooldown_until = 0.0  # 冷却截止时间戳
+
+        # 行情源健康评分（仅内存，不持久化）
+        self.market_health = MarketDataHealthTracker()
 
         # 历史数据更新节流与告警降噪状态
         self._history_update_attempts = {}
@@ -224,6 +422,67 @@ class DataManager:
         except Exception as e:
             logger.warning(f"xtdata重连失败: {e}")
             return False
+
+    def _get_market_health(self):
+        if not hasattr(self, "market_health") or self.market_health is None:
+            self.market_health = MarketDataHealthTracker()
+        return self.market_health
+
+    def _record_market_health(self, source, purpose, stock_code, ok, latency_ms=0,
+                              reason="", data_quality_ok=True):
+        self._get_market_health().record(
+            source=source,
+            purpose=purpose,
+            stock_code=stock_code,
+            ok=ok,
+            latency_ms=latency_ms,
+            reason=reason,
+            data_quality_ok=data_quality_ok,
+        )
+
+    def get_market_health_snapshot(self):
+        return self._get_market_health().snapshot()
+
+    def format_market_health_summary(self):
+        return self._get_market_health().format_summary()
+
+    def is_quote_tradable(self, stock_code, quote):
+        if not getattr(config, "MARKET_HEALTH_ENABLED", True):
+            return True
+        if getattr(config, "MARKET_HEALTH_OBSERVE_ONLY", True):
+            return True
+        if not quote:
+            return False
+
+        source = quote.get("_source")
+        if source == "Mootdx" and not getattr(config, "MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING", False):
+            return False
+
+        score = quote.get("_health_score")
+        if score is None:
+            health = self._get_market_health().get_score(
+                source=source,
+                purpose=quote.get("_purpose", "realtime"),
+                stock_code=stock_code,
+            )
+            score = health.get("score")
+        if score is None:
+            return False
+        return score >= getattr(config, "MARKET_HEALTH_TRADING_MIN_SCORE", 70)
+
+    def _decorate_quote(self, quote, source, purpose, stock_code, latency_ms=0):
+        if not isinstance(quote, dict):
+            return quote
+        decorated = dict(quote)
+        decorated["_source"] = source
+        decorated["_purpose"] = purpose
+        decorated["_latency_ms"] = int(max(0, latency_ms or 0))
+        decorated["_health_score"] = self._get_market_health().get_score(
+            source=source,
+            purpose=purpose,
+            stock_code=stock_code,
+        ).get("score")
+        return decorated
 
     def _connect_db(self):
         """连接SQLite数据库"""
@@ -1332,6 +1591,7 @@ class DataManager:
             # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
             import concurrent.futures
 
+            start_time = time.time()
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(
                 Methods.getStockData,
@@ -1344,6 +1604,10 @@ class DataManager:
             try:
                 df = future.result(timeout=5.0)  # 5秒超时
             except concurrent.futures.TimeoutError:
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_market_health(
+                    "Mootdx", "realtime", stock_code, False, latency_ms, reason="timeout"
+                )
                 logger.warning(f"Mootdx: 获取 {stock_code} 行情超时（5秒）")
                 return None
             except RuntimeError as e:
@@ -1354,10 +1618,18 @@ class DataManager:
                 raise
 
             if df is None or df.empty:
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_market_health(
+                    "Mootdx", "realtime", stock_code, False, latency_ms, reason="empty"
+                )
                 logger.warning(f"使用Mootdx获取 {stock_code} 的最新行情为空")
                 return None
 
             if len(df) < 2:
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_market_health(
+                    "Mootdx", "realtime", stock_code, False, latency_ms, reason="insufficient_rows"
+                )
                 logger.warning(f"Mootdx: {stock_code} 数据行数不足({len(df)}行)，无法计算lastClose")
                 return None
 
@@ -1374,7 +1646,20 @@ class DataManager:
                 'date': latest_data.get('datetime', None)
             }
 
-
+            latency_ms = int((time.time() - start_time) * 1000)
+            data_quality_ok = latest_data['lastPrice'] > 0 and latest_data['lastClose'] > 0
+            self._record_market_health(
+                "Mootdx",
+                "realtime",
+                stock_code,
+                data_quality_ok,
+                latency_ms,
+                reason="success" if data_quality_ok else "invalid_price",
+                data_quality_ok=data_quality_ok,
+            )
+            latest_data = self._decorate_quote(
+                latest_data, "Mootdx", "realtime", stock_code, latency_ms
+            )
             logger.debug(f"Mootdx:{stock_code} 最新行情: {latest_data}")
             return latest_data
 
@@ -1384,6 +1669,9 @@ class DataManager:
             if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
                 logger.debug(f"[DATA] 系统正在关闭，跳过获取 {stock_code} 行情")
                 return None
+            self._record_market_health(
+                "Mootdx", "realtime", stock_code, False, 0, reason="exception"
+            )
             logger.error(f"获取 {stock_code} 的latest_data出错: {str(e)}")
             return None
 
@@ -1407,12 +1695,17 @@ class DataManager:
             # 注意：不使用 with 语句，避免 __exit__ 调用 shutdown(wait=True) 阻塞等待超时线程
             import concurrent.futures
 
+            start_time = time.time()
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(self.xt.get_full_tick, [stock_code])
             executor.shutdown(wait=False)  # 不等待线程，让其在后台独立结束
             try:
                 latest_quote = future.result(timeout=3.0)  # 3秒超时
             except concurrent.futures.TimeoutError:
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_market_health(
+                    "xtdata", "realtime", stock_code, False, latency_ms, reason="timeout"
+                )
                 logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
                 self._record_xtdata_failure("timeout")
                 return {}  # 返回空字典，与原逻辑一致
@@ -1429,13 +1722,30 @@ class DataManager:
                     logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
                 else:
                     logger.debug(f"xtdata:未获取到 {stock_code} 的tick行情（非交易时段）")
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_market_health(
+                    "xtdata", "realtime", stock_code, False, latency_ms, reason="empty_quote"
+                )
                 self._record_xtdata_failure("empty_quote")
                 return {}  # 返回空字典而不是None
 
             quote_data = latest_quote[stock_code]
+            latency_ms = int((time.time() - start_time) * 1000)
+            last_price = float(quote_data.get("lastPrice", 0) or 0)
+            data_quality_ok = last_price > 0
+            self._record_market_health(
+                "xtdata",
+                "realtime",
+                stock_code,
+                data_quality_ok,
+                latency_ms,
+                reason="success" if data_quality_ok else "invalid_price",
+                data_quality_ok=data_quality_ok,
+            )
             logger.debug(f"xtdata: {stock_code} 最新行情: {quote_data}")
-            self._reset_xtdata_failure()
-            return quote_data
+            if data_quality_ok:
+                self._reset_xtdata_failure()
+            return self._decorate_quote(quote_data, "xtdata", "realtime", stock_code, latency_ms)
 
         except Exception as e:
             # 区分正常关闭错误和真正的错误
@@ -1443,6 +1753,9 @@ class DataManager:
             if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
                 logger.debug(f"[DATA] 系统正在关闭，跳过获取 {stock_code} 行情")
                 return {}
+            self._record_market_health(
+                "xtdata", "realtime", stock_code, False, 0, reason="exception"
+            )
             logger.error(f"xtdata: 获取 {stock_code} 的最新行情时出错: {str(e)}", exc_info=True)
             self._record_xtdata_failure("exception")
             return {}  # 返回空字典而不是None

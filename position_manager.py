@@ -3728,6 +3728,13 @@ class PositionManager:
                         if current_price <= 0:
                             logger.warning(f"{stock_code} 价格无效: {current_price:.2f},跳过本次检查")
                             continue
+                        if not self.data_manager.is_quote_tradable(stock_code, latest_quote):
+                            logger.warning(
+                                f"[MARKET_HEALTH] {stock_code} 行情健康度不足，跳过信号检测 "
+                                f"(source={latest_quote.get('_source')}, "
+                                f"score={latest_quote.get('_health_score')})"
+                            )
+                            continue
                     except Exception as e:
                         logger.error(f"{stock_code} 获取行情异常: {e}")
                         continue

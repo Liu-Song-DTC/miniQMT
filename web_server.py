@@ -426,6 +426,23 @@ def get_status():
             'message': f"获取系统状态时出错: {str(e)}"
         }), 500
 
+@app.route('/api/market/health', methods=['GET'])
+def get_market_health():
+    """获取内存中的行情源健康快照，不触发行情请求。"""
+    try:
+        snapshot = data_manager.get_market_health_snapshot()
+        return jsonify({
+            'status': 'success',
+            'data': snapshot,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        logger.error(f"获取行情健康状态时出错: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"获取行情健康状态时出错: {str(e)}"
+        }), 500
+
 @app.route('/api/positions', methods=['GET'])
 def get_positions():
     """获取持仓信息 - 增加版本号支持"""

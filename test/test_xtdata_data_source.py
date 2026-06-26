@@ -19,6 +19,7 @@ import threading
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+import data_manager as data_manager_module
 from test.test_base import TestBase
 from test.test_mocks import MockQmtTrader
 
@@ -140,6 +141,32 @@ class TestGetLatestDataFallback(TestBase):
         mock_mootdx.assert_not_called()
         self.assertEqual(result.get('lastPrice'), 13.59)
 
+    def test_get_latest_xtdata_records_health_success(self):
+        """xtdata 成功返回时记录健康样本并附加元数据"""
+        self.mock_xt.get_full_tick.return_value = {
+            '000920.SZ': {'lastPrice': 13.59, 'lastClose': 13.97}
+        }
+
+        result = self.dm.get_latest_xtdata('000920.SZ')
+        snapshot = self.dm.get_market_health_snapshot()
+
+        self.assertEqual(result.get('_source'), 'xtdata')
+        self.assertEqual(result.get('_purpose'), 'realtime')
+        self.assertIn('xtdata', snapshot['sources'])
+        self.assertEqual(snapshot['sources']['xtdata']['success_count'], 1)
+
+    def test_get_latest_xtdata_records_empty_quote_failure(self):
+        """xtdata 空 tick 应记录失败样本"""
+        self.mock_xt.get_full_tick.return_value = {}
+
+        with patch('config.is_trade_time', return_value=True):
+            result = self.dm.get_latest_xtdata('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result, {})
+        self.assertEqual(snapshot['sources']['xtdata']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['xtdata']['last_reason'], 'empty_quote')
+
     def test_xtdata_price_zero_subscribed_fallback_with_warning(self):
         """已订阅但 lastPrice=0：应记录 WARNING，降级到 Mootdx"""
         self.dm.subscribed_stocks = ['000920.SZ']
@@ -151,6 +178,34 @@ class TestGetLatestDataFallback(TestBase):
             self.dm.get_latest_data('000920.SZ')
         mock_mootdx.assert_called_once()
         self.assertTrue(any('已订阅但 lastPrice=0' in m for m in cm.output))
+
+    def test_get_latest_data_records_mootdx_health_success(self):
+        """Mootdx fallback 成功时记录健康样本并附加元数据"""
+        self.dm.xt = None
+        mock_df = self._make_mootdx_df(13.59)
+
+        with patch('config.is_trade_time', return_value=False), \
+             patch('Methods.getStockData', return_value=mock_df):
+            result = self.dm.get_latest_data('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result.get('_source'), 'Mootdx')
+        self.assertIn('Mootdx', snapshot['sources'])
+        self.assertEqual(snapshot['sources']['Mootdx']['success_count'], 1)
+
+    def test_get_latest_data_records_mootdx_empty_failure(self):
+        """Mootdx 返回空数据时记录失败原因"""
+        import pandas as pd
+        self.dm.xt = None
+
+        with patch('config.is_trade_time', return_value=False), \
+             patch('Methods.getStockData', return_value=pd.DataFrame()):
+            result = self.dm.get_latest_data('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertIsNone(result)
+        self.assertEqual(snapshot['sources']['Mootdx']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['Mootdx']['last_reason'], 'empty')
 
     def test_xtdata_price_zero_not_subscribed_triggers_subscribe(self):
         """未订阅且 lastPrice=0：应触发 ensure_subscribed，降级到 Mootdx，记录 INFO"""
@@ -379,6 +434,48 @@ class TestEnsureSubscribedThreadSafety(TestBase):
             f"subscribe_quote 调用 {subscribe_count} 次，超出预期")
         self.assertGreaterEqual(subscribe_count, 1,
             "subscribe_quote 至少应被调用1次")
+
+
+class TestMarketDataHealthTracker(unittest.TestCase):
+    """轻量内存行情健康评分器测试"""
+
+    def test_score_drops_after_failures(self):
+        tracker = data_manager_module.MarketDataHealthTracker()
+        tracker.record('xtdata', 'realtime', '000920.SZ', True, latency_ms=20)
+        tracker.record('xtdata', 'realtime', '000920.SZ', False, latency_ms=3000, reason='timeout')
+        tracker.record('xtdata', 'realtime', '000920.SZ', False, latency_ms=3000, reason='timeout')
+        score = tracker.get_score(source='xtdata', purpose='realtime', stock_code='000920.SZ')
+
+        self.assertEqual(score['event_count'], 3)
+        self.assertEqual(score['consecutive_failures'], 2)
+        self.assertLess(score['score'], 80)
+
+    def test_snapshot_groups_sources_and_stocks(self):
+        tracker = data_manager_module.MarketDataHealthTracker()
+        tracker.record('xtdata', 'realtime', '000920.SZ', True, latency_ms=10)
+        tracker.record('Mootdx', 'realtime', '000920', False, latency_ms=5000, reason='timeout')
+
+        snapshot = tracker.snapshot()
+
+        self.assertIn('xtdata', snapshot['sources'])
+        self.assertIn('Mootdx', snapshot['sources'])
+        self.assertIn('000920.SZ', snapshot['stocks'])
+        self.assertIn('000920', snapshot['stocks'])
+
+    def test_tradable_observe_only_and_strict_mode(self):
+        dm = data_manager_module.DataManager.__new__(data_manager_module.DataManager)
+        dm.market_health = data_manager_module.MarketDataHealthTracker()
+
+        mootdx_quote = {'lastPrice': 10.0, '_source': 'Mootdx', '_purpose': 'realtime', '_health_score': 95}
+        xtdata_quote = {'lastPrice': 10.0, '_source': 'xtdata', '_purpose': 'realtime', '_health_score': 80}
+
+        with patch('config.MARKET_HEALTH_OBSERVE_ONLY', True):
+            self.assertTrue(dm.is_quote_tradable('000920', mootdx_quote))
+
+        with patch('config.MARKET_HEALTH_OBSERVE_ONLY', False), \
+             patch('config.MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING', False):
+            self.assertFalse(dm.is_quote_tradable('000920', mootdx_quote))
+            self.assertTrue(dm.is_quote_tradable('000920', xtdata_quote))
 
 
 if __name__ == '__main__':

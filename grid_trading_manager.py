@@ -2493,12 +2493,14 @@ class GridTradingManager:
 
                 if not self._validate_grid_signal_before_execute(signal, session, latest_price=latest_price):
                     logger.warning(f"[GRID] execute_grid_trade: 信号复核失败，拒绝执行 stock_code={stock_code}, signal_type={signal_type}")
+                    self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     return False
 
                 tradable, reason = tradable_result
                 if not tradable:
                     logger.warning(f"[GRID] execute_grid_trade: 涨跌停/停牌防护拦截 "
                                    f"stock_code={stock_code}, signal_type={signal_type}: {reason}")
+                    self._reset_tracker_after_failed_trade_unlocked(session, signal_type)
                     return False
 
                 # 执行交易前的状态

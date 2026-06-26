@@ -247,12 +247,18 @@ def heartbeat_logger():
                 asset_str = f"获取失败:{str(e)[:20]}"
 
             # 输出心跳日志
+            try:
+                market_health_str = get_data_manager().format_market_health_summary()
+            except Exception as e:
+                market_health_str = f"行情健康: 获取失败:{str(e)[:20]}"
+
             logger.info("=" * 50)
             logger.info(f"💓 系统心跳 - 运行时长:{uptime_str}")
             logger.info(f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
                        f"自动交易:{'开启' if config.ENABLE_AUTO_TRADING else '关闭'} | "
                        f"网格交易:{'开启' if config.ENABLE_GRID_TRADING else '关闭'}")
             logger.info(f"   持仓数量:{position_count} | {asset_str}")
+            logger.info(f"   {market_health_str}")
             logger.info("=" * 50)
 
         except Exception as e:
