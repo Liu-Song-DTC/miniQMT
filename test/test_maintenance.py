@@ -7,10 +7,35 @@ from unittest.mock import patch
 
 import config
 from autobuy.store import AutoBuyStore
-from maintenance import cleanup_autobuy_db, cleanup_trading_db, rotate_plain_log
+from maintenance import cleanup_autobuy_db, cleanup_trading_db, rotate_plain_log, run_database_maintenance
 
 
 class TestMaintenance(unittest.TestCase):
+    def test_run_database_maintenance_logs_compact_info(self):
+        result = {
+            "trading_db": {
+                "db_path": "data/trading.db",
+                "trade_records": 1,
+                "grid_sessions": 2,
+                "premarket_sync_history": 0,
+                "config_history": 0,
+                "vacuum": False,
+            },
+            "autobuy_db": {
+                "db_path": "data/autobuy.db",
+                "decision_log": 3,
+                "vacuum": True,
+            },
+        }
+
+        with patch("maintenance.cleanup_trading_db", return_value=result["trading_db"]), \
+             patch("maintenance.cleanup_autobuy_db", return_value=result["autobuy_db"]), \
+             patch("maintenance.logger") as mock_logger:
+            self.assertEqual(run_database_maintenance(datetime(2026, 6, 27, 0, 10, 0)), result)
+
+        mock_logger.info.assert_called_once_with("数据库维护完成: 清理 6 行, VACUUM=已执行")
+        mock_logger.debug.assert_called_once_with(f"数据库维护明细: {result}")
+
     def test_rotate_plain_log_keeps_limited_backups(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = os.path.join(tmp, "xqm_manager.log")
