@@ -218,7 +218,8 @@
         "test.test_methods_data_source",
         "test.test_xtdata_data_source",
         "test.test_history_data_source_routing",
-        "test.test_stock_name_resolution"
+        "test.test_stock_name_resolution",
+        "test.test_baostock_helper"
       ],
       "priority": "high"
     },
@@ -281,6 +282,7 @@
         "test.test_methods_data_source",
         "test.test_history_data_source_routing",
         "test.test_stock_name_resolution",
+        "test.test_baostock_helper",
         "test.test_db_op_safety_verification",
         "test.test_maintenance",
         "test.test_dual_layer_storage",

@@ -67,7 +67,68 @@ def select_data_type( stock='600031'):
 #       res = res.rename(columns={'datetime': 'date'})
 #       res = res.reindex(columns=['date', 'open', 'high', 'low', 'close', 'preclose', 'volume', 'amount'])
 #       res = res.reset_index(drop=True)
-def getStockData(code, 
+def _mootdx_daily_bars(code, freq, offset, adjustflag):
+    """用 mootdx(通达信) 拉取日/周/月线。"""
+    mootdx_freq = {'d': 9, 'w': 5, 'm': 6}[freq]
+    if code.startswith(("sh.", "sz.")):
+        code = code.split('.')[1]
+    client = Quotes.factory('std')  # 使用标准版通达信数据
+    return client.bars(symbol=code, frequency=mootdx_freq, offset=offset, adjust=adjustflag)
+
+
+def _baostock_daily_bars(code, fields, start_date, end_date, freq, adjustflag):
+    """用 baostock 拉取日/周/月线；不可用/失败时返回 None 以便上层降级到 mootdx。
+
+    适配新版 baostock(00.9.x) 收紧后的访问：登录前应用 API Key、复权类型
+    归一化为 '1'/'2'/'3'、登录与查询错误码显式校验、确保 logout 释放连接。
+    """
+    try:
+        import baostock as bs
+    except ImportError:
+        print("未安装 baostock，历史数据降级使用 mootdx")
+        return None
+
+    import baostock_helper
+    bs_code = add_bs_prefix(code)
+    bs_adjustflag = baostock_helper.normalize_adjustflag(adjustflag)
+    logged_in = False
+    try:
+        with suppress_stdout_stderr():
+            baostock_helper.apply_api_key(bs)
+            lg = bs.login()
+        if lg is None or lg.error_code != '0':
+            err = baostock_helper.describe_login_error(
+                getattr(lg, 'error_code', ''), getattr(lg, 'error_msg', ''))
+            print(f"baostock 登录失败: {err}")
+            return None
+        logged_in = True
+
+        with suppress_stdout_stderr():
+            result = bs.query_history_k_data_plus(
+                bs_code, fields,
+                start_date=start_date, end_date=end_date,
+                frequency=freq, adjustflag=bs_adjustflag)
+        if result is None or result.error_code != '0':
+            print(f"baostock 查询失败: {getattr(result, 'error_msg', 'unknown')}")
+            return None
+
+        data_list = []
+        while (result.error_code == '0') & result.next():
+            data_list.append(result.get_row_data())
+        return pd.DataFrame(data_list, columns=result.fields)
+    except Exception as e:
+        print(f"baostock 历史数据异常: {e}")
+        return None
+    finally:
+        if logged_in:
+            with suppress_stdout_stderr():
+                try:
+                    bs.logout()
+                except Exception:
+                    pass
+
+
+def getStockData(code,
                  fields="date,code,open,high,low,close,volume,amount,adjustflag", 
                  start_date=None, end_date=None, 
                  offset=100,
@@ -77,21 +138,12 @@ def getStockData(code,
     # 日k线；d=日k线、w=周、m=月、5=5分钟、15=15分钟、30=30分钟、60=60分钟k线数据，不区分大小写；
     # 指数没有分钟线数据；周线每周最后一个交易日才可以获取，月线每月最后一个交易日才可以获取
     if freq=='d' or freq=='w' or freq=='m':
-        if not getattr(config, 'ENABLE_BAOSTOCK_HISTORY_DATA', False):
-            mootdx_freq = {'d': 9, 'w': 5, 'm': 6}[freq]
-            if code.startswith(("sh.", "sz.")):
-                code = code.split('.')[1]
-            client = Quotes.factory('std')
-            return client.bars(symbol=code, frequency=mootdx_freq, offset=offset, adjust=adjustflag)
-
-        import baostock as bs
-        code = add_bs_prefix(code)
-
-        with suppress_stdout_stderr():
-            lg = bs.login()
-        result = bs.query_history_k_data_plus(code, fields, start_date, end_date, freq, adjustflag)
-        df = pd.DataFrame(result.get_data(), columns=result.fields)
-        return df
+        if getattr(config, 'ENABLE_BAOSTOCK_HISTORY_DATA', False):
+            df = _baostock_daily_bars(code, fields, start_date, end_date, freq, adjustflag)
+            if df is not None and not df.empty:
+                return df
+            # baostock 不可用/登录失败/无数据时降级到 mootdx，保证主流程不阻塞
+        return _mootdx_daily_bars(code, freq, offset, adjustflag)
     # 其它数据用mootdx接口,默认取100根K线数据，，没有换手率，PE等数据
     # frequency -> K线种类 0 => 5分钟K线 => 5m 1 => 15分钟K线 => 15m 2 => 30分钟K线 => 30m 3 => 小时K线 => 1h 
     # 4 => 日K线 (小数点x100) => days 5 => 周K线 => week 6 => 月K线 => mon 

@@ -64,6 +64,9 @@ ENABLE_BAOSTOCK_HISTORY_DATA = _env_bool("ENABLE_BAOSTOCK_HISTORY_DATA", False) 
 BAOSTOCK_LOGIN_TIMEOUT = 5          # baostock login 超时秒数（防止无超时阻塞）
 BAOSTOCK_RETRY_COOLDOWN = 300       # 连续失败后冷却时间（秒，默认5分钟）
 BAOSTOCK_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
+# 新版 baostock(00.9.x) 收紧访问后支持的 API Key，登录前通过 set_API_key 传入；
+# 为空则匿名访问（免费数据仍可用）。⚠️ 必须用环境变量，切勿硬编码。
+BAOSTOCK_API_KEY = os.environ.get("BAOSTOCK_API_KEY", "")
 
 # 其他功能开关
 ENABLE_DATA_SYNC = True             # 是否启用数据同步

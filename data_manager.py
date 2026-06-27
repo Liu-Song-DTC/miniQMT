@@ -1295,6 +1295,12 @@ class DataManager:
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
+            # 新版 baostock(00.9.x) 收紧访问：登录前应用 API Key（已配置且版本支持时）
+            try:
+                import baostock_helper
+                baostock_helper.apply_api_key(bs)
+            except Exception:
+                pass
             future = executor.submit(bs.login)
             lg = future.result(timeout=timeout)
             return lg, None
@@ -1378,7 +1384,11 @@ class DataManager:
                 # 带超时的 login
                 lg, err = self._baostock_login_with_timeout()
                 if lg is None or lg.error_code != '0':
-                    err_msg = err if lg is None else lg.error_msg
+                    if lg is None:
+                        err_msg = err
+                    else:
+                        import baostock_helper
+                        err_msg = baostock_helper.describe_login_error(lg.error_code, lg.error_msg)
                     logger.warning(f"baostock登录失败: {err_msg}")
                     self._bs_consecutive_failures += 1
 

@@ -10,6 +10,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
 
 
+class _FakeLogin:
+    def __init__(self, error_code='0', error_msg='success'):
+        self.error_code = error_code
+        self.error_msg = error_msg
+
+
+class _FakeBaostock:
+    """模拟新版 baostock 模块（含 set_API_key 接口）。"""
+
+    def __init__(self, login=None):
+        self._login = login if login is not None else _FakeLogin()
+        self.api_key = None
+
+    def set_API_key(self, key):
+        self.api_key = key
+
+    def login(self):
+        return self._login
+
+    def logout(self):
+        pass
+
+
 class TestStockNameResolution(unittest.TestCase):
     def _make_manager(self, xt=None, cache=None):
         dm = object.__new__(DataManager)
@@ -82,6 +105,19 @@ class TestStockNameResolution(unittest.TestCase):
 
         mock_login.assert_not_called()
         self.assertNotIn('301577', dm.stock_names_cache)
+
+    def test_login_with_timeout_applies_api_key(self):
+        """新版 baostock 收紧访问：登录前应通过 set_API_key 传入已配置的 API Key。"""
+        dm = self._make_manager()
+        fake_mod = _FakeBaostock(login=_FakeLogin('0'))
+
+        with patch('config.BAOSTOCK_API_KEY', 'k-xyz'), \
+             patch.dict(sys.modules, {'baostock': fake_mod}):
+            lg, err = dm._baostock_login_with_timeout(timeout=3)
+
+        self.assertIsNone(err)
+        self.assertEqual(lg.error_code, '0')
+        self.assertEqual(fake_mod.api_key, 'k-xyz')
 
 
 if __name__ == '__main__':
