@@ -46,7 +46,6 @@ def main():
         ('flask_cors', 'Flask-CORS'),
         ('xtquant', 'xtquant'),
         ('mootdx', 'mootdx'),
-        ('baostock', 'baostock'),
         ('marshmallow', 'marshmallow'),
         ('requests', 'requests'),
     ]
@@ -59,7 +58,7 @@ def main():
 
     for module_name, package_name in dependencies:
         success, info = check_module(module_name, package_name)
-        status = "✓ OK " if success else "✗ FAIL"
+        status = "[OK] " if success else "[FAIL]"
         color = "\033[92m" if success else "\033[91m"  # 绿色/红色
         reset = "\033[0m"
 
@@ -80,7 +79,7 @@ def main():
     print()
 
     if all_ok:
-        print("\033[92m✓ 所有依赖包检查通过!\033[0m")
+        print("\033[92m[OK] 所有依赖包检查通过!\033[0m")
         print()
         print("下一步:")
         print("1. 配置 account_config.json 文件")
@@ -88,7 +87,7 @@ def main():
         print("3. 访问 http://localhost:5000 查看Web界面")
         return 0
     else:
-        print("\033[91m✗ 存在缺失的依赖包\033[0m")
+        print("\033[91m[FAIL] 存在缺失的依赖包\033[0m")
         print()
         print("修复方法:")
         print("1. 安装所有依赖: pip install -r utils/requirements.txt")

@@ -73,7 +73,7 @@ DYNAMIC_TAKE_PROFIT = [
 | `GRID_STOP_LOSS_RATIO` | `-0.10` | 网格止损比例（-10%） |
 
 !!! note "网格启动条件"
-    当前默认允许已有持仓直接启动网格，不再强制要求 `profit_triggered=True`。若显式设置 `GRID_REQUIRE_PROFIT_TRIGGERED = True`，未触发首次止盈的持仓会被拒绝启动网格。
+    当前默认允许已有持仓直接启动网格，不再强制要求 `profit_triggered=True`。若显式设置 `GRID_REQUIRE_PROFIT_TRIGGERED = True`，或通过同名环境变量设置为 `true/1/yes/on`，未触发首次止盈的持仓会被拒绝启动网格。
 
 ### 网格实盘交易参数（仅 `ENABLE_SIMULATION_MODE = False` 生效）
 
@@ -133,8 +133,10 @@ DYNAMIC_TAKE_PROFIT = [
 | `UPDATE_INTERVAL` | `60` | 行情更新间隔（秒） |
 | `HISTORY_UPDATE_THROTTLE_SECONDS` | `300` | 单只股票历史数据更新节流，避免策略线程每轮重复拉日线 |
 | `HISTORY_INVALID_DATE_LOG_INTERVAL` | `600` | 同一股票同一数据源非法历史日期告警降噪间隔 |
+| `ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP` | `False` | 是否允许用 baostock 兜底查询股票名称；默认关闭，避免无人值守时外部接口反复报错 |
+| `ENABLE_BAOSTOCK_HISTORY_DATA` | `False` | 是否允许旧 `Methods.getStockData(freq='d/w/m')` 路径使用 baostock；默认改走 Mootdx |
 
-历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
+历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
 
 ### 行情源健康评分参数
 

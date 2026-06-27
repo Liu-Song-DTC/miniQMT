@@ -10,7 +10,6 @@ import threading
 import sys
 import os
 import json
-import Methods
 import config
 from logger import get_logger
 from data_manager import get_data_manager
@@ -1587,12 +1586,11 @@ class PositionManager:
                     # 如果本地无数据，才尝试从行情接口拉取（日线）
                     if highest_price <= 0:
                         try:
-                            history_data = Methods.getStockData(
-                                code=stock_code,
-                                fields="high",
-                                start_date=open_date_formatted,
-                                freq='d',  # 日线
-                                adjustflag='2'
+                            history_data = self.data_manager.download_history_data(
+                                stock_code,
+                                period='1d',
+                                start_date=open_date_formatted.replace('-', ''),
+                                end_date=today_formatted.replace('-', '')
                             )
                             if history_data is not None and not history_data.empty:
                                 highest_price = history_data['high'].astype(float).max()

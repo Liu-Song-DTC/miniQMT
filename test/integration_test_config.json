@@ -215,6 +215,7 @@
       "description": "验证 DataManager.ensure_subscribed 动态订阅（去重/异常处理）、get_latest_data xtdata->Mootdx fallback 三条路径、历史数据源路由（标准模式走Mootdx防get_market_data_ex崩溃）、以及盘中新持仓加入时自动订阅的集成行为",
       "modules": [
         "test.test_data_manager_history_dates",
+        "test.test_methods_data_source",
         "test.test_xtdata_data_source",
         "test.test_history_data_source_routing",
         "test.test_stock_name_resolution"
@@ -275,8 +276,11 @@
         "test.test_grid_exit_deviation",
         "test.test_grid_validation_params",
         "test.test_trader_callback",
+        "test.test_config_env_overrides",
         "test.test_data_manager_history_dates",
+        "test.test_methods_data_source",
         "test.test_history_data_source_routing",
+        "test.test_stock_name_resolution",
         "test.test_db_op_safety_verification",
         "test.test_maintenance",
         "test.test_dual_layer_storage",

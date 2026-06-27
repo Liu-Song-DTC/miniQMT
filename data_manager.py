@@ -1360,6 +1360,9 @@ class DataManager:
             if stock_name:
                 return stock_name
 
+            if not getattr(config, 'ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP', False):
+                return stock_code
+
             # 尝试使用baostock查询（带超时保护和冷却机制）
             try:
                 import baostock as bs  # noqa: F401 - 检查是否安装

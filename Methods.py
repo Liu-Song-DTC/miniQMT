@@ -3,13 +3,13 @@
 # from stockquant.quant import *
 import os
 import pandas as pd
-import baostock as bs
 import datetime
 import time
 import requests
 import json
 from MyTT import *
 from mootdx.quotes import Quotes
+import config
 from logger import suppress_stdout_stderr
 
 def backInDays(nday):
@@ -77,6 +77,14 @@ def getStockData(code,
     # 日k线；d=日k线、w=周、m=月、5=5分钟、15=15分钟、30=30分钟、60=60分钟k线数据，不区分大小写；
     # 指数没有分钟线数据；周线每周最后一个交易日才可以获取，月线每月最后一个交易日才可以获取
     if freq=='d' or freq=='w' or freq=='m':
+        if not getattr(config, 'ENABLE_BAOSTOCK_HISTORY_DATA', False):
+            mootdx_freq = {'d': 9, 'w': 5, 'm': 6}[freq]
+            if code.startswith(("sh.", "sz.")):
+                code = code.split('.')[1]
+            client = Quotes.factory('std')
+            return client.bars(symbol=code, frequency=mootdx_freq, offset=offset, adjust=adjustflag)
+
+        import baostock as bs
         code = add_bs_prefix(code)
 
         with suppress_stdout_stderr():
@@ -107,21 +115,24 @@ def IsMarketGoingUp():
         'sz.399005': '中小板指'    # 中小板指
     }
 
-    # 登录到Baostock（抑制输出）
-    with suppress_stdout_stderr():
-        lg = bs.login()
-
     # 遍历每个指数
     for code, name in indices.items():
         # 获取30天K线数据
         fields = "date,code,open,high,low,close"
         start_date = backInDays(30)
         end_date = datetime.datetime.now().strftime("%Y-%m-%d")  # 当前日期
-        res = bs.query_history_k_data_plus(code, fields, start_date, end_date, frequency='d', adjustflag='3')
-        df = pd.DataFrame(res.get_data(), columns=res.fields)
+        df = getStockData(
+            code,
+            fields=fields,
+            start_date=start_date,
+            end_date=end_date,
+            offset=30,
+            freq='d',
+            adjustflag='qfq'
+        )
 
         # 计算MA5
-        if len(df) >= 5:
+        if df is not None and len(df) >= 5 and 'close' in df.columns:
             df['close'] = df['close'].astype(float)
             df['MA5'] = df['close'].rolling(window=5).mean()
 

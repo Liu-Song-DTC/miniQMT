@@ -59,6 +59,7 @@ class TestHighestPriceUpdate(TestBase):
         # 用独立 Mock 替换 data_manager 单例引用，防止其他 PM 线程的调用污染计数
         mock_dm = MagicMock()
         mock_dm.get_history_data_from_db.return_value = pd.DataFrame()
+        mock_dm.download_history_data.return_value = pd.DataFrame()
         mock_dm.get_latest_data.return_value = {"high": 12.5, "lastPrice": 12.4}
         self.pm.data_manager = mock_dm
 
@@ -83,40 +84,39 @@ class TestHighestPriceUpdate(TestBase):
 
         # mock_tick / mock_db 已在 setUp 中注册到 self.pm.data_manager（独立 Mock，与全局单例隔离）
         mock_tick = self.pm.data_manager.get_latest_data
-        mock_db = self.pm.data_manager.get_history_data_from_db
+        mock_history = self.pm.data_manager.download_history_data
+        mock_history.return_value = history_df
 
-        with patch("position_manager.Methods.getStockData", return_value=history_df) as mock_history:
+        history_calls = mock_history.call_count
+        tick_calls = mock_tick.call_count
 
-            history_calls = mock_history.call_count
-            tick_calls = mock_tick.call_count
+        # 第一次调用：应拉取历史数据 + tick
+        self.pm.update_all_positions_highest_price()
+        self.assertEqual(mock_history.call_count - history_calls, 1, "首次应拉取历史数据")
+        self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据应实时获取")
 
-            # 第一次调用：应拉取历史数据 + tick
-            self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count - history_calls, 1, "首次应拉取历史数据")
-            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据应实时获取")
+        # 最高价应更新到tick高点 12.5
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("SELECT highest_price FROM positions WHERE stock_code=?", (stock_code,))
+        row = cursor.fetchone()
+        self.assertIsNotNone(row, "持仓应存在")
+        self.assertAlmostEqual(row[0], 12.5, places=2, msg="最高价应更新为tick高点")
 
-            # 最高价应更新到tick高点 12.5
-            cursor = self.pm.memory_conn.cursor()
-            cursor.execute("SELECT highest_price FROM positions WHERE stock_code=?", (stock_code,))
-            row = cursor.fetchone()
-            self.assertIsNotNone(row, "持仓应存在")
-            self.assertAlmostEqual(row[0], 12.5, places=2, msg="最高价应更新为tick高点")
+        history_calls = mock_history.call_count
+        tick_calls = mock_tick.call_count
 
-            history_calls = mock_history.call_count
-            tick_calls = mock_tick.call_count
+        # TTL内再次调用：历史数据不应重复拉取，tick仍应获取
+        self.pm.update_all_positions_highest_price()
+        self.assertEqual(mock_history.call_count - history_calls, 0, "TTL内不应重复拉取历史数据")
+        self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
 
-            # TTL内再次调用：历史数据不应重复拉取，tick仍应获取
-            self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count - history_calls, 0, "TTL内不应重复拉取历史数据")
-            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
+        # 让缓存过期
+        self.pm.history_high_cache[stock_code]["ts"] = time.time() - 2
+        history_calls = mock_history.call_count
+        tick_calls = mock_tick.call_count
 
-            # 让缓存过期
-            self.pm.history_high_cache[stock_code]["ts"] = time.time() - 2
-            history_calls = mock_history.call_count
-            tick_calls = mock_tick.call_count
-
-            self.pm.update_all_positions_highest_price()
-            self.assertEqual(mock_history.call_count - history_calls, 1, "缓存过期后应重新拉取历史数据")
-            self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
+        self.pm.update_all_positions_highest_price()
+        self.assertEqual(mock_history.call_count - history_calls, 1, "缓存过期后应重新拉取历史数据")
+        self.assertEqual(mock_tick.call_count - tick_calls, 1, "tick数据每次应实时获取")
 
         logger.info("最高价更新机制专项测试通过")

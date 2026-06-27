@@ -59,6 +59,8 @@ ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关（信号检测）
 # - ENABLE_DYNAMIC_STOP_PROFIT：控制止盈止损信号的检测
 
 # baostock 降级配置（防止网络阻塞）
+ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP = _env_bool("ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP", False)  # 是否允许用baostock兜底查询股票名称
+ENABLE_BAOSTOCK_HISTORY_DATA = _env_bool("ENABLE_BAOSTOCK_HISTORY_DATA", False)  # 是否允许旧Methods历史行情路径使用baostock
 BAOSTOCK_LOGIN_TIMEOUT = 5          # baostock login 超时秒数（防止无超时阻塞）
 BAOSTOCK_RETRY_COOLDOWN = 300       # 连续失败后冷却时间（秒，默认5分钟）
 BAOSTOCK_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
@@ -666,7 +668,7 @@ GRID_SELL_COOLDOWN = 300  # 0=不限制；建议实盘设为 300
 GRID_SELL_COOLDOWN_PRICE_THRESHOLD = 0.02  # 2%涨幅触发自适应缩短；0=禁用
 
 # 启动条件配置
-GRID_REQUIRE_PROFIT_TRIGGERED = False  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
+GRID_REQUIRE_PROFIT_TRIGGERED = _env_bool("GRID_REQUIRE_PROFIT_TRIGGERED", False)  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
 
 # 混合退出机制 - 默认值
 GRID_MAX_DEVIATION_RATIO = 0.15    # 网格中心最大偏离±15%

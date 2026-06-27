@@ -329,7 +329,7 @@ REQUIREMENTS_FILE = PROJECT_ROOT / "utils" / "requirements.txt"
 # 核心 PyPI 依赖：pip 能装的（xtquant 是 QMT 客户端附带，单独标注）
 CORE_DEPS = [
     "pandas", "numpy", "flask", "flask_cors", "mootdx",
-    "baostock", "marshmallow", "requests", "colorama",
+    "marshmallow", "requests", "colorama",
 ]
 # 需要特殊处理的依赖：通过 QMT 客户端自带的 SDK 安装
 SPECIAL_DEPS = ["xtquant"]

@@ -34,7 +34,7 @@ pip install Flask>=2.0.0 Flask-CORS>=3.0.10
 pip install xtquant
 
 # 数据源
-pip install mootdx baostock
+pip install mootdx
 
 # 数据验证
 pip install marshmallow>=3.14.0
@@ -55,9 +55,15 @@ pip install requests>=2.26.0
 | **Flask-CORS** | >=3.0.10 | 跨域资源共享 |
 | **xtquant** | >=1.0.0 | 迅投QMT交易接口 |
 | **mootdx** | >=0.4.0 | 通达信行情数据 |
-| **baostock** | >=0.8.8 | 宝塔金融数据 |
 | **marshmallow** | >=3.14.0 | 数据验证 |
 | **requests** | >=2.26.0 | HTTP请求库 |
+
+### 可选依赖
+
+```bash
+# 仅在显式启用 ENABLE_BAOSTOCK_* 兜底接口时需要
+pip install baostock>=0.8.8
+```
 
 ### 可选依赖(性能优化)
 
@@ -191,7 +197,6 @@ miniQMT 依赖包检查
 ✓ OK  Flask-CORS           4.0.0
 ✓ OK  xtquant              1.1.0
 ✓ OK  mootdx               0.4.5
-✓ OK  baostock             0.8.9
 ✓ OK  marshmallow          3.20.1
 ------------------------------------------------------------
 
