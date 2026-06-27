@@ -14,6 +14,9 @@ LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FILE = "qmt_trading.log"
 LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 5  # 保留5个备份文件
+XQM_LOG_FILE = os.path.join("logs", "xqm_manager.log")
+XQM_LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
+XQM_LOG_BACKUP_COUNT = 5  # 保留5个备份文件
 
 # Web访问日志配置
 ENABLE_WEB_ACCESS_LOG = True  # 是否启用web访问日志
@@ -64,6 +67,7 @@ BAOSTOCK_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
 ENABLE_DATA_SYNC = True             # 是否启用数据同步
 ENABLE_POSITION_MONITOR = True      # 是否启用持仓监控
 ENABLE_LOG_CLEANUP = True           # 是否启用日志清理
+ENABLE_DB_MAINTENANCE = True        # 是否启用数据库维护任务
 
 # QMT API配置
 USE_SYNC_ORDER_API = False          # 使用同步下单接口(True)还是异步接口(False)
@@ -416,6 +420,18 @@ WEB_TRADE_RECORDS_DISPLAY_DAYS = 60  # 下单日志仅展示最近N天（约2个
 # ======================= 日志清理配置 =======================
 LOG_CLEANUP_DAYS = 30  # 保留最近30天的日志
 LOG_CLEANUP_TIME = "00:00:00"  # 每天凌晨执行清理
+
+# ======================= 数据库维护配置 =======================
+DB_MAINTENANCE_TIME = "00:10:00"  # 每天非交易时段执行维护
+DB_MAINTENANCE_CHECK_INTERVAL = 600  # 调度检查间隔（秒）
+DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME = True
+DB_MAINTENANCE_ENABLE_VACUUM = True
+DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS = 1000
+TRADE_RECORD_RETENTION_DAYS = 1095       # 交易流水保留3年
+GRID_SESSION_RETENTION_DAYS = 365        # 已停止网格会话保留1年
+AUTOBUY_DECISION_LOG_RETENTION_DAYS = 90 # 自动买入决策明细保留90天
+PREMARKET_HISTORY_RETENTION_DAYS = 365   # 盘前同步历史保留1年
+CONFIG_HISTORY_RETENTION_DAYS = 365      # 配置变更审计保留1年
 
 # ======================= 功能配置 =======================
 # 交易时间配置

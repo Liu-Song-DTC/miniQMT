@@ -51,6 +51,7 @@ def _setup_window_and_pid():
 _setup_window_and_pid()
 
 from logger import get_logger, schedule_log_cleanup, clean_old_logs
+from maintenance import schedule_database_maintenance
 from data_manager import get_data_manager
 from indicator_calculator import get_indicator_calculator
 from position_manager import get_position_manager
@@ -334,6 +335,15 @@ def start_log_cleanup_thread():
         log_thread.start()
         threads.append(("log_thread", lambda: None))  # 没有停止函数，依赖于daemon=True
 
+def start_database_maintenance_thread():
+    """启动数据库维护线程"""
+    if config.ENABLE_DB_MAINTENANCE:
+        logger.info("启动数据库维护线程")
+        db_maintenance_thread = threading.Thread(target=schedule_database_maintenance)
+        db_maintenance_thread.daemon = True
+        db_maintenance_thread.start()
+        threads.append(("db_maintenance_thread", lambda: None))
+
 def start_web_server_thread(position_manager):
     """启动Web服务器线程
 
@@ -499,6 +509,7 @@ def main():
         start_position_thread(position_manager)
         start_strategy_thread(trading_strategy)
         start_log_cleanup_thread()
+        start_database_maintenance_thread()
 
         # ============ 新增: 启动盘前同步调度器 ============
         from premarket_sync import start_premarket_sync_scheduler

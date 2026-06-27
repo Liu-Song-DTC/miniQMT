@@ -34,6 +34,11 @@ except Exception:
     import logging
     logger = logging.getLogger("xtquant_manager.standalone")
 
+try:
+    from maintenance import rotate_xqm_log
+except Exception:
+    rotate_xqm_log = None
+
 
 class StandaloneApplication:
     """
@@ -249,6 +254,12 @@ def main(argv=None) -> None:
     parser.add_argument("--host", default="", help="监听地址（覆盖配置文件，如 0.0.0.0）")
     parser.add_argument("--port", type=int, default=0, help="监听端口（覆盖配置文件，如 8888）")
     args = parser.parse_args(argv)
+
+    if rotate_xqm_log:
+        try:
+            rotate_xqm_log()
+        except Exception:
+            pass
 
     cfg = load_standalone_config(args.config)
     if args.host:

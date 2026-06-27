@@ -197,7 +197,8 @@
       "name": "数据库线程安全与缓存验证测试",
       "description": "验证 data_manager.py 数据库访问加锁保护（防止多线程SQLite事务冲突）及 web_server.py 账户信息缓存机制（防止阻塞8秒超时）",
       "modules": [
-        "test.test_db_op_safety_verification"
+        "test.test_db_op_safety_verification",
+        "test.test_maintenance"
       ],
       "priority": "critical"
     },
@@ -277,6 +278,7 @@
         "test.test_data_manager_history_dates",
         "test.test_history_data_source_routing",
         "test.test_db_op_safety_verification",
+        "test.test_maintenance",
         "test.test_dual_layer_storage",
         "test.test_web_api_complete",
         "test.test_indicator_all_methods",

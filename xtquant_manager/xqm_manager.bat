@@ -15,6 +15,8 @@ set "HOST=127.0.0.1"
 set "PORT=8888"
 set "PID_FILE=%WORK_DIR%.xqm_manager.pid"
 set "LOG_FILE=%PROJECT_DIR%logs\xqm_manager.log"
+set "LOG_MAX_BYTES=10485760"
+set "LOG_BACKUP_COUNT=5"
 set "UI_A=%WORK_DIR%test_ui\test_ui_a.html"
 set "UI_B=%WORK_DIR%test_ui\test_ui_b.html"
 set "HEALTH_URL=http://%HOST%:%PORT%/api/v1/health"
@@ -116,6 +118,7 @@ if !PORT_USED!==1 (
 )
 
 if not exist "%PROJECT_DIR%logs" mkdir "%PROJECT_DIR%logs"
+call :RotateLog
 
 echo [start] Launching XtQuantManager on %HOST%:%PORT%...
 cd /d "%PROJECT_DIR%"
@@ -230,6 +233,13 @@ if not exist "%LOG_FILE%" (
 echo [info] Tailing log (Ctrl+C to stop)
 echo ============================================================
 powershell -command "Get-Content '%LOG_FILE%' -Wait -Tail 30"
+goto :eof
+
+
+:: ---- Rotate append-only log before startup ------------------
+:RotateLog
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p='%LOG_FILE%'; $max=%LOG_MAX_BYTES%; $n=%LOG_BACKUP_COUNT%; if (Test-Path $p) { $f=Get-Item $p; if ($f.Length -ge $max) { $old=\"$p.$n\"; if (Test-Path $old) { Remove-Item $old -Force }; for ($i=$n-1; $i -ge 1; $i--) { $src=\"$p.$i\"; $dst=\"$p.\" + ($i+1); if (Test-Path $src) { Move-Item $src $dst -Force } }; Move-Item $p \"$p.1\" -Force; New-Item -ItemType File -Path $p -Force | Out-Null } }" >nul 2>&1
 goto :eof
 
 
