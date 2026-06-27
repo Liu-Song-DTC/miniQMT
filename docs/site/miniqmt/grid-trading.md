@@ -41,6 +41,23 @@
 
 ---
 
+## 启动条件
+
+创建网格会话前，系统会做最小必要校验：
+
+| 条件 | 当前行为 |
+|------|---------|
+| 持仓存在 | 必须已有该股票持仓，且持仓数量有效 |
+| 首次止盈标记 | 默认不要求 `profit_triggered=True`；`GRID_REQUIRE_PROFIT_TRIGGERED = True` 时才强制要求 |
+| 活跃会话 | 同一股票同一时间只能有一个活跃网格会话 |
+| 中心价 | 优先使用请求中的 `center_price`，否则使用持仓 `highest_price` 等可用价格 |
+| 参数合法性 | `price_interval`、`position_ratio`、`max_investment`、止盈止损等需通过 `grid_validation` 校验 |
+
+!!! note "关于首次止盈限制"
+    `GRID_REQUIRE_PROFIT_TRIGGERED` 当前默认值为 `False`，因此持仓个股可以直接启动网格交易。若你希望恢复旧的保守策略，可在 `config.py` 中显式设置为 `True`，此时未触发首次止盈的持仓会被拒绝启动网格。
+
+---
+
 ## 退出条件
 
 网格会话在以下条件满足时自动退出：
@@ -179,7 +196,7 @@ curl -X POST http://localhost:5000/api/grid/stop \
 
 ## 注意事项
 
-- 网格交易需要先触发首次止盈（`GRID_REQUIRE_PROFIT_TRIGGERED = True`）
+- 默认不要求先触发首次止盈即可启动网格；如需更保守风控，可设置 `GRID_REQUIRE_PROFIT_TRIGGERED = True`
 - 每只股票同一时间只能有一个活跃网格会话
 - 网格数据持久化在 SQLite `grid_trading_sessions` / `grid_trades` / `grid_orders` / `grid_lots` / `grid_lot_matches` 表中（详见[数据库表结构](database.md)）
 - 实盘下单以**成交回报**为准（`GRID_CONFIRM_LIVE_ORDER_BY_DEAL`），系统重启自动对账恢复未完成委托

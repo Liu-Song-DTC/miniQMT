@@ -25,8 +25,47 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 |------|------|------|--------|
 | GET | `/api/connection/status` | QMT 连接状态 | ✅ 完整 |
 | GET | `/api/status` | 系统运行状态总览 | ✅ 完整 |
+| GET | `/api/market/health` | 行情源健康评分内存快照（xtdata/Mootdx 成功率、延迟、新鲜度、数据质量） | ❌ |
 | GET | `/api/debug/status` | 详细调试状态 | ❌ |
 | GET | `/api/accounts` | 列出已注册账号（无 Token，供前端账号发现） | ✅ 完整 |
+
+---
+
+## 行情源健康 {#market-health}
+
+`GET /api/market/health` 返回内存中的行情源健康快照，不触发行情请求、不落库，重启后样本清空。默认 `MARKET_HEALTH_OBSERVE_ONLY = True`，仅用于观测，不影响交易信号检测。
+
+典型返回：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "observe_only": true,
+    "overall": {
+      "score": 92,
+      "status": "healthy"
+    },
+    "sources": {
+      "xtdata": {
+        "score": 95,
+        "status": "healthy",
+        "success_count": 18,
+        "failure_count": 0
+      }
+    },
+    "trading": {
+      "min_score": 70,
+      "allow_mootdx": false
+    }
+  },
+  "timestamp": "2026-06-27 10:30:00"
+}
+```
+
+!!! note "网关能力边界"
+    该接口目前由 Flask 直连模式提供；xtquant_manager 网关的 `/api/v1/health` 是网关账号连接健康，不等同于 miniQMT 的行情源健康评分。
 
 ---
 

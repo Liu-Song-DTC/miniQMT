@@ -682,7 +682,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，覆盖 29 个测试组、62 个唯一测试模块。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 29 个测试组（含 `fast` 快速子集）、89 个模块引用、64 个唯一测试模块。
 
 ### 测试基础设施
 
@@ -724,7 +724,7 @@ thread_monitor.get_status()
 | `grid_simulation` | high | 价格模拟测试（30个用例） |
 | `fast` | critical | 快速验证子集（当前配置 23 个模块） |
 
-**测试统计（当前配置）**: 29组 × 62个唯一测试模块（86个模块引用）。具体用例数以本地运行报告为准。
+**测试统计（当前配置）**: 29组（含 `fast`）× 89个模块引用 × 64个唯一测试模块。最近一次 `--all` 实测为 28个非 fast 组、65个模块引用、961个用例，100% 通过；具体以本地运行报告为准。
 
 ### 编写新测试的规范
 

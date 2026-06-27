@@ -199,7 +199,7 @@ graph LR
 | **logger.py** | 统一日志管理 | `get_logger()`, `clean_old_logs()` | 无 |
 | **main.py** | 系统启动入口 | `main()`, `cleanup()` | 所有模块 |
 | **thread_monitor.py** | 线程健康监控 | `register_thread()`, `start()` | logger, config |
-| **data_manager.py** | 历史数据获取 | `get_market_data()`, `start_data_update_thread()` | xtquant.xtdata |
+| **data_manager.py** | 历史/实时行情获取与行情源健康评分 | `get_market_data()`, `get_market_health_snapshot()`, `is_quote_tradable()` | xtquant.xtdata, Mootdx |
 | **indicator_calculator.py** | 技术指标计算 | `calculate_macd()`, `calculate_ma()` | data_manager |
 | **position_manager.py** | 持仓管理核心 | `get_all_positions()`, `validate_trading_signal()` | easy_qmt_trader, SQLite |
 | **trading_executor.py** | 交易执行器 | `buy_stock()`, `sell_stock()` | easy_qmt_trader |
@@ -1401,6 +1401,7 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 |-------|--------|------|
 | `GRID_DEFAULT_PRICE_INTERVAL` | `0.05` | 默认价格间隔(5%) |
 | `GRID_DEFAULT_POSITION_RATIO` | `0.25` | 默认每档交易比例(25%) |
+| `GRID_REQUIRE_PROFIT_TRIGGERED` | `False` | 是否要求持仓已首次止盈后才能启动网格；默认不要求 |
 | `GRID_CALLBACK_RATIO` | `0.005` | 回调触发比例(0.5%) |
 | `GRID_BUY_COOLDOWN` | `300` | 买入冷却时间(秒) |
 | `GRID_SELL_COOLDOWN` | `300` | 卖出冷却时间(秒) |
@@ -1417,6 +1418,21 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | `GRID_COUNTERPARTY_BUY_PRICE_BUFFER_RATIO` | `0.02` | 对手价买入资金预占缓冲(2%) |
 | `GRID_ENABLE_PRICE_LIMIT_GUARD` | `True` | 涨跌停/停牌防护 |
 | `GRID_PRICE_LIMIT_EPS` | `0.001` | 涨跌停判定容差(元) |
+
+#### 行情源健康评分
+
+| 配置项 | 默认值 | 说明 |
+|-------|--------|------|
+| `MARKET_HEALTH_ENABLED` | `True` | 启用行情源健康评分 |
+| `MARKET_HEALTH_OBSERVE_ONLY` | `True` | 观察模式：只记录评分，不拦截交易信号 |
+| `MARKET_HEALTH_WINDOW_SECONDS` | `300` | 统计窗口(秒) |
+| `MARKET_HEALTH_MAX_EVENTS` | `100` | 单组合最大事件数 |
+| `MARKET_HEALTH_MIN_EVENTS` | `3` | 最少样本数，低于该值显示 unknown |
+| `MARKET_HEALTH_HEALTHY_SCORE` | `80` | healthy 阈值 |
+| `MARKET_HEALTH_DEGRADED_SCORE` | `60` | degraded 阈值 |
+| `MARKET_HEALTH_UNSTABLE_SCORE` | `40` | unstable 阈值 |
+| `MARKET_HEALTH_TRADING_MIN_SCORE` | `70` | 严格模式下可交易最低分 |
+| `MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING` | `False` | 严格模式下是否允许 Mootdx 兜底行情参与交易 |
 
 #### 委托单管理
 
@@ -1453,14 +1469,15 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 ---
 
-**文档版本**: v1.5
-**最后更新**: 2026-06-13
+**文档版本**: v1.6
+**最后更新**: 2026-06-27
 **维护者**: miniQMT Team
 
 ### 变更记录
 
 | 版本 | 日期 | 变更说明 |
 |------|------|---------|
+| v1.6 | 2026-06-27 | 同步行情源健康评分（内存观察版、不落库、`/api/market/health`）与网格启动条件默认值：`GRID_REQUIRE_PROFIT_TRIGGERED=False` |
 | v1.5 | 2026-06-13 | 新增「网格实盘交易机制」章节（成交确认/对手价/涨跌停防护/信号复核/启动对账/FIFO真实盈亏账本）；新增 grid_orders/grid_lots/grid_lot_matches 表及 grid_config_templates；grid_trading_sessions 补 total_buy_volume/total_sell_volume；修正错误表名 grid_sessions→grid_trading_sessions、目标盈利 8%→10%；修正失效文档死链 |
 | v1.4 | 2026-03-28 | 修正数据库表结构（grid_trading_sessions/grid_trades真实字段）；修正会话状态值（active/stopped）；更新网格交易配置参数（GRID_DEFAULT_PRICE_INTERVAL等）；修正ENABLE_GRID_TRADING/ENABLE_SELL_MONITOR默认值 |
 | v1.3 | 2026-03-25 | 更新网格退出条件（止盈/止损非对称设计、双重偏离度）；新增信号三级优先级体系；记录 stop_loss 硬优先级防死锁机制 |

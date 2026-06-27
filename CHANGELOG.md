@@ -6,13 +6,18 @@
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-06-27
+
 ### Added
 - 新增自动买入模块文档：说明 `miniqmt_autobuy` 独立进程、候选池筛选、大盘指数门禁、防重风控、调度与复盘库。
+- 新增行情源健康评分文档：说明轻量内存版评分、不落库、观察模式、配置项和 `/api/market/health` 快照接口。
 
 ### Changed
 - 同步 README、AGENTS、CLAUDE 和在线文档到当前代码：补充 `miniqmt.bat` 自动买入菜单 `[j]`-`[m]`、`--all-with-fast` 回归测试参数、当前测试分组规模、网格真实账本详情接口 `/api/grid/ledger/<session_id>`。
 - 更新 Web/API 文档的网关能力边界：`/api/grid/sessions` 在 xtquant_manager 网关模式下支持只读兼容返回，网格写操作和账本详情仍需 Flask 直连。
 - 更新配置与架构文档：补充历史数据同步节流/超时参数、自动买入独立配置文件和独立进程定位。
+- 同步网格启动条件：`GRID_REQUIRE_PROFIT_TRIGGERED` 当前默认值为 `False`，持仓个股默认不再要求先触发首次止盈即可启动网格；设为 `True` 时仍作为保守安全阀。
+- 更新测试统计口径：当前配置 29 个测试组（含 `fast`）、89 个模块引用、64 个唯一测试模块；最近 `--all` 回归为 28 组、65 个模块引用、961 个用例 100% 通过。
 
 ## [3.2.0] - 2026-06-13
 
@@ -151,7 +156,9 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/weihong-su/miniQMT/compare/v3.2.0...v3.3.0
+[3.2.0]: https://github.com/weihong-su/miniQMT/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/weihong-su/miniQMT/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/weihong-su/miniQMT/compare/V2.0.0-Beta...v3.0.0
 [2.0.0-Beta]: https://github.com/weihong-su/miniQMT/compare/V1.0.0...V2.0.0-Beta

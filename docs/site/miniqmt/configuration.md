@@ -67,10 +67,13 @@ DYNAMIC_TAKE_PROFIT = [
 | `GRID_LEVEL_COOLDOWN` | `60` | 同一档位冷却时间（秒） |
 | `GRID_BUY_COOLDOWN` | `300` | 买入成功后冷却（秒） |
 | `GRID_SELL_COOLDOWN` | `300` | 卖出成功后冷却（秒） |
-| `GRID_REQUIRE_PROFIT_TRIGGERED` | `True` | 网格启动前需先触发止盈 |
+| `GRID_REQUIRE_PROFIT_TRIGGERED` | `False` | 是否要求持仓已触发首次止盈后才能启动网格；默认不要求，设为 `True` 可恢复更保守风控 |
 | `GRID_MAX_DEVIATION_RATIO` | `0.15` | 最大偏离中心价比例（±15%） |
 | `GRID_TARGET_PROFIT_RATIO` | `0.10` | 网格目标盈利比例（10%） |
 | `GRID_STOP_LOSS_RATIO` | `-0.10` | 网格止损比例（-10%） |
+
+!!! note "网格启动条件"
+    当前默认允许已有持仓直接启动网格，不再强制要求 `profit_triggered=True`。若显式设置 `GRID_REQUIRE_PROFIT_TRIGGERED = True`，未触发首次止盈的持仓会被拒绝启动网格。
 
 ### 网格实盘交易参数（仅 `ENABLE_SIMULATION_MODE = False` 生效）
 
@@ -132,6 +135,27 @@ DYNAMIC_TAKE_PROFIT = [
 | `HISTORY_INVALID_DATE_LOG_INTERVAL` | `600` | 同一股票同一数据源非法历史日期告警降噪间隔 |
 
 历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
+
+### 行情源健康评分参数
+
+第一阶段为轻量内存版健康评分，不落库，系统重启后样本清空。默认处于观察模式，只记录评分与状态，不拦截交易信号。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `MARKET_HEALTH_ENABLED` | `True` | 启用行情源健康评分 |
+| `MARKET_HEALTH_OBSERVE_ONLY` | `True` | 观察模式：只记录评分，不影响交易信号检测 |
+| `MARKET_HEALTH_WINDOW_SECONDS` | `300` | 统计窗口（秒），默认最近 5 分钟 |
+| `MARKET_HEALTH_MAX_EVENTS` | `100` | 单个 source/purpose/stock 组合最多保留事件数 |
+| `MARKET_HEALTH_MIN_EVENTS` | `3` | 达到最少样本数后才输出有效评分，否则为 `unknown` |
+| `MARKET_HEALTH_HEALTHY_SCORE` | `80` | `healthy` 状态阈值 |
+| `MARKET_HEALTH_DEGRADED_SCORE` | `60` | `degraded` 状态阈值 |
+| `MARKET_HEALTH_UNSTABLE_SCORE` | `40` | `unstable` 状态阈值；低于该值为 `down` |
+| `MARKET_HEALTH_TRADING_MIN_SCORE` | `70` | 严格模式下允许参与交易信号检测的最低评分 |
+| `MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING` | `False` | 严格模式下是否允许 Mootdx 兜底行情参与交易 |
+
+评分综合成功率、平均延迟、最近成功时间和数据质量。持仓监控会调用 `data_manager.is_quote_tradable()`；在默认观察模式下始终放行，只有将 `MARKET_HEALTH_OBSERVE_ONLY` 设为 `False` 后才按分数和数据源限制拦截。
+
+健康快照接口见 [Web API · 行情源健康](web-api.md#market-health)。
 
 ---
 

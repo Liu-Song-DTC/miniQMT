@@ -56,7 +56,7 @@ config.py              # 集中配置管理
 logger.py              # 统一日志管理
 main.py                # 系统启动入口和线程管理
 thread_monitor.py      # 线程健康监控与自愈
-data_manager.py        # 历史数据获取（xtdata 接口）
+data_manager.py        # 历史/实时行情获取（xtdata 优先、Mootdx 兜底、行情健康评分）
 indicator_calculator.py # 技术指标计算
 position_manager.py    # 持仓管理核心（内存 + SQLite 双层）
 trading_executor.py    # 交易执行器（xttrader 接口）
@@ -72,6 +72,18 @@ grid_validation.py     # 网格交易参数校验
 autobuy/               # 自动买入独立进程：候选池筛选、防重、HTTP 下单
 xtquant_manager/       # XtQuantManager HTTP 网关（可选）
 ```
+
+---
+
+## 行情源健康评分
+
+`data_manager.py` 内置 `MarketDataHealthTracker`，对 xtdata/Mootdx 的实时行情请求做轻量内存评分：
+
+- 记录成功/失败、原因、延迟、数据质量和最近成功时间
+- 按 5 分钟窗口计算 `healthy` / `degraded` / `unstable` / `down`
+- 快照通过 Flask `GET /api/market/health` 暴露
+- 不落库，系统重启后样本清空
+- 默认 `MARKET_HEALTH_OBSERVE_ONLY = True`，只观察不拦截交易；严格模式下由 `data_manager.is_quote_tradable()` 参与持仓监控信号检测
 
 ---
 

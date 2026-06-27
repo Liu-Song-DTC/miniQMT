@@ -2,7 +2,9 @@
 
 ## 概述
 
-项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，覆盖 29 个测试组、62 个唯一测试模块（86 个模块引用）。
+项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 29 个测试组（含 `fast` 快速子集）、89 个模块引用、64 个唯一测试模块。
+
+最近一次 `python test/run_integration_regression_tests.py --all` 实测运行 28 个非 fast 组、65 个模块引用、961 个用例，结果为 961 通过、0 失败、0 错误、0 跳过，成功率 100%。
 
 ---
 
@@ -104,7 +106,7 @@ python test/run_all_grid_tests.py
 | `launcher_deployment` | high | 总控制台环境检查与配置校验 |
 | `db_thread_safety` | critical | 数据库线程安全验证 |
 | `dual_layer_storage` | critical | 内存 + SQLite 双层存储一致性 |
-| `xtdata_data_source` | high | xtdata 动态订阅、Mootdx fallback、股票名称解析 |
+| `xtdata_data_source` | high | xtdata 动态订阅、Mootdx fallback、股票名称解析、行情源健康评分 |
 | `indicator_calculator` | high | 技术指标计算器全方法验证 |
 | `grid_qa_gap_supplement` | critical | 网格 QA 缺口补充 |
 | `grid_full_range_coverage` | critical | 全网格价格区间覆盖（114 个用例，A-K 11 个套件） |
