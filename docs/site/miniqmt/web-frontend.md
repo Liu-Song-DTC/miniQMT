@@ -52,14 +52,17 @@ Flask 直连模式下，顶部控制条包含几类容易混淆的开关：
 
 | 控件 | 后端字段/配置 | 作用 |
 |------|---------------|------|
-| 开始/停止自动操作 | `ENABLE_AUTO_OPERATION`（API 兼容字段 `isMonitoring`） | 全局自动操作总开关，关闭时动态止盈止损和网格交易都不再产生新单 |
-| 策略自动 | `ENABLE_AUTO_TRADING`（保存配置字段 `globalAllowBuySell`） | 非网格自动策略执行开关，主要用于动态止盈止损 |
+| 开始/停止自动操作按钮 | `ENABLE_AUTO_OPERATION`（API 兼容字段 `isMonitoring` / `globalAutoOperation`） | 全局自动操作总开关，只运行时生效不持久化；关闭时动态止盈止损和网格交易都不再产生新单 |
+| 允许自动止盈 | `ENABLE_AUTO_TRADING`（保存配置字段 `globalAllowBuySell`） | 动态止盈止损自动执行开关，持久化 |
+| 允许自动网格 | `ENABLE_GRID_TRADING`（保存配置字段 `globalAllowGridTrading`） | 网格模块自动执行开关，持久化 |
 | 动态止盈 | `ENABLE_DYNAMIC_STOP_PROFIT` | 控制动态止盈止损模块是否检测信号 |
 | 买 / 卖 | `ENABLE_ALLOW_BUY` / `ENABLE_ALLOW_SELL` | 手动和自动交易的方向权限 |
 | 网格自动/暂停 | `grid_trading_sessions.enabled` | 单只股票网格会话开关，暂停后保留会话但不发新网格单 |
 
 !!! note "为什么 API 仍叫 isMonitoring"
     早期前端使用 `isMonitoring` 表示顶部开关状态。为兼容旧接口，字段名保留不变，但当前语义已经是全局自动操作总开关；持仓监控线程状态请看 `positionMonitorRunning`。
+
+Web1.0 参数区中，`API Token` 与“模拟交易模式”“允许自动止盈”“允许自动网格”位于同一行；全局自动操作不再单独显示开关，由“开始/停止自动操作”按钮统一控制。
 
 ---
 

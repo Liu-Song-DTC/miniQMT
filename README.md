@@ -209,11 +209,11 @@ Web界面 → 交易执行器 → 内存数据库 (跳过QMT接口)
 # 交易模式
 ENABLE_SIMULATION_MODE = True   # True=模拟, False=实盘 ⚠️
 ENABLE_AUTO_OPERATION = False   # 全局自动操作总开关：关闭时所有自动策略不产生新单 ⚠️
-ENABLE_AUTO_TRADING = False     # 非网格自动策略执行开关（动态止盈止损，不影响网格）
+ENABLE_AUTO_TRADING = False     # 允许自动止盈：动态止盈止损自动执行开关（持久化）
 
 # 策略功能
 ENABLE_DYNAMIC_STOP_PROFIT = True  # 止盈止损功能
-ENABLE_GRID_TRADING = True         # 网格交易功能
+ENABLE_GRID_TRADING = True         # 允许自动网格：网格模块自动执行开关（持久化）
 
 # 系统功能
 ENABLE_THREAD_MONITOR = True    # 线程健康监控（无人值守必需）⭐
@@ -401,8 +401,8 @@ tail -f logs/qmt_trading.log             # Git Bash
 **A**: 修改 `config.py`:
 ```python
 ENABLE_SIMULATION_MODE = False  # 切换到实盘
-ENABLE_AUTO_OPERATION = True    # 打开全局自动操作总开关
-ENABLE_AUTO_TRADING = True      # 启用非网格自动策略（动态止盈止损）
+ENABLE_AUTO_OPERATION = True    # 启动全局自动操作总闸（Web“开始自动操作”按钮，运行时生效）
+ENABLE_AUTO_TRADING = True      # 允许自动止盈（动态止盈止损自动执行）
 ```
 **⚠️ 注意**: 确保QMT客户端已启动并登录!
 
@@ -450,7 +450,7 @@ ENABLE_GRID_TRADING = False
 **A**: 访问 `http://localhost:5000/config` 页面，修改配置后点击保存。配置会立即生效，无需重启系统。支持的配置包括:
 - 止盈止损比例
 - 网格交易参数
-- 全局自动操作总开关、非网格策略自动开关、个股网格自动/暂停开关
+- 开始/停止自动操作、允许自动止盈、允许自动网格、个股网格自动/暂停开关
 - 线程监控开关
 
 所有配置变更会记录到 `system_config` 和 `config_history` 表中，支持审计和回滚。

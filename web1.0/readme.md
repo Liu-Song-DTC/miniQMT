@@ -61,6 +61,13 @@ your-project/
 4.  Open `index.html` in your web browser. It will try to connect to your backend API to load data and enable interactions. Check the browser's developer console (F12) for logs and error messages.
 
 ---
+## Web1.0 Control Layout
+
+The parameter area keeps `API Token`, `模拟交易模式`, `允许自动止盈`, and `允许自动网格` on the same row. The global auto-operation switch (`ENABLE_AUTO_OPERATION`) is not shown as a separate checkbox because it is controlled by the `开始自动操作` / `停止自动操作` button.
+
+`允许自动止盈` maps to `ENABLE_AUTO_TRADING`, and `允许自动网格` maps to `ENABLE_GRID_TRADING`; both are saved through `/api/config/save`.
+
+---
 好的，这是您提供的API端点摘要的Markdown格式版本：
 
 # API Endpoint Summary for miniQMT Web Server
@@ -89,7 +96,9 @@ your-project/
         "totalMaxPosition": 400000,
         "totalAccounts": "127.0.0.1", // IP Address
         "connectPort": 5000,
-        "globalAllowBuySell": true
+        "globalAutoOperation": false,
+        "globalAllowBuySell": true,
+        "globalAllowGridTrading": true
     }
     ```
 *   **Response Data (JSON):**
@@ -108,7 +117,9 @@ your-project/
     {
         "singleBuyAmount": 35000,
         // ... other config parameters
-        "globalAllowBuySell": true
+        "globalAutoOperation": false,
+        "globalAllowBuySell": true,
+        "globalAllowGridTrading": true
     }
     ```
 

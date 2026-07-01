@@ -9,10 +9,10 @@
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `ENABLE_SIMULATION_MODE` | `True` | `True` = 模拟，`False` = 实盘 |
-| `ENABLE_AUTO_OPERATION` | `False` | 全局自动操作总开关；关闭时动态止盈止损和网格交易都不产生新单 |
-| `ENABLE_AUTO_TRADING` | `False` | 非网格自动策略执行开关（动态止盈止损，不影响网格） |
+| `ENABLE_AUTO_OPERATION` | `False` | 全局自动操作总开关；关闭时动态止盈止损和网格交易都不产生新单；运行时开关，不持久化 |
+| `ENABLE_AUTO_TRADING` | `False` | 自动止盈分开关（动态止盈止损自动执行，不影响网格）；持久化 |
 | `ENABLE_DYNAMIC_STOP_PROFIT` | `True` | 动态止盈止损功能 |
-| `ENABLE_GRID_TRADING` | `True` | 网格交易功能 |
+| `ENABLE_GRID_TRADING` | `True` | 自动网格分开关；持久化 |
 | `ENABLE_ALLOW_BUY` | `True` | 允许买入 |
 | `ENABLE_ALLOW_SELL` | `True` | 允许卖出 |
 | `DEBUG` | `False` | 调试模式 |
@@ -27,6 +27,9 @@
 
 !!! info "三层开关关系"
     自动操作采用“总开关 → 策略分开关 → 个股开关”的结构：`ENABLE_AUTO_OPERATION` 是所有自动策略的新单总闸；`ENABLE_AUTO_TRADING` 只控制动态止盈止损等非网格策略；`ENABLE_GRID_TRADING` 控制网格模块；单个网格会话还可通过 `grid_trading_sessions.enabled` 在 Web 中切换“自动/暂停”。
+
+!!! note "持久化规则"
+    Web1.0 的“开始/停止自动操作”按钮对应 `ENABLE_AUTO_OPERATION`，只在当前进程运行时生效；API Token 同一行的“模拟交易模式”“允许自动止盈”“允许自动网格”分别对应 `ENABLE_SIMULATION_MODE`、`ENABLE_AUTO_TRADING`、`ENABLE_GRID_TRADING`，其中自动止盈和自动网格会保存到配置数据库并在下次启动恢复。
 
 ---
 

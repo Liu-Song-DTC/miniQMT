@@ -4214,6 +4214,12 @@ class PositionManager:
             return
 
         try:
+            if self.db_manager is None:
+                from grid_database import DatabaseManager
+                self.db_manager = DatabaseManager()
+                self.db_manager.init_grid_tables()
+                logger.info("网格交易数据库管理器延迟初始化完成")
+
             from grid_trading_manager import GridTradingManager
             new_manager = GridTradingManager(
                 self.db_manager,

@@ -153,7 +153,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 | POST | `/api/monitor/stop` | 停止全局自动操作总开关（兼容旧 monitor 路径） | ❌ |
 
 !!! note "字段兼容"
-    `/api/status`、SSE 和上述接口仍返回 `isMonitoring` 字段以兼容 web1.0/web2.0，当前语义是 `ENABLE_AUTO_OPERATION`。持仓监控线程是否运行由 `positionMonitorRunning` 表示，非网格策略自动执行由 `autoTradingEnabled` / `enableAutoTrading` 表示。
+    `/api/status`、SSE 和上述接口仍返回 `isMonitoring` 字段以兼容 web1.0/web2.0，当前语义是 `ENABLE_AUTO_OPERATION`。持仓监控线程是否运行由 `positionMonitorRunning` 表示，自动止盈由 `autoTradingEnabled` / `enableAutoTrading` 表示，自动网格由 `gridTradingEnabled` / `enableGridTrading` 表示。
 
 ---
 

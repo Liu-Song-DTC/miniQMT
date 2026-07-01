@@ -406,6 +406,7 @@ def get_status():
         system_settings = {
             'isMonitoring': is_monitoring,  # 兼容字段：全局自动操作总开关
             'enableAutoTrading': config.ENABLE_AUTO_TRADING,  # 非网格自动策略执行开关
+            'enableGridTrading': config.ENABLE_GRID_TRADING,  # 网格自动策略执行开关
             'positionMonitorRunning': config.ENABLE_POSITION_MONITOR,  # 增加持仓监控状态
             'allowBuy': getattr(config, 'ENABLE_ALLOW_BUY', True),
             'allowSell': getattr(config, 'ENABLE_ALLOW_SELL', True),
@@ -599,7 +600,9 @@ def get_config():
             "totalMaxPosition": config.MAX_TOTAL_POSITION_RATIO * 1000000,
             "connectPort": config.WEB_SERVER_PORT,
             "totalAccounts": "127.0.0.1",
+            "globalAutoOperation": config.ENABLE_AUTO_OPERATION,
             "globalAllowBuySell": config.ENABLE_AUTO_TRADING,
+            "globalAllowGridTrading": config.ENABLE_GRID_TRADING,
             "simulationMode": getattr(config, 'ENABLE_SIMULATION_MODE', False)
         }
         
@@ -688,6 +691,20 @@ def _apply_config_params(config_data):
         db_configs['ENABLE_STOP_LOSS_BUY'] = new_stop_loss_buy
         logger.info(f"补仓功能开关: {old_stop_loss_buy} -> {new_stop_loss_buy}")
 
+    if "globalAllowGridTrading" in config_data:
+        old_grid_trading = config.ENABLE_GRID_TRADING
+        value = bool(config_data["globalAllowGridTrading"])
+        config.ENABLE_GRID_TRADING = value
+        db_configs['ENABLE_GRID_TRADING'] = value
+        logger.info(f"自动网格开关: {old_grid_trading} -> {config.ENABLE_GRID_TRADING}")
+        if value:
+            try:
+                position_manager = get_position_manager_instance()
+                if not getattr(position_manager, 'grid_manager', None):
+                    position_manager.init_grid_manager(trading_executor)
+            except Exception as e:
+                logger.error(f"自动网格开关开启后初始化网格管理器失败: {e}")
+
     return db_configs
 
 
@@ -721,12 +738,19 @@ def save_config():
         # 应用基础参数并获取待持久化字典
         db_configs = _apply_config_params(config_data)
 
-        # 特殊处理：非网格自动交易开关（不持久化，切换时清除信号）
+        # 兼容字段：全局策略自动运行总闸只运行时生效，不持久化。
+        if "globalAutoOperation" in config_data:
+            old_auto_operation = config.ENABLE_AUTO_OPERATION
+            config.ENABLE_AUTO_OPERATION = bool(config_data["globalAutoOperation"])
+            logger.info(f"全局策略自动运行: {old_auto_operation} -> {config.ENABLE_AUTO_OPERATION} (仅运行时，不持久化)")
+
+        # 特殊处理：自动止盈分开关（持久化，切换时清除信号）
         if "globalAllowBuySell" in config_data:
             old_auto_trading = config.ENABLE_AUTO_TRADING
             value = bool(config_data["globalAllowBuySell"])
             config.ENABLE_AUTO_TRADING = value
-            logger.info(f"非网格自动交易开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (仅运行时，不持久化)")
+            db_configs['ENABLE_AUTO_TRADING'] = value
+            logger.info(f"自动止盈开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (持久化)")
             if not old_auto_trading and value:
                 position_manager = get_position_manager_instance()
                 position_manager.clear_all_signals(reason="切换到自动交易模式")
@@ -770,6 +794,7 @@ def save_config():
             'message': f'配置已保存并应用 (成功: {success_count}, 失败: {fail_count})',
             'isMonitoring': config.ENABLE_AUTO_OPERATION,
             'autoTradingEnabled': config.ENABLE_AUTO_TRADING,
+            'gridTradingEnabled': config.ENABLE_GRID_TRADING,
             'saved_count': success_count,
             'failed_count': fail_count
         })
@@ -794,7 +819,8 @@ def start_monitor():
             'status': 'success',
             'message': '全局自动操作已启动',
             'isMonitoring': config.ENABLE_AUTO_OPERATION,
-            'autoTradingEnabled': config.ENABLE_AUTO_TRADING  # 返回不变的自动交易状态
+            'autoTradingEnabled': config.ENABLE_AUTO_TRADING,  # 返回不变的自动止盈状态
+            'gridTradingEnabled': config.ENABLE_GRID_TRADING
         })
     except Exception as e:
         logger.error(f"启动监控时出错: {str(e)}")
@@ -823,7 +849,8 @@ def stop_monitor():
             'status': 'success',
             'message': '全局自动操作已停止',
             'isMonitoring': config.ENABLE_AUTO_OPERATION,  # 明确返回新状态
-            'autoTradingEnabled': config.ENABLE_AUTO_TRADING  # 同时返回非网格策略自动状态
+            'autoTradingEnabled': config.ENABLE_AUTO_TRADING,  # 同时返回自动止盈状态
+            'gridTradingEnabled': config.ENABLE_GRID_TRADING
         })
     except Exception as e:
         logger.error(f"停止监控时出错: {str(e)}")
@@ -1436,6 +1463,7 @@ def sse():
                     'monitoring': {
                         'isMonitoring': config.ENABLE_AUTO_OPERATION,
                         'autoTradingEnabled': config.ENABLE_AUTO_TRADING,
+                        'gridTradingEnabled': config.ENABLE_GRID_TRADING,
                         'allowBuy': getattr(config, 'ENABLE_ALLOW_BUY', True),
                         'allowSell': getattr(config, 'ENABLE_ALLOW_SELL', True),
                         'simulationMode': getattr(config, 'ENABLE_SIMULATION_MODE', False)
@@ -1615,31 +1643,22 @@ def start_push_thread():
         logger.warning("实时推送线程已在运行")
 
 def sync_auto_trading_status():
-    """ 20251219修复: Web服务器启动时同步ENABLE_AUTO_TRADING状态
-
-    问题: ENABLE_AUTO_TRADING不持久化导致重启后数据库和内存不一致
-    - 数据库: 保存Web界面设置的值(可能是True)
-    - 内存: 程序启动时从config.py加载默认值(False)
-
-    解决: Web启动时将内存状态同步到数据库,确保显示与实际一致
-    """
+    """Web服务器启动时初始化持久化自动策略分开关。"""
     try:
-        memory_value = config.ENABLE_AUTO_TRADING
-        db_value = config_manager.load_config('ENABLE_AUTO_TRADING', None)
+        for key in ('ENABLE_AUTO_TRADING', 'ENABLE_GRID_TRADING'):
+            memory_value = getattr(config, key)
+            db_value = config_manager.load_config(key, None)
 
-        if db_value is None:
-            # 数据库中没有记录,写入当前内存值
-            config_manager.save_config('ENABLE_AUTO_TRADING', memory_value)
-            logger.info(f"🔄 初始化配置同步: ENABLE_AUTO_TRADING = {memory_value} (内存 → 数据库)")
-        elif db_value != memory_value:
-            # 数据库和内存不一致,以内存为准(因为不持久化设计)
-            config_manager.save_config('ENABLE_AUTO_TRADING', memory_value)
-            logger.warning(f"🔄 配置不一致修复: ENABLE_AUTO_TRADING 数据库={db_value} → 内存={memory_value}")
-            logger.warning(f"⚠️  Web界面现在将显示实际运行状态: {memory_value}")
-        else:
-            logger.info(f"✅ 配置一致性验证通过: ENABLE_AUTO_TRADING = {memory_value}")
+            if db_value is None:
+                config_manager.save_config(key, memory_value)
+                logger.info(f"🔄 初始化配置同步: {key} = {memory_value} (内存 → 数据库)")
+            elif db_value != memory_value:
+                setattr(config, key, bool(db_value))
+                logger.info(f"🔄 应用持久化配置: {key} = {bool(db_value)} (数据库 → 内存)")
+            else:
+                logger.info(f"✅ 配置一致性验证通过: {key} = {memory_value}")
     except Exception as e:
-        logger.error(f"❌ 同步ENABLE_AUTO_TRADING状态失败: {str(e)}")
+        logger.error(f"❌ 同步自动策略分开关状态失败: {str(e)}")
 
 # ======================= 网格交易API端点 (2026-01-24) =======================
 

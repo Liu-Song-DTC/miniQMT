@@ -35,11 +35,13 @@
     let pollingIntervalId = null;
     let isMonitoring = false; // 兼容字段：全局自动操作总开关状态
     let isAutoTradingEnabled = false; // 非网格策略自动执行状态
+    let isGridTradingEnabled = true; // 网格策略自动执行状态
     let isSimulationMode = false; // 模拟交易模式
     let isPageActive = true; // 页面活跃状态
     let userMonitoringIntent = null; // 用户自动操作总开关意图（点击按钮后）
     let userSimulationModeIntent = null; // 用户模拟/实盘切换意图
     let userAutoTradingIntent = null; // 用户自动交易开关意图
+    let userGridTradingIntent = null; // 用户自动网格开关意图
     let isApiConnected = true; // API连接状态，初始假设已连接
     
     // 为不同类型的数据设置不同的刷新频率
@@ -144,7 +146,9 @@
         singleStockMaxPosition: document.getElementById('singleStockMaxPosition'),
         totalMaxPosition: document.getElementById('totalMaxPosition'),
         apiToken: document.getElementById('apiToken'),
+        globalAutoOperation: document.getElementById('globalAutoOperation'),
         globalAllowBuySell: document.getElementById('globalAllowBuySell'),
+        globalAllowGridTrading: document.getElementById('globalAllowGridTrading'),
         simulationMode: document.getElementById('simulationMode'),
         // 错误提示元素
         singleBuyAmountError: document.getElementById('singleBuyAmountError'),
@@ -291,6 +295,72 @@
         
         return isValid;
     }
+
+    async function syncAutoSwitch(payload, rollback) {
+        try {
+            const response = await apiRequest(API_ENDPOINTS.saveConfig, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            if (response.status !== 'success') {
+                throw new Error(response.message || '保存自动开关失败');
+            }
+        } catch (error) {
+            rollback();
+            showMessage(error.message || '保存自动开关失败', 'error');
+            throw error;
+        }
+    }
+
+    async function setGlobalAutoOperation(newMonitoringState) {
+        if (!validateForm()) {
+            showMessage("请检查配置参数，修正错误后再启动自动操作", 'error');
+            if (elements.globalAutoOperation) {
+                elements.globalAutoOperation.checked = isMonitoring;
+            }
+            return;
+        }
+
+        userMonitoringIntent = newMonitoringState;
+        const endpoint = newMonitoringState ? API_ENDPOINTS.startMonitor : API_ENDPOINTS.stopMonitor;
+        const actionText = newMonitoringState ? '启动' : '停止';
+        elements.toggleMonitorBtn.disabled = true;
+        if (elements.globalAutoOperation) {
+            elements.globalAutoOperation.disabled = true;
+        }
+
+        try {
+            const data = await apiRequest(endpoint, {
+                method: 'POST',
+                body: JSON.stringify({ isMonitoring: newMonitoringState })
+            });
+
+            if (data.status === 'success') {
+                isMonitoring = newMonitoringState;
+                updateMonitoringUI();
+            } else {
+                showMessage(`${actionText}自动操作失败: ${data.message || '未知错误'}`, 'error');
+                userMonitoringIntent = null;
+                if (elements.globalAutoOperation) {
+                    elements.globalAutoOperation.checked = isMonitoring;
+                }
+            }
+        } catch (error) {
+            showMessage(`${actionText}自动操作失败: ${error.message}`, 'error');
+            userMonitoringIntent = null;
+            if (elements.globalAutoOperation) {
+                elements.globalAutoOperation.checked = isMonitoring;
+            }
+        } finally {
+            elements.toggleMonitorBtn.disabled = false;
+            if (elements.globalAutoOperation) {
+                elements.globalAutoOperation.disabled = false;
+            }
+            setTimeout(() => {
+                elements.messageArea.innerHTML = '';
+            }, 3000);
+        }
+    }
     
     // --- 添加参数监听器 ---
     function addParameterValidationListeners() {
@@ -396,26 +466,48 @@
             throttledSyncParameter('simulationMode', event.target.checked);
         });
 
-        // 非网格策略自动执行分开关
+        // 自动止盈分开关
         elements.globalAllowBuySell.addEventListener('change', (event) => {
             // 明确：这里只影响非网格自动策略，不影响全局自动操作总开关
             const autoTradingEnabled = event.target.checked;
             isAutoTradingEnabled = autoTradingEnabled; // 更新本地状态
             userAutoTradingIntent = autoTradingEnabled; // 记录用户意图，防 fetchStatus 覆盖
 
-            apiRequest(API_ENDPOINTS.saveConfig, {
-                method: 'POST',
-                body: JSON.stringify({ globalAllowBuySell: autoTradingEnabled })
-            })
+            syncAutoSwitch(
+                { globalAllowBuySell: autoTradingEnabled },
+                () => {
+                    event.target.checked = !autoTradingEnabled;
+                    isAutoTradingEnabled = !autoTradingEnabled;
+                    userAutoTradingIntent = null;
+                }
+            )
             .then(response => {
-                console.log("自动交易状态已更新:", autoTradingEnabled);
+                console.log("允许自动止盈状态已更新:", autoTradingEnabled);
             })
             .catch(error => {
-                console.error("更新自动交易状态失败:", error);
-                // 回滚状态
-                event.target.checked = !autoTradingEnabled;
-                isAutoTradingEnabled = !autoTradingEnabled;
-                userAutoTradingIntent = null;
+                console.error("更新允许自动止盈状态失败:", error);
+            });
+        });
+
+        // 自动网格分开关
+        elements.globalAllowGridTrading.addEventListener('change', (event) => {
+            const gridTradingEnabled = event.target.checked;
+            isGridTradingEnabled = gridTradingEnabled;
+            userGridTradingIntent = gridTradingEnabled;
+
+            syncAutoSwitch(
+                { globalAllowGridTrading: gridTradingEnabled },
+                () => {
+                    event.target.checked = !gridTradingEnabled;
+                    isGridTradingEnabled = !gridTradingEnabled;
+                    userGridTradingIntent = null;
+                }
+            )
+            .then(response => {
+                console.log("允许自动网格状态已更新:", gridTradingEnabled);
+            })
+            .catch(error => {
+                console.error("更新允许自动网格状态失败:", error);
             });
         });
         
@@ -654,8 +746,13 @@
         elements.singleStockMaxPosition.value = config.singleStockMaxPosition ?? '70000';
         elements.totalMaxPosition.value = config.totalMaxPosition ?? '400000';
         elements.globalAllowBuySell.checked = config.globalAllowBuySell ?? true;
+        elements.globalAllowGridTrading.checked = config.globalAllowGridTrading ?? true;
         elements.simulationMode.checked = config.simulationMode ?? false;
-        
+
+        isMonitoring = config.globalAutoOperation ?? false;
+        isAutoTradingEnabled = config.globalAllowBuySell ?? false;
+        isGridTradingEnabled = config.globalAllowGridTrading ?? true;
+
         // 更新模拟交易模式状态
         isSimulationMode = config.simulationMode ?? false;
         updateSimulationModeUI();
@@ -687,6 +784,7 @@
         // 获取后端状态，但不自动更新前端状态
         const backendMonitoring = statusData.isMonitoring ?? false;
         const backendAutoTrading = statusData.settings?.enableAutoTrading ?? false;
+        const backendGridTrading = statusData.settings?.enableGridTrading ?? true;
     
         // 更新自动交易状态 - 用户意图优先，防 fetchStatus 覆盖用户操作
         if (userAutoTradingIntent !== null) {
@@ -696,6 +794,15 @@
         } else {
             isAutoTradingEnabled = backendAutoTrading;
             elements.globalAllowBuySell.checked = isAutoTradingEnabled;
+        }
+
+        if (userGridTradingIntent !== null) {
+            isGridTradingEnabled = userGridTradingIntent;
+            elements.globalAllowGridTrading.checked = userGridTradingIntent;
+            userGridTradingIntent = null;
+        } else {
+            isGridTradingEnabled = backendGridTrading;
+            elements.globalAllowGridTrading.checked = isGridTradingEnabled;
         }
         
         // 核心修改：用户明确的监控意图优先，用户操作后不再让后端状态覆盖前端状态
@@ -725,6 +832,9 @@
             window._initialMonitoringLoaded = true;
             console.log(`初始化监控状态: ${isMonitoring}`);
         }
+        if (elements.globalAutoOperation) {
+            elements.globalAutoOperation.checked = isMonitoring;
+        }
     
         // 根据最终确定的监控状态更新UI
         updateMonitoringUI();
@@ -752,6 +862,10 @@
 
     // 全局自动操作总开关 UI 更新函数，与非网格策略自动状态分离
     function updateMonitoringUI() {
+        if (elements.globalAutoOperation) {
+            elements.globalAutoOperation.checked = isMonitoring;
+        }
+
         if (isMonitoring) {
             elements.statusIndicator.textContent = '运行中';
             elements.statusIndicator.className = 'text-lg font-bold text-green-600';
@@ -819,6 +933,17 @@
             } else {
                 isAutoTradingEnabled = monitoringInfo.autoTradingEnabled;
                 elements.globalAllowBuySell.checked = isAutoTradingEnabled;
+            }
+        }
+
+        if (monitoringInfo.gridTradingEnabled !== undefined) {
+            if (userGridTradingIntent !== null) {
+                isGridTradingEnabled = userGridTradingIntent;
+                elements.globalAllowGridTrading.checked = userGridTradingIntent;
+                userGridTradingIntent = null;
+            } else {
+                isGridTradingEnabled = monitoringInfo.gridTradingEnabled;
+                elements.globalAllowGridTrading.checked = isGridTradingEnabled;
             }
         }
 
@@ -1621,58 +1746,7 @@
     // --- 操作处理函数 ---
     // 全局自动操作总开关：控制所有自动策略是否产生新交易动作
     async function handleToggleMonitor() {
-        // 先验证表单数据
-        if (!validateForm()) {
-            showMessage("请检查配置参数，修正错误后再启动自动操作", 'error');
-            return;
-        }
-
-        // 先设置本地用户意图状态
-        const newMonitoringState = !isMonitoring;
-        userMonitoringIntent = newMonitoringState; // 记录用户意图
-        
-        const endpoint = isMonitoring ? API_ENDPOINTS.stopMonitor : API_ENDPOINTS.startMonitor;
-        const actionText = isMonitoring ? '停止' : '启动';
-        elements.toggleMonitorBtn.disabled = true;
-        // showMessage(`${actionText}自动操作中...`, 'loading', 0);
-
-        try {
-            // API 字段仍为 isMonitoring，语义为全局自动操作总开关
-            const monitoringData = {
-                isMonitoring: newMonitoringState
-            };
-            
-            const data = await apiRequest(endpoint, { 
-                method: 'POST',                
-                body: JSON.stringify(monitoringData)
-            });
-
-            if (data.status === 'success') {
-                // 直接更新本地状态，不等待fetchStatus
-                isMonitoring = newMonitoringState;
-                
-                // 更新UI
-                updateMonitoringUI();
-                
-                // showMessage(`${actionText}自动操作成功: ${data.message || ''}`, 'success');
-            } else {
-                showMessage(`${actionText}自动操作失败: ${data.message || '未知错误'}`, 'error');
-                // 恢复用户意图，因为操作失败
-                userMonitoringIntent = null;
-            }
-            
-            // 跳过调用fetchStatus，因为我们已经主动设置了状态
-        } catch (error) {
-            showMessage(`${actionText}自动操作失败: ${error.message}`, 'error');
-            // 恢复用户意图，因为操作失败
-            userMonitoringIntent = null;
-        } finally {
-            elements.toggleMonitorBtn.disabled = false;
-            // 3秒后清除消息
-            setTimeout(() => {
-                elements.messageArea.innerHTML = '';
-            }, 3000);
-        }
+        await setGlobalAutoOperation(!isMonitoring);
     }
 
     // 获取所有配置表单的值
@@ -1692,7 +1766,8 @@
             singleStockMaxPosition: parseFloat(elements.singleStockMaxPosition.value) || 70000,
             totalMaxPosition: parseFloat(elements.totalMaxPosition.value) || 400000,
             globalAllowBuySell: elements.globalAllowBuySell.checked,
-            simulationMode: elements.simulationMode.checked            
+            globalAllowGridTrading: elements.globalAllowGridTrading.checked,
+            simulationMode: elements.simulationMode.checked
         };
     }
 
@@ -1723,6 +1798,7 @@
                 
                 // 更新自动交易状态
                 isAutoTradingEnabled = configData.globalAllowBuySell;
+                isGridTradingEnabled = configData.globalAllowGridTrading;
             } else {
                 showMessage(data.message || "保存失败", 'error');
                 

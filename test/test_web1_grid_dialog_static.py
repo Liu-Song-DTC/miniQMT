@@ -32,6 +32,34 @@ class TestWeb1GridDialogStatic(unittest.TestCase):
         self.assertIn("setGridSessionEnabled(activeSessionId", script)
         self.assertIn("centerPriceInput.addEventListener('input'", script)
 
+    def test_top_auto_switches_are_split_and_wired(self):
+        html = self._read_web1_file("index.html")
+        script = self._read_web1_file("script.js")
+
+        self.assertNotIn('id="globalAutoOperation"', html)
+        self.assertNotIn('全局策略自动运行', html)
+        self.assertIn('id="apiToken"', html)
+        self.assertIn('id="simulationMode"', html)
+        self.assertIn('允许自动止盈', html)
+        self.assertIn('id="globalAllowGridTrading"', html)
+        self.assertIn('允许自动网格', html)
+
+        switch_order = [
+            'id="apiToken"',
+            'id="simulationMode"',
+            'id="globalAllowBuySell"',
+            'id="globalAllowGridTrading"',
+        ]
+        switch_positions = [html.index(marker) for marker in switch_order]
+        self.assertEqual(switch_positions, sorted(switch_positions))
+        self.assertIn("flex-nowrap", html)
+        self.assertIn("overflow-x-auto", html)
+
+        self.assertNotIn('setGlobalAutoOperation(event.target.checked)', script)
+        self.assertNotIn('globalAutoOperation: elements.globalAutoOperation.checked', script)
+        self.assertIn('globalAllowGridTrading: elements.globalAllowGridTrading.checked', script)
+        self.assertIn('{ globalAllowGridTrading: gridTradingEnabled }', script)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

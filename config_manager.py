@@ -301,8 +301,8 @@ class ConfigManager:
         applied_count = 0
 
         # 配置项映射关系（数据库键名 -> config模块属性名）
-        # 注意：ENABLE_AUTO_TRADING 和 ENABLE_SIMULATION_MODE 不持久化
-        # 理由：为了安全，这两个关键开关每次启动需手动确认
+        # 注意：ENABLE_AUTO_OPERATION 和 ENABLE_SIMULATION_MODE 不持久化
+        # 理由：全局总闸和交易模式每次启动需手动确认
         config_mapping = {
             'POSITION_UNIT': 'POSITION_UNIT',
             'INITIAL_TAKE_PROFIT_RATIO': 'INITIAL_TAKE_PROFIT_RATIO',
@@ -313,7 +313,8 @@ class ConfigManager:
             'MAX_TOTAL_POSITION_RATIO': 'MAX_TOTAL_POSITION_RATIO',
             'ENABLE_ALLOW_BUY': 'ENABLE_ALLOW_BUY',
             'ENABLE_ALLOW_SELL': 'ENABLE_ALLOW_SELL',
-            # 'ENABLE_AUTO_TRADING': 'ENABLE_AUTO_TRADING',  # 不持久化
+            'ENABLE_AUTO_TRADING': 'ENABLE_AUTO_TRADING',
+            'ENABLE_GRID_TRADING': 'ENABLE_GRID_TRADING',
             # 'ENABLE_SIMULATION_MODE': 'ENABLE_SIMULATION_MODE',  # 不持久化
             'ENABLE_STOP_LOSS_BUY': 'ENABLE_STOP_LOSS_BUY',
             'WEB_SERVER_PORT': 'WEB_SERVER_PORT',

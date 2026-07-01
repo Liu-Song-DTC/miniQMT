@@ -679,6 +679,9 @@ class TestConfig(WebAPITestBase):
                 self.assertIn('ranges', d),
                 self.assertIn('singleBuyAmount', d.get('data', {})),
                 self.assertIn('simulationMode', d.get('data', {})),
+                self.assertIn('globalAutoOperation', d.get('data', {})),
+                self.assertIn('globalAllowBuySell', d.get('data', {})),
+                self.assertIn('globalAllowGridTrading', d.get('data', {})),
             ),
         )
 
@@ -688,7 +691,9 @@ class TestConfig(WebAPITestBase):
             'singleBuyAmount': 5000,
             'allowBuy': True,
             'allowSell': True,
+            'globalAutoOperation': True,
             'globalAllowBuySell': False,
+            'globalAllowGridTrading': True,
             'simulationMode': True,
         }
         resp, ms = self._post('/api/config/save', json_data=payload)
@@ -716,6 +721,8 @@ class TestConfig(WebAPITestBase):
     def test_04_save_config_enable_auto_trading(self):
         """POST /api/config/save 切换自动交易开关"""
         old_auto = config.ENABLE_AUTO_TRADING
+        old_grid = config.ENABLE_GRID_TRADING
+        old_operation = config.ENABLE_AUTO_OPERATION
         payload = {'globalAllowBuySell': True}
         resp, ms = self._post('/api/config/save', json_data=payload)
         data = self._parse(resp)
@@ -726,6 +733,25 @@ class TestConfig(WebAPITestBase):
             extra_checks=lambda d: self.assertEqual(d.get('status'), 'success'),
         )
         config.ENABLE_AUTO_TRADING = old_auto
+
+        saved_configs = getattr(web_server.config_manager, 'save_batch_configs').call_args[0][0]
+        self.assertIn('ENABLE_AUTO_TRADING', saved_configs)
+        self.assertNotIn('ENABLE_AUTO_OPERATION', saved_configs)
+
+        payload = {'globalAllowGridTrading': False, 'globalAutoOperation': True}
+        resp, ms = self._post('/api/config/save', json_data=payload)
+        data = self._parse(resp)
+        self._record(
+            '/api/config/save (globalAllowGridTrading)', 'POST',
+            '切换自动网格开关',
+            resp, ms,
+            extra_checks=lambda d: self.assertEqual(d.get('status'), 'success'),
+        )
+        saved_configs = getattr(web_server.config_manager, 'save_batch_configs').call_args[0][0]
+        self.assertIn('ENABLE_GRID_TRADING', saved_configs)
+        self.assertNotIn('ENABLE_AUTO_OPERATION', saved_configs)
+        config.ENABLE_GRID_TRADING = old_grid
+        config.ENABLE_AUTO_OPERATION = old_operation
 
 
 # =====================================================================
