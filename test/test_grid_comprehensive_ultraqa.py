@@ -2,7 +2,7 @@
 网格交易综合测试脚本 - UltraQA版本
 
 测试目标:
-1. 打开全局监控总开关(ENABLE_MONITORING=True), 关闭模拟交易模式(ENABLE_SIMULATION_MODE=False)
+1. 打开全局自动操作总开关(ENABLE_AUTO_OPERATION=True), 关闭模拟交易模式(ENABLE_SIMULATION_MODE=False)
 2. 模拟单只股票(000001.SZ)实时走势, 至少触发一次网格买入和网格卖出
 3. 使用Python虚拟环境: C:\\Users\\PC\\Anaconda3\\envs\\python39
 4. 闭市时间测试(绕过交易时间检查)
@@ -256,7 +256,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         # 临时修改配置以满足测试要求
         cls.original_config = {
             'ENABLE_SIMULATION_MODE': config.ENABLE_SIMULATION_MODE,
-            'ENABLE_MONITORING': config.ENABLE_MONITORING,
+            'ENABLE_AUTO_OPERATION': config.ENABLE_AUTO_OPERATION,
             'ENABLE_GRID_TRADING': config.ENABLE_GRID_TRADING,
             'GRID_REQUIRE_PROFIT_TRIGGERED': config.GRID_REQUIRE_PROFIT_TRIGGERED,
             'DEBUG_SIMU_STOCK_DATA': config.DEBUG_SIMU_STOCK_DATA,
@@ -264,7 +264,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         }
 
         config.ENABLE_SIMULATION_MODE = False  # 关闭模拟交易模式
-        config.ENABLE_MONITORING = True  # 打开全局监控总开关
+        config.ENABLE_AUTO_OPERATION = True  # 打开全局自动操作总开关
         config.ENABLE_GRID_TRADING = True  # 启用网格交易
         config.GRID_REQUIRE_PROFIT_TRIGGERED = False  # 关闭止盈触发要求
         config.DEBUG_SIMU_STOCK_DATA = True  # 绕过交易时间检查
@@ -274,7 +274,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         logger.info("网格交易综合测试 - UltraQA版本")
         logger.info("="*80)
         logger.info(f"测试配置: ENABLE_SIMULATION_MODE={config.ENABLE_SIMULATION_MODE}")
-        logger.info(f"测试配置: ENABLE_MONITORING={config.ENABLE_MONITORING}")
+        logger.info(f"测试配置: ENABLE_AUTO_OPERATION={config.ENABLE_AUTO_OPERATION}")
         logger.info(f"测试配置: ENABLE_GRID_TRADING={config.ENABLE_GRID_TRADING}")
         logger.info(f"测试配置: GRID_REQUIRE_PROFIT_TRIGGERED={config.GRID_REQUIRE_PROFIT_TRIGGERED}")
         logger.info(f"测试配置: DEBUG_SIMU_STOCK_DATA={config.DEBUG_SIMU_STOCK_DATA}")
@@ -306,7 +306,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         """测试类清理"""
         # 恢复原始配置
         config.ENABLE_SIMULATION_MODE = cls.original_config['ENABLE_SIMULATION_MODE']
-        config.ENABLE_MONITORING = cls.original_config['ENABLE_MONITORING']
+        config.ENABLE_AUTO_OPERATION = cls.original_config['ENABLE_AUTO_OPERATION']
         config.ENABLE_GRID_TRADING = cls.original_config['ENABLE_GRID_TRADING']
         config.GRID_REQUIRE_PROFIT_TRIGGERED = cls.original_config['GRID_REQUIRE_PROFIT_TRIGGERED']
         config.DEBUG_SIMU_STOCK_DATA = cls.original_config['DEBUG_SIMU_STOCK_DATA']
@@ -416,7 +416,7 @@ class TestGridComprehensiveUltraQA(unittest.TestCase):
         try:
             # 验证配置
             self.assertFalse(config.ENABLE_SIMULATION_MODE, "应该关闭模拟交易模式")
-            self.assertTrue(config.ENABLE_MONITORING, "应该开启全局监控")
+            self.assertTrue(config.ENABLE_AUTO_OPERATION, "应该开启全局自动操作")
             self.assertTrue(config.ENABLE_GRID_TRADING, "应该开启网格交易")
             self.assertTrue(config.DEBUG_SIMU_STOCK_DATA, "应该绕过交易时间检查")
 

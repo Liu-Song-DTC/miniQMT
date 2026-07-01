@@ -110,6 +110,7 @@ export interface GridSession {
   session_id: number
   stock_code: string
   status: 'active' | 'stopping' | 'stopped' | 'completed' | 'paused'
+  enabled?: boolean
   center_price: number
   current_center_price: number
   current_investment?: number

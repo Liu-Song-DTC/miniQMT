@@ -449,7 +449,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         # 保存原始配置
         cls._orig_sim_mode = config.ENABLE_SIMULATION_MODE
         cls._orig_grid = config.ENABLE_GRID_TRADING
-        cls._orig_monitoring = config.ENABLE_MONITORING
+        cls._orig_monitoring = config.ENABLE_AUTO_OPERATION
         cls._orig_cooldown = config.GRID_LEVEL_COOLDOWN
         cls._orig_require_profit = config.GRID_REQUIRE_PROFIT_TRIGGERED
         cls._orig_confirm_live_order = getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
@@ -457,7 +457,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         # 设置测试配置
         config.ENABLE_SIMULATION_MODE = False   # 关闭模拟模式（使用mock）
         config.ENABLE_GRID_TRADING = True        # 开启网格交易
-        config.ENABLE_MONITORING = True          # 开启监控
+        config.ENABLE_AUTO_OPERATION = True      # 开启全局自动操作
         config.GRID_LEVEL_COOLDOWN = 0           # 禁用冷却（便于快速测试）
         config.GRID_REQUIRE_PROFIT_TRIGGERED = True
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = False
@@ -483,7 +483,7 @@ class TestGridPriceSimulation(unittest.TestCase):
         """恢复配置并输出报告"""
         config.ENABLE_SIMULATION_MODE = cls._orig_sim_mode
         config.ENABLE_GRID_TRADING = cls._orig_grid
-        config.ENABLE_MONITORING = cls._orig_monitoring
+        config.ENABLE_AUTO_OPERATION = cls._orig_monitoring
         config.GRID_LEVEL_COOLDOWN = cls._orig_cooldown
         config.GRID_REQUIRE_PROFIT_TRIGGERED = cls._orig_require_profit
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = cls._orig_confirm_live_order

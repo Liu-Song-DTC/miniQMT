@@ -396,16 +396,16 @@ def get_status():
             'timestamp': account_info.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         }
         
-        # 监控状态 - 使用独立的配置标志，不再依赖线程状态判断
-        is_monitoring = config.ENABLE_MONITORING
+        # 兼容字段 isMonitoring 映射全局自动操作总开关，不再依赖线程状态判断
+        is_monitoring = config.ENABLE_AUTO_OPERATION
 
         # 添加额外日志用于调试
-        logger.debug(f"当前状态: UI监控={is_monitoring}, 自动交易={config.ENABLE_AUTO_TRADING}, 持仓监控={config.ENABLE_POSITION_MONITOR}")
+        logger.debug(f"当前状态: 自动操作总开关={is_monitoring}, 非网格策略自动={config.ENABLE_AUTO_TRADING}, 持仓监控={config.ENABLE_POSITION_MONITOR}")
 
-        # 获取全局设置状态 - 明确区分自动交易和监控状态
+        # 获取全局设置状态 - 明确区分总开关、非网格策略开关和持仓监控线程
         system_settings = {
-            'isMonitoring': is_monitoring,  # 监控状态
-            'enableAutoTrading': config.ENABLE_AUTO_TRADING,  # 自动交易状态
+            'isMonitoring': is_monitoring,  # 兼容字段：全局自动操作总开关
+            'enableAutoTrading': config.ENABLE_AUTO_TRADING,  # 非网格自动策略执行开关
             'positionMonitorRunning': config.ENABLE_POSITION_MONITOR,  # 增加持仓监控状态
             'allowBuy': getattr(config, 'ENABLE_ALLOW_BUY', True),
             'allowSell': getattr(config, 'ENABLE_ALLOW_SELL', True),
@@ -414,7 +414,7 @@ def get_status():
 
         return jsonify({
             'status': 'success',
-            'isMonitoring': is_monitoring,  # 顶层也返回监控状态
+            'isMonitoring': is_monitoring,  # 顶层兼容返回全局自动操作状态
             'account': account_data,
             'settings': system_settings,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -721,12 +721,12 @@ def save_config():
         # 应用基础参数并获取待持久化字典
         db_configs = _apply_config_params(config_data)
 
-        # 特殊处理：自动交易总开关（不持久化，切换时清除信号）
+        # 特殊处理：非网格自动交易开关（不持久化，切换时清除信号）
         if "globalAllowBuySell" in config_data:
             old_auto_trading = config.ENABLE_AUTO_TRADING
             value = bool(config_data["globalAllowBuySell"])
             config.ENABLE_AUTO_TRADING = value
-            logger.info(f"自动交易总开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (仅运行时，不持久化)")
+            logger.info(f"非网格自动交易开关: {old_auto_trading} -> {config.ENABLE_AUTO_TRADING} (仅运行时，不持久化)")
             if not old_auto_trading and value:
                 position_manager = get_position_manager_instance()
                 position_manager.clear_all_signals(reason="切换到自动交易模式")
@@ -768,7 +768,7 @@ def save_config():
         return jsonify({
             'status': 'success',
             'message': f'配置已保存并应用 (成功: {success_count}, 失败: {fail_count})',
-            'isMonitoring': config.ENABLE_MONITORING,
+            'isMonitoring': config.ENABLE_AUTO_OPERATION,
             'autoTradingEnabled': config.ENABLE_AUTO_TRADING,
             'saved_count': success_count,
             'failed_count': fail_count
@@ -783,17 +783,17 @@ def save_config():
 @app.route('/api/monitor/start', methods=['POST'])
 @require_token
 def start_monitor():
-    """启动监控 - 仅控制前端数据刷新"""
+    """启动全局自动操作总开关（保留 monitor API 名称兼容前端）。"""
     try:
-        old_state = config.ENABLE_MONITORING
-        config.ENABLE_MONITORING = True
+        old_state = config.ENABLE_AUTO_OPERATION
+        config.ENABLE_AUTO_OPERATION = True
         
-        logger.info(f"UI监控状态变更: {old_state} -> {config.ENABLE_MONITORING} (通过API)")
+        logger.info(f"全局自动操作总开关变更: {old_state} -> {config.ENABLE_AUTO_OPERATION} (通过API)")
         
         return jsonify({
             'status': 'success',
-            'message': '监控已启动',
-            'isMonitoring': config.ENABLE_MONITORING,
+            'message': '全局自动操作已启动',
+            'isMonitoring': config.ENABLE_AUTO_OPERATION,
             'autoTradingEnabled': config.ENABLE_AUTO_TRADING  # 返回不变的自动交易状态
         })
     except Exception as e:
@@ -806,24 +806,24 @@ def start_monitor():
 @app.route('/api/monitor/stop', methods=['POST'])
 @require_token
 def stop_monitor():
-    """停止监控"""
+    """停止全局自动操作总开关（保留 monitor API 名称兼容前端）。"""
     try:
-        old_state = config.ENABLE_MONITORING
+        old_state = config.ENABLE_AUTO_OPERATION
         
         # 确保变量类型一致，统一使用布尔值
-        config.ENABLE_MONITORING = False
+        config.ENABLE_AUTO_OPERATION = False
         
         # 如果状态没有发生变化，发出警告日志
-        if old_state == config.ENABLE_MONITORING:
-            logger.warning(f"UI监控状态未变化: {old_state} -> {config.ENABLE_MONITORING} (通过API)")
+        if old_state == config.ENABLE_AUTO_OPERATION:
+            logger.warning(f"全局自动操作总开关未变化: {old_state} -> {config.ENABLE_AUTO_OPERATION} (通过API)")
         else:
-            logger.info(f"UI监控状态变更: {old_state} -> {config.ENABLE_MONITORING} (通过API)")
+            logger.info(f"全局自动操作总开关变更: {old_state} -> {config.ENABLE_AUTO_OPERATION} (通过API)")
         
         return jsonify({
             'status': 'success',
-            'message': '监控已停止',
-            'isMonitoring': config.ENABLE_MONITORING,  # 明确返回新状态
-            'autoTradingEnabled': config.ENABLE_AUTO_TRADING  # 同时返回自动交易状态
+            'message': '全局自动操作已停止',
+            'isMonitoring': config.ENABLE_AUTO_OPERATION,  # 明确返回新状态
+            'autoTradingEnabled': config.ENABLE_AUTO_TRADING  # 同时返回非网格策略自动状态
         })
     except Exception as e:
         logger.error(f"停止监控时出错: {str(e)}")
@@ -1041,7 +1041,7 @@ def debug_status():
         return jsonify({
             'status': 'success',
             'system_status': {
-                'ENABLE_MONITORING': config.ENABLE_MONITORING,
+                'ENABLE_AUTO_OPERATION': config.ENABLE_AUTO_OPERATION,
                 'ENABLE_AUTO_TRADING': config.ENABLE_AUTO_TRADING,
                 'ENABLE_POSITION_MONITOR': config.ENABLE_POSITION_MONITOR,
                 'ENABLE_ALLOW_BUY': getattr(config, 'ENABLE_ALLOW_BUY', True),
@@ -1178,7 +1178,7 @@ def import_data():
             'status': 'success',
             'message': f'已导入保存数据：{applied_count} 个配置项已应用，持仓数据已同步',
             'applied_count': applied_count,
-            'isMonitoring': config.ENABLE_MONITORING,
+            'isMonitoring': config.ENABLE_AUTO_OPERATION,
             'autoTradingEnabled': config.ENABLE_AUTO_TRADING
         })
     except Exception as e:
@@ -1434,7 +1434,7 @@ def sse():
                         'total_asset': account_info.get('total_asset', 0)
                     },
                     'monitoring': {
-                        'isMonitoring': config.ENABLE_MONITORING,
+                        'isMonitoring': config.ENABLE_AUTO_OPERATION,
                         'autoTradingEnabled': config.ENABLE_AUTO_TRADING,
                         'allowBuy': getattr(config, 'ENABLE_ALLOW_BUY', True),
                         'allowSell': getattr(config, 'ENABLE_ALLOW_SELL', True),
@@ -1803,12 +1803,14 @@ def start_grid_trading():
         return jsonify({
             'success': True,
             'session_id': session.id,
+            'enabled': bool(getattr(session, 'enabled', True)),
             'risk_level': risk_level,  # ⚠️ 新增: 返回风险等级
             'template_name': template_name if template else None,  # ⚠️ 新增: 返回模板名称
             'warning': '已自动停止旧的网格会话' if had_old_session else None,
             'old_session_id': old_session_id,
             'message': f'网格交易会话启动成功 ({template_name if template else "自定义配置"}, ID: {session.id})',
             'config': {
+                'enabled': bool(getattr(session, 'enabled', True)),
                 'stock_code': session.stock_code,
                 'center_price': session.center_price,
                 'price_interval': session.price_interval,
@@ -1854,6 +1856,37 @@ def stop_grid_trading(session_id):
         return jsonify({'success': False, 'error': str(e)}), 404
     except Exception as e:
         logger.error(f"停止网格交易失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/grid/session/<int:session_id>/enabled', methods=['POST'])
+@require_token
+def set_grid_session_enabled(session_id):
+    """设置单个网格会话是否允许自动产生新单。"""
+    try:
+        data = request.get_json(silent=True) or {}
+        if 'enabled' not in data:
+            return jsonify({'success': False, 'error': '缺少enabled参数'}), 400
+
+        position_manager = get_position_manager_instance()
+        if not position_manager.grid_manager:
+            return jsonify({'success': False, 'error': '网格交易功能未启用'}), 400
+
+        result = position_manager.grid_manager.set_session_enabled(
+            session_id,
+            bool(data.get('enabled'))
+        )
+
+        return jsonify({
+            'success': True,
+            'session': result,
+            'message': '个股网格自动执行已开启' if result['enabled'] else '个股网格自动执行已关闭'
+        })
+
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"设置网格会话开关失败: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1983,7 +2016,9 @@ def get_grid_session_status(stock_code):
                 'session_id': session.id,
                 'risk_level': risk_level,  # ⚠️ 新增
                 'template_name': template_name,  # ⚠️ 新增
+                'enabled': bool(getattr(session, 'enabled', True)),
                 'config': {
+                    'enabled': bool(getattr(session, 'enabled', True)),
                     'center_price': session.center_price,  # ⭐ 新增: 中心价格，用于前端回显
                     'price_interval': session.price_interval,  # ⭐ 小数格式，前端乘以100显示
                     'position_ratio': session.position_ratio,
@@ -2099,6 +2134,7 @@ def get_grid_sessions():
                 'session_id': session.id,
                 'stock_code': session.stock_code,
                 'status': session.status,
+                'enabled': bool(getattr(session, 'enabled', True)),
                 'center_price': session.center_price,
                 'current_center_price': session.current_center_price,
                 'trade_count': session.trade_count,
@@ -2137,6 +2173,7 @@ def get_grid_sessions():
                     'session_id': session_dict['id'],
                     'stock_code': session_dict['stock_code'],
                     'status': session_dict['status'],
+                    'enabled': bool(session_dict.get('enabled', 1)),
                     'center_price': session_dict['center_price'],
                     'current_center_price': session_dict['current_center_price'],
                     'trade_count': session_dict['trade_count'],
@@ -2224,6 +2261,7 @@ def get_grid_session_detail(session_id):
                 'id': session.id,
                 'stock_code': session.stock_code,
                 'status': session.status,
+                'enabled': bool(getattr(session, 'enabled', True)),
                 'center_price': session.center_price,
                 'current_center_price': session.current_center_price,
                 'price_interval': session.price_interval,
@@ -2419,6 +2457,7 @@ def get_grid_status(stock_code):
             'is_active': True,
             'stock_code': stock_code,
             'session_id': session.id,
+            'enabled': bool(getattr(session, 'enabled', True)),
             'current_center_price': session.current_center_price,
             'grid_levels': levels,
             'tracker_state': tracker_state,

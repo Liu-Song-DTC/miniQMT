@@ -5,13 +5,17 @@
 ### 信号检测与执行分离（最重要）
 
 ```
-持仓监控线程（始终运行） → 检测信号 → latest_signals 队列
+持仓监控线程（始终运行） → 检测非网格信号 → latest_signals 队列
                                       ↓
-策略执行线程 → 检查 ENABLE_AUTO_TRADING → 执行 / 忽略信号
+策略执行线程 → 检查 ENABLE_AUTO_OPERATION + ENABLE_AUTO_TRADING → 执行 / 忽略信号
+
+网格交易线程 → 检查 ENABLE_AUTO_OPERATION + ENABLE_GRID_TRADING + grid_trading_sessions.enabled → 执行 / 暂停新网格单
 ```
 
-- 监控线程**始终运行**，持续检测信号（即使 `ENABLE_AUTO_TRADING=False`）
-- `ENABLE_AUTO_TRADING` 只控制**是否执行**检测到的信号
+- 持仓监控线程和网格线程可以持续运行，但自动下单受开关体系控制
+- `ENABLE_AUTO_OPERATION` 是全局自动操作总开关，关闭时所有自动策略不产生新交易动作
+- `ENABLE_AUTO_TRADING` 只控制动态止盈止损等非网格自动策略
+- `ENABLE_GRID_TRADING` 控制网格模块，`grid_trading_sessions.enabled` 控制单只股票网格会话“自动/暂停”
 - 每个信号经过 `validate_trading_signal()` 验证，防止重复执行
 
 ### 双层存储架构
@@ -38,8 +42,8 @@
 | 线程监控 | 检测线程崩溃并自动重启 | 60 秒 | `THREAD_CHECK_INTERVAL` |
 | 数据更新 | 更新股票池行情数据 | 60 秒 | — |
 | 持仓监控 | 同步实盘持仓、更新价格、检测信号 | 3 秒 | `MONITOR_LOOP_INTERVAL` |
-| 策略执行 | 获取信号、执行交易 | 5 秒 | `ENABLE_AUTO_TRADING` |
-| 网格交易 | 网格信号检测与买卖执行 | 5 秒 | `ENABLE_GRID_TRADING` |
+| 策略执行 | 获取非网格信号、执行交易 | 5 秒 | `ENABLE_AUTO_OPERATION` + `ENABLE_AUTO_TRADING` |
+| 网格交易 | 网格信号检测与买卖执行 | 5 秒 | `ENABLE_AUTO_OPERATION` + `ENABLE_GRID_TRADING` + `grid_trading_sessions.enabled` |
 | 卖出监控 | 委托单超时撤单 | 2 秒 | `ENABLE_SELL_MONITOR` |
 | 定时同步 | 内存 → SQLite 同步 | 15 秒 | `POSITION_SYNC_INTERVAL` |
 | Web 服务 | RESTful API | 持续 | — |

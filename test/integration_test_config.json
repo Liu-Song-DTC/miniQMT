@@ -162,6 +162,7 @@
       "description": "使用 Flask 测试客户端验证所有 RESTful API 接口的功能正确性（含 bug 修复回归验证）",
       "modules": [
         "test.test_web_api_complete",
+        "test.test_web1_grid_dialog_static",
         "test.test_market_health_api"
       ],
       "priority": "critical"

@@ -44,8 +44,8 @@ def _env_bool(name: str, default: bool) -> bool:
 # 模拟交易模式开关：环境变量 ENABLE_SIMULATION_MODE 优先（启动器控制），
 # 否则用源码默认 True（避免开发者本地误连实盘）。
 ENABLE_SIMULATION_MODE = _env_bool("ENABLE_SIMULATION_MODE", True)
-ENABLE_MONITORING = False       # 控制前端UI监控状态
-ENABLE_AUTO_TRADING = False     # 动态止盈止损自动执行开关（不影响网格交易）
+ENABLE_AUTO_OPERATION = False   # 全局自动操作总开关：关闭时自动策略不产生新交易动作
+ENABLE_AUTO_TRADING = False     # 非网格自动策略执行开关（不影响网格交易）
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作
 ENABLE_ALLOW_SELL = True        # 是否允许卖出操作
 
@@ -53,7 +53,13 @@ ENABLE_ALLOW_SELL = True        # 是否允许卖出操作
 ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关（信号检测）
 # ENABLE_GRID_TRADING 已移至第470行的新网格交易配置区域
 
+
+def is_global_monitor_enabled():
+    """全局自动操作总开关：关闭时所有自动策略不再产生新交易动作。"""
+    return bool(ENABLE_AUTO_OPERATION)
+
 # 重要说明：
+# - ENABLE_AUTO_OPERATION：全局自动操作总开关，关闭时动态止盈止损和网格交易都不产生新单
 # - ENABLE_AUTO_TRADING：控制止盈止损信号的自动执行
 # - ENABLE_GRID_TRADING：控制网格交易的检测和执行（独立开关，互不影响）
 # - ENABLE_DYNAMIC_STOP_PROFIT：控制止盈止损信号的检测

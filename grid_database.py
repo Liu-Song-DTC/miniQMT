@@ -129,6 +129,7 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_code TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
+                enabled INTEGER NOT NULL DEFAULT 1,
 
                 -- 价格配置
                 center_price REAL NOT NULL,
@@ -186,6 +187,15 @@ class DatabaseManager:
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e):
                 pass  # 字段已存在,跳过
+            else:
+                raise
+
+        try:
+            cursor.execute("ALTER TABLE grid_trading_sessions ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+            logger.info("数据库迁移: 添加 enabled 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass
             else:
                 raise
 
@@ -489,14 +499,15 @@ class DatabaseManager:
             # 创建新session
             cursor.execute("""
                 INSERT INTO grid_trading_sessions
-                (stock_code, status, center_price, current_center_price,
+                (stock_code, status, enabled, center_price, current_center_price,
                  price_interval, position_ratio, callback_ratio,
                  max_investment, max_deviation, target_profit, stop_loss,
                  start_time, end_time, risk_level, template_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_data['stock_code'],
                 'active',
+                1,
                 session_data['center_price'],
                 session_data['center_price'],
                 session_data['price_interval'],
@@ -525,7 +536,7 @@ class DatabaseManager:
             'status', 'current_center_price', 'current_investment',
             'trade_count', 'buy_count', 'sell_count',
             'total_buy_amount', 'total_sell_amount',
-            'total_buy_volume', 'total_sell_volume',
+            'total_buy_volume', 'total_sell_volume', 'enabled',
             'stop_time', 'stop_reason', 'risk_level', 'template_name'
         }
         invalid_fields = set(updates.keys()) - _ALLOWED_SESSION_FIELDS

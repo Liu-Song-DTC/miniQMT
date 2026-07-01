@@ -146,6 +146,10 @@ export async function stopGrid(sessionId: number) {
   return apiPost(`/api/grid/stop/${sessionId}`)
 }
 
+export async function setGridSessionEnabled(sessionId: number, enabled: boolean) {
+  return apiPost(`/api/grid/session/${sessionId}/enabled`, { enabled })
+}
+
 export async function getGridRiskTemplates() {
   const r = await apiGet('/api/grid/risk-templates')
   if (!r?.success) return {}

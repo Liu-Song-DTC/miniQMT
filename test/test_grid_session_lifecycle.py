@@ -20,6 +20,7 @@ import sys
 import os
 import unittest
 import sqlite3
+import tempfile
 import time
 import json
 from datetime import datetime, timedelta
@@ -117,8 +118,96 @@ class TestGridSessionLifecycle(unittest.TestCase):
         db_session = self.db_manager.get_grid_session(session_id)
         self.assertEqual(dict(db_session)['stock_code'], self.test_stock)
         self.assertEqual(dict(db_session)['status'], 'active')
+        self.assertEqual(dict(db_session)['enabled'], 1)
+        self.assertTrue(session_obj.enabled)
 
         print(f"[OK] 测试通过: 正常启动网格会话 session_id={session_id}, center_price=11.0")
+
+    def test_session_enabled_switch_persisted(self):
+        """测试个股网格自动执行开关会同步内存和数据库"""
+        mock_position = {
+            'stock_code': self.test_stock,
+            'cost_price': 9.0,
+            'current_price': 10.5,
+            'volume': 1000,
+            'profit_triggered': True,
+            'highest_price': 11.0,
+            'market_value': 10500
+        }
+        self.mock_position_manager.get_position.return_value = mock_position
+        self.mock_position_manager._increment_data_version = Mock()
+
+        session = self.grid_manager.start_grid_session(
+            self.test_stock,
+            {**self.test_config, 'center_price': 10.0}
+        )
+
+        result = self.grid_manager.set_session_enabled(session.id, False)
+
+        self.assertFalse(result['enabled'])
+        self.assertFalse(self.grid_manager.sessions[self.grid_manager._normalize_code(self.test_stock)].enabled)
+        self.assertEqual(self.db_manager.get_grid_session(session.id)['enabled'], 0)
+        self.mock_position_manager._increment_data_version.assert_called()
+
+    def test_init_grid_tables_migrates_enabled_column(self):
+        """测试旧库升级时自动补 enabled 字段且默认开启"""
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE grid_trading_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    center_price REAL NOT NULL,
+                    current_center_price REAL,
+                    price_interval REAL NOT NULL DEFAULT 0.05,
+                    position_ratio REAL NOT NULL DEFAULT 0.25,
+                    callback_ratio REAL NOT NULL DEFAULT 0.005,
+                    max_investment REAL NOT NULL,
+                    current_investment REAL DEFAULT 0,
+                    max_deviation REAL NOT NULL DEFAULT 0.15,
+                    target_profit REAL NOT NULL DEFAULT 0.10,
+                    stop_loss REAL NOT NULL DEFAULT -0.10,
+                    trade_count INTEGER DEFAULT 0,
+                    buy_count INTEGER DEFAULT 0,
+                    sell_count INTEGER DEFAULT 0,
+                    total_buy_amount REAL DEFAULT 0,
+                    total_sell_amount REAL DEFAULT 0,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT NOT NULL,
+                    stop_time TEXT,
+                    stop_reason TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                INSERT INTO grid_trading_sessions
+                (stock_code, status, center_price, current_center_price, price_interval,
+                 position_ratio, callback_ratio, max_investment, current_investment,
+                 max_deviation, target_profit, stop_loss, start_time, end_time)
+                VALUES ('000001.SZ', 'active', 10, 10, 0.05, 0.25, 0.005,
+                        10000, 0, 0.15, 0.10, -0.10, '2026-01-01T09:30:00',
+                        '2026-01-08T09:30:00')
+            """)
+            conn.commit()
+            conn.close()
+
+            migrated = DatabaseManager(db_path=db_path)
+            try:
+                migrated.init_grid_tables()
+                session = migrated.get_grid_session(1)
+                self.assertIn('enabled', session)
+                self.assertEqual(session['enabled'], 1)
+            finally:
+                migrated.close()
+        finally:
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
 
     def test_start_session_custom_center_price(self):
         """测试自定义中心价格启动会话"""

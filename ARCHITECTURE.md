@@ -92,10 +92,10 @@ sequenceDiagram
     loop 每5秒
         ST->>SQ: 读取待处理信号
         ST->>ST: validate_trading_signal()
-        alt ENABLE_AUTO_TRADING=True
+        alt ENABLE_AUTO_OPERATION=True 且 ENABLE_AUTO_TRADING=True
             ST->>TE: 执行交易
             TE->>QMT: 下单
-        else ENABLE_AUTO_TRADING=False
+        else 总开关或非网格策略开关关闭
             ST->>ST: 仅记录,不执行
         end
     end
@@ -103,7 +103,9 @@ sequenceDiagram
 
 **关键点**:
 - 监控线程**始终运行**,持续检测信号
-- `ENABLE_AUTO_TRADING` 只控制是否执行
+- `ENABLE_AUTO_OPERATION` 是全局自动操作总开关，关闭时所有自动策略不产生新交易动作
+- `ENABLE_AUTO_TRADING` 只控制动态止盈止损等非网格自动策略
+- 网格交易还受 `ENABLE_GRID_TRADING` 和单会话 `grid_trading_sessions.enabled` 控制
 - 信号验证防止重复执行
 
 #### 2. 双层存储架构
@@ -327,7 +329,7 @@ except TimeoutError:
 **工作流程**:
 ```python
 while not stop_flag:
-    if not ENABLE_AUTO_TRADING:
+    if not ENABLE_AUTO_OPERATION or not ENABLE_AUTO_TRADING:
         time.sleep(5)
         continue
 
@@ -352,7 +354,7 @@ while not stop_flag:
 **工作流程**:
 ```python
 while not stop_flag:
-    if not ENABLE_GRID_TRADING:
+    if not ENABLE_AUTO_OPERATION or not ENABLE_GRID_TRADING or not session.enabled:
         time.sleep(5)
         continue
 
@@ -372,7 +374,9 @@ while not stop_flag:
 ```
 
 **关键配置**:
+- `ENABLE_AUTO_OPERATION`: 全局自动操作总开关
 - `ENABLE_GRID_TRADING`: 启用/禁用网格交易
+- `grid_trading_sessions.enabled`: 单个网格会话自动/暂停开关
 - `GRID_CALLBACK_RATIO`: 回调触发比例(0.5%)
 - `GRID_BUY_COOLDOWN` / `GRID_SELL_COOLDOWN`: 买入/卖出冷却时间(秒)
 
@@ -1162,8 +1166,9 @@ CREATE TABLE system_config (
 
 **常用配置键**:
 ```
-ENABLE_AUTO_TRADING              -- 自动交易开关
-ENABLE_GRID_TRADING              -- 网格交易开关
+ENABLE_AUTO_OPERATION            -- 全局自动操作总开关
+ENABLE_AUTO_TRADING              -- 非网格自动策略开关
+ENABLE_GRID_TRADING              -- 网格交易分开关
 STOP_LOSS_RATIO                  -- 止损比例
 INITIAL_TAKE_PROFIT_RATIO        -- 首次止盈比例
 GRID_DEFAULT_PRICE_INTERVAL      -- 网格价格间隔
@@ -1366,7 +1371,8 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | 配置项 | 默认值 | 说明 |
 |-------|--------|------|
 | `ENABLE_SIMULATION_MODE` | `True` | 模拟/实盘切换 |
-| `ENABLE_AUTO_TRADING` | `False` | 自动交易执行开关 |
+| `ENABLE_AUTO_OPERATION` | `False` | 全局自动操作总开关 |
+| `ENABLE_AUTO_TRADING` | `False` | 非网格自动策略执行开关 |
 | `ENABLE_THREAD_MONITOR` | `True` | 线程健康监控 |
 | `ENABLE_GRID_TRADING` | `True` | 网格交易功能开关 |
 | `ENABLE_SELL_MONITOR` | `True` | 卖出监控功能开关 |

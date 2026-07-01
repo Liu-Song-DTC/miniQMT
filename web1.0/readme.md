@@ -55,7 +55,7 @@ your-project/
 2.  Replace `API_BASE_URL` and verify/adjust the paths in `API_ENDPOINTS` in `script.js` to match your actual Python backend URLs.
 3.  Ensure your Python backend serves the expected JSON data structures for each endpoint. For example:
     * `/api/holdings` should return an array of objects, each representing a stock holding with properties like `code`, `name`, `changePercent`, `costPrice`, etc.
-    * `/api/status` should return an object like `{ isMonitoring: true, account: { id: '...', availableBalance: ..., ... } }`.
+    * `/api/status` should return an object like `{ isMonitoring: true, account: { id: '...', availableBalance: ..., ... } }`. `isMonitoring` is a compatibility field for the global auto-operation switch (`ENABLE_AUTO_OPERATION`).
     * `/api/config` should return an object with keys matching the config input IDs.
     * POST endpoints should generally return a JSON object indicating success, e.g., `{ success: true, message: "Action completed" }`.
 4.  Open `index.html` in your web browser. It will try to connect to your backend API to load data and enable interactions. Check the browser's developer console (F12) for logs and error messages.
@@ -135,26 +135,26 @@ your-project/
 **Endpoint:** `/api/monitor/start`
 
 *   **Method:** POST
-*   **Purpose:** To start the trading monitor.
+*   **Purpose:** To turn on the global auto-operation switch (`ENABLE_AUTO_OPERATION`). The route name is kept for compatibility.
 *   **Request Data:** (Optional) Could send current config if not assumed to be already set on the server.
 *   **Response Data (JSON):**
     ```json
     {
         "status": "running",
-        "message": "Monitor started successfully."
+        "message": "Global auto operation started successfully."
     }
     ```
 
 **Endpoint:** `/api/monitor/stop`
 
 *   **Method:** POST
-*   **Purpose:** To stop the trading monitor.
+*   **Purpose:** To turn off the global auto-operation switch (`ENABLE_AUTO_OPERATION`). The route name is kept for compatibility.
 *   **Request Data:** None
 *   **Response Data (JSON):**
     ```json
     {
         "status": "stopped",
-        "message": "Monitor stopped successfully."
+        "message": "Global auto operation stopped successfully."
     }
     ```
 

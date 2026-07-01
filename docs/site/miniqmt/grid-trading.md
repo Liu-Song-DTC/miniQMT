@@ -58,6 +58,20 @@
 
 ---
 
+## 自动执行开关
+
+网格交易采用三层控制，避免与动态止盈止损互相影响：
+
+| 层级 | 开关 | 作用 |
+|------|------|------|
+| 总开关 | `ENABLE_AUTO_OPERATION` | 全局自动操作总闸；关闭时所有自动策略不产生新单 |
+| 网格分开关 | `ENABLE_GRID_TRADING` | 控制网格模块是否检测并执行网格交易 |
+| 个股开关 | `grid_trading_sessions.enabled` | 控制单个网格会话是否继续自动发新网格单 |
+
+Web 中的“自动/暂停”切换对应 `grid_trading_sessions.enabled`。暂停后会话、账本和当前网格参数都会保留，只是不再发出新的网格买卖单；“停止网格”则会结束会话并撤销未完成网格委托。
+
+---
+
 ## 退出条件
 
 网格会话在以下条件满足时自动退出：
@@ -162,6 +176,11 @@ curl http://localhost:5000/api/grid/status/000001.SZ
 # 查看所有活跃网格
 curl http://localhost:5000/api/grid/sessions
 
+# 暂停/恢复单个网格会话自动执行
+curl -X POST http://localhost:5000/api/grid/session/1/enabled \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
 # 停止网格
 curl -X POST http://localhost:5000/api/grid/stop \
   -H "Content-Type: application/json" \
@@ -198,6 +217,7 @@ curl -X POST http://localhost:5000/api/grid/stop \
 
 - 默认不要求先触发首次止盈即可启动网格；如需更保守风控，可设置 `GRID_REQUIRE_PROFIT_TRIGGERED = True` 或同名环境变量
 - 每只股票同一时间只能有一个活跃网格会话
+- 单个网格会话可通过 Web“自动/暂停”开关临时禁止新网格单，不等同于停止会话
 - 网格数据持久化在 SQLite `grid_trading_sessions` / `grid_trades` / `grid_orders` / `grid_lots` / `grid_lot_matches` 表中（详见[数据库表结构](database.md)）
 - 实盘下单以**成交回报**为准（`GRID_CONFIRM_LIVE_ORDER_BY_DEAL`），系统重启自动对账恢复未完成委托
 - 建议在模拟模式下充分验证策略后再切换实盘

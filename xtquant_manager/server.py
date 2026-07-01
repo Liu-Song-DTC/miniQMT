@@ -687,6 +687,7 @@ def _register_routes(app: FastAPI, security_config: SecurityConfig):
             "session_id": row.get("id"),
             "stock_code": row.get("stock_code") or "",
             "status": row.get("status") or "",
+            "enabled": bool(row.get("enabled", 1)),
             "center_price": row.get("center_price") or 0,
             "current_center_price": row.get("current_center_price") or row.get("center_price") or 0,
             "trade_count": row.get("trade_count") or 0,

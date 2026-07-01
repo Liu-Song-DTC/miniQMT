@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useGridStore } from '../stores/grid'
+import { isGatewayMode } from '../api/accounts'
 import type { GridLedgerDetail, GridLot, GridLotMatch, GridSession, GridTrade } from '../types'
 import { fmtMoney, fmtNumber, fmtPercent, fmtPrice, fmtTime, profitClass } from '../utils/format'
 
@@ -35,6 +36,27 @@ const selectedTradeTotal = computed(() => {
   if (!selectedSession.value) return 0
   return grid.tradeTotalsBySession[selectedSession.value.session_id] ?? selectedTrades.value.length
 })
+
+function isSessionAutoEnabled(session: GridSession) {
+  return session.enabled !== false
+}
+
+function canToggleSession(session: GridSession) {
+  return !isGatewayMode() && session.status === 'active'
+}
+
+async function toggleSessionEnabled(session: GridSession) {
+  if (!canToggleSession(session)) return
+  const next = !isSessionAutoEnabled(session)
+  const r = await grid.setSessionEnabled(session.session_id, next)
+  if (!r?.success) {
+    alert(r?.error || '网格开关更新失败')
+    return
+  }
+  if (selectedSession.value?.session_id === session.session_id) {
+    selectedSession.value = { ...selectedSession.value, enabled: next }
+  }
+}
 
 const totalPnl = computed(() =>
   grid.sessions.reduce((sum, s) => sum + Number(s.pnl_snapshot?.total_pnl ?? s.grid_profit ?? 0), 0)
@@ -154,6 +176,7 @@ function tradeTypeClass(type: string) {
             <div class="font-mono text-sm font-bold text-slate-800">{{ session.stock_code }}</div>
             <div class="mt-1 flex min-w-0 items-center gap-1.5">
               <span :class="[statusClass(session.status), '!text-[10px]']">{{ statusLabel(session.status) }}</span>
+              <span :class="[isSessionAutoEnabled(session) ? 'badge-green' : 'badge-slate', '!text-[10px]']">{{ isSessionAutoEnabled(session) ? '自动' : '暂停' }}</span>
               <span :class="[session.pnl_snapshot?.is_degraded ? 'badge-amber' : 'badge-blue', '!text-[10px] max-w-[130px] truncate']">{{ pnlMethod(session) }}</span>
             </div>
           </div>
@@ -184,7 +207,13 @@ function tradeTypeClass(type: string) {
 
         <div class="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
           <span class="min-w-0 truncate">资金 {{ fmtMoney(session.current_investment || 0, 0) }}</span>
-          <button @click="openDetail(session)" class="btn-outline btn-xs">查看账本</button>
+          <div class="flex items-center gap-2">
+            <label v-if="canToggleSession(session)" class="flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] text-slate-500 hover:bg-slate-100" title="关闭后保留会话，不再发新网格单">
+              <input type="checkbox" :checked="isSessionAutoEnabled(session)" @change="toggleSessionEnabled(session)" class="h-3 w-3 rounded accent-blue-600" />
+              自动
+            </label>
+            <button @click="openDetail(session)" class="btn-outline btn-xs">查看账本</button>
+          </div>
         </div>
       </article>
     </div>
@@ -212,7 +241,10 @@ function tradeTypeClass(type: string) {
               <div class="text-[10px] text-slate-400">#{{ session.session_id }}</div>
             </td>
             <td class="px-3 py-2.5">
-              <span :class="[statusClass(session.status), '!text-[10px]']">{{ statusLabel(session.status) }}</span>
+              <div class="flex items-center gap-1.5">
+                <span :class="[statusClass(session.status), '!text-[10px]']">{{ statusLabel(session.status) }}</span>
+                <span :class="[isSessionAutoEnabled(session) ? 'badge-green' : 'badge-slate', '!text-[10px]']">{{ isSessionAutoEnabled(session) ? '自动' : '暂停' }}</span>
+              </div>
             </td>
             <td :class="['px-3 py-2.5 text-right font-mono font-semibold', profitClass(Number(session.pnl_snapshot?.total_pnl ?? session.grid_profit ?? 0))]">
               {{ fmtMoney(Number(session.pnl_snapshot?.total_pnl ?? session.grid_profit ?? 0)) }}
@@ -247,7 +279,13 @@ function tradeTypeClass(type: string) {
               <span :class="[session.pnl_snapshot?.is_degraded ? 'badge-amber' : 'badge-blue', '!text-[10px]']">{{ pnlMethod(session) }}</span>
             </td>
             <td class="px-4 py-2.5 text-right">
-              <button @click="openDetail(session)" class="btn-outline btn-xs">详情</button>
+              <div class="flex items-center justify-end gap-2">
+                <label v-if="canToggleSession(session)" class="flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] text-slate-500 hover:bg-slate-100" title="关闭后保留会话，不再发新网格单">
+                  <input type="checkbox" :checked="isSessionAutoEnabled(session)" @change="toggleSessionEnabled(session)" class="h-3 w-3 rounded accent-blue-600" />
+                  自动
+                </label>
+                <button @click="openDetail(session)" class="btn-outline btn-xs">详情</button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -265,7 +303,13 @@ function tradeTypeClass(type: string) {
               {{ selectedSession.stock_code }} · {{ statusLabel(selectedSession.status) }} · #{{ selectedSession.session_id }}
             </p>
           </div>
-          <button @click="closeDetail" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-xl">&times;</button>
+          <div class="flex items-center gap-2">
+            <label v-if="canToggleSession(selectedSession)" class="flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] text-slate-500 hover:bg-slate-100" title="关闭后保留会话，不再发新网格单">
+              <input type="checkbox" :checked="isSessionAutoEnabled(selectedSession)" @change="toggleSessionEnabled(selectedSession)" class="h-3 w-3 rounded accent-blue-600" />
+              自动
+            </label>
+            <button @click="closeDetail" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-xl">&times;</button>
+          </div>
         </div>
 
         <div class="p-4 sm:p-6 space-y-5">
@@ -571,7 +615,7 @@ function tradeTypeClass(type: string) {
           </div>
 
           <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-            说明：本面板为只读展示。停止网格策略只停止自动网格交易与撤销未完成网格委托，不会清空当前股票持仓。
+            说明：自动开关只影响后续网格单；停止网格策略会撤销未完成网格委托，不会清空当前股票持仓。
           </div>
         </div>
       </div>

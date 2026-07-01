@@ -27,6 +27,7 @@ class GridSession:
     id: Optional[int] = None
     stock_code: str = ""
     status: str = "active"
+    enabled: bool = True
 
     # 价格配置
     center_price: float = 0.0
@@ -659,6 +660,7 @@ class GridTradingManager:
                         id=session_dict['id'],
                         stock_code=session_dict['stock_code'],
                         status=session_dict['status'],
+                        enabled=bool(session_dict.get('enabled', 1)),
                         center_price=session_dict['center_price'],
                         current_center_price=session_dict['current_center_price'],
                         price_interval=session_dict['price_interval'],
@@ -1056,6 +1058,7 @@ class GridTradingManager:
                 id=session_id,
                 stock_code=stock_code,
                 status='active',
+                enabled=True,
                 center_price=center_price,  # ✅ 使用阶段1确定的中心价格
                 current_center_price=center_price,  # ✅ 初始化为相同值
                 price_interval=session_data['price_interval'],
@@ -1212,6 +1215,31 @@ class GridTradingManager:
             'cancel_requested': cancel_ok,
             'cancel_failed': cancel_failed
         }
+
+    def set_session_enabled(self, session_id: int, enabled: bool) -> dict:
+        """设置单个网格会话是否允许自动产生新单。"""
+        with self.lock:
+            session = self._find_session_by_id(session_id)
+            if not session:
+                raise ValueError(f"会话{session_id}不存在")
+
+            session.enabled = bool(enabled)
+            self.db.update_grid_session(session_id, {'enabled': 1 if enabled else 0})
+            try:
+                self.position_manager._increment_data_version()
+            except Exception:
+                pass
+
+            logger.info(
+                f"[GRID] set_session_enabled: session_id={session_id}, "
+                f"stock_code={session.stock_code}, enabled={session.enabled}"
+            )
+            return {
+                'session_id': session.id,
+                'stock_code': session.stock_code,
+                'enabled': session.enabled,
+                'status': session.status
+            }
 
     def _find_session_by_id(self, session_id: int) -> Optional[GridSession]:
         """按会话ID查找内存会话。"""
@@ -1545,6 +1573,9 @@ class GridTradingManager:
                 return None
             if session.status != 'active':
                 logger.debug(f"[GRID] check_grid_signals: {stock_code} 会话状态={session.status}, 非active, 返回None")
+                return None
+            if not session.enabled:
+                logger.debug(f"[GRID] check_grid_signals: {stock_code} 个股网格开关关闭, 返回None")
                 return None
 
             logger.debug(f"[GRID] check_grid_signals: 找到活跃会话 session_id={session.id}, status={session.status}")
@@ -2485,6 +2516,9 @@ class GridTradingManager:
                 if not session:
                     logger.error(f"[GRID] execute_grid_trade: 会话不存在: {stock_code}")
                     return False
+                if not session.enabled:
+                    logger.warning(f"[GRID] execute_grid_trade: 个股网格开关关闭，拒绝执行 stock_code={stock_code}, session_id={session.id}")
+                    return False
 
                 signal_type = signal['signal_type']
                 session_id = session.id
@@ -2978,6 +3012,7 @@ class GridTradingManager:
             'session_id': session.id,
             'stock_code': session.stock_code,
             'status': session.status,
+            'enabled': session.enabled,
             'center_price': session.center_price,
             'current_center_price': session.current_center_price,
             'grid_levels': session.get_grid_levels(),

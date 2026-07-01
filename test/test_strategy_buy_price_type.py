@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from strategy import TradingStrategy
+import config
 
 
 class TestStrategyBuyPriceType(unittest.TestCase):
@@ -23,6 +24,23 @@ class TestStrategyBuyPriceType(unittest.TestCase):
             amount=10000,
             price_type=5,
         )
+
+    def test_global_monitor_disabled_short_circuits_strategy_execution(self):
+        strategy = TradingStrategy.__new__(TradingStrategy)
+        strategy.data_manager = MagicMock()
+        strategy.indicator_calculator = MagicMock()
+        strategy.position_manager = MagicMock()
+        strategy.trading_executor = MagicMock()
+
+        original_monitoring = config.ENABLE_AUTO_OPERATION
+        try:
+            config.ENABLE_AUTO_OPERATION = False
+            strategy.check_and_execute_strategies("002815.SZ")
+        finally:
+            config.ENABLE_AUTO_OPERATION = original_monitoring
+
+        strategy.data_manager.update_stock_data.assert_not_called()
+        strategy.indicator_calculator.calculate_all_indicators.assert_not_called()
 
 
 if __name__ == "__main__":

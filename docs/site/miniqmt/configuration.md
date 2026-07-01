@@ -9,7 +9,8 @@
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `ENABLE_SIMULATION_MODE` | `True` | `True` = 模拟，`False` = 实盘 |
-| `ENABLE_AUTO_TRADING` | `False` | 自动交易执行开关 |
+| `ENABLE_AUTO_OPERATION` | `False` | 全局自动操作总开关；关闭时动态止盈止损和网格交易都不产生新单 |
+| `ENABLE_AUTO_TRADING` | `False` | 非网格自动策略执行开关（动态止盈止损，不影响网格） |
 | `ENABLE_DYNAMIC_STOP_PROFIT` | `True` | 动态止盈止损功能 |
 | `ENABLE_GRID_TRADING` | `True` | 网格交易功能 |
 | `ENABLE_ALLOW_BUY` | `True` | 允许买入 |
@@ -19,9 +20,13 @@
 
 !!! danger "实盘交易前必须检查"
     1. `ENABLE_SIMULATION_MODE = False`
-    2. `ENABLE_AUTO_TRADING = True`
-    3. QMT 客户端已启动并登录
-    4. `account_config.json` 配置正确
+    2. `ENABLE_AUTO_OPERATION = True`
+    3. 按需打开分开关：`ENABLE_AUTO_TRADING = True`（动态止盈止损）和/或 `ENABLE_GRID_TRADING = True`（网格交易）
+    4. QMT 客户端已启动并登录
+    5. `account_config.json` 配置正确
+
+!!! info "三层开关关系"
+    自动操作采用“总开关 → 策略分开关 → 个股开关”的结构：`ENABLE_AUTO_OPERATION` 是所有自动策略的新单总闸；`ENABLE_AUTO_TRADING` 只控制动态止盈止损等非网格策略；`ENABLE_GRID_TRADING` 控制网格模块；单个网格会话还可通过 `grid_trading_sessions.enabled` 在 Web 中切换“自动/暂停”。
 
 ---
 
@@ -68,6 +73,7 @@ DYNAMIC_TAKE_PROFIT = [
 | `GRID_BUY_COOLDOWN` | `300` | 买入成功后冷却（秒） |
 | `GRID_SELL_COOLDOWN` | `300` | 卖出成功后冷却（秒） |
 | `GRID_REQUIRE_PROFIT_TRIGGERED` | `False` | 是否要求持仓已触发首次止盈后才能启动网格；默认不要求，设为 `True` 可恢复更保守风控 |
+| `grid_trading_sessions.enabled` | `1` | 单个网格会话自动执行开关；Web 中显示为“自动/暂停”，暂停后保留会话但不再发新网格单 |
 | `GRID_MAX_DEVIATION_RATIO` | `0.15` | 最大偏离中心价比例（±15%） |
 | `GRID_TARGET_PROFIT_RATIO` | `0.10` | 网格目标盈利比例（10%） |
 | `GRID_STOP_LOSS_RATIO` | `-0.10` | 网格止损比例（-10%） |

@@ -55,6 +55,16 @@ export const useGridStore = defineStore('grid', () => {
     return r
   }
 
+  async function setSessionEnabled(sessionId: number, enabled: boolean) {
+    const r = await flaskApi.setGridSessionEnabled(sessionId, enabled)
+    if (r?.success) {
+      sessions.value = sessions.value.map(s =>
+        s.session_id === sessionId ? { ...s, enabled } : s
+      )
+    }
+    return r
+  }
+
   async function fetchTrades(sessionId: number, limit = 20, offset = 0) {
     tradesLoading.value = true
     try {
@@ -94,6 +104,6 @@ export const useGridStore = defineStore('grid', () => {
   return {
     sessions, activeSessions, activeStockCodes, tradesBySession, tradeTotalsBySession, ledgerBySession,
     riskTemplates, templates, loading, tradesLoading, ledgerLoading, ledgerError,
-    fetchSessions, fetchRiskTemplates, fetchTemplates, fetchAll, startSession, stopSession, fetchTrades, fetchLedger, getSessionByStock, isActiveForStock,
+    fetchSessions, fetchRiskTemplates, fetchTemplates, fetchAll, startSession, stopSession, setSessionEnabled, fetchTrades, fetchLedger, getSessionByStock, isActiveForStock,
   }
 })

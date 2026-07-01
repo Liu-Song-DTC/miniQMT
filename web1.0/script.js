@@ -33,11 +33,11 @@
     const ACTIVE_POLLING_INTERVAL = 3000; // 活跃状态：3秒
     const INACTIVE_POLLING_INTERVAL = 10000; // 非活跃状态：10秒
     let pollingIntervalId = null;
-    let isMonitoring = false; // 前端监控状态，仅控制UI数据刷新
-    let isAutoTradingEnabled = false; // 自动交易状态，由全局监控总开关控制
+    let isMonitoring = false; // 兼容字段：全局自动操作总开关状态
+    let isAutoTradingEnabled = false; // 非网格策略自动执行状态
     let isSimulationMode = false; // 模拟交易模式
     let isPageActive = true; // 页面活跃状态
-    let userMonitoringIntent = null; // 用户监控意图（点击按钮后）
+    let userMonitoringIntent = null; // 用户自动操作总开关意图（点击按钮后）
     let userSimulationModeIntent = null; // 用户模拟/实盘切换意图
     let userAutoTradingIntent = null; // 用户自动交易开关意图
     let isApiConnected = true; // API连接状态，初始假设已连接
@@ -115,6 +115,8 @@
     // 网格交易状态存储
     let gridTradingStatus = {};  // 格式: { stock_code: { sessionId, status, config, lastUpdate } }
     let gridDetailLastStockCode = null;
+    let gridCenterPriceInputHandler = null;
+    let gridAutoToggleHandler = null;
 
     // ============ 网格分级策略: 全局变量 ============
     let riskTemplates = {};  // 缓存风险模板数据
@@ -394,9 +396,9 @@
             throttledSyncParameter('simulationMode', event.target.checked);
         });
 
-        // 全局监控总开关 - 自动交易控制
+        // 非网格策略自动执行分开关
         elements.globalAllowBuySell.addEventListener('change', (event) => {
-            // 明确：这里只影响自动交易状态，不影响监控UI状态
+            // 明确：这里只影响非网格自动策略，不影响全局自动操作总开关
             const autoTradingEnabled = event.target.checked;
             isAutoTradingEnabled = autoTradingEnabled; // 更新本地状态
             userAutoTradingIntent = autoTradingEnabled; // 记录用户意图，防 fetchStatus 覆盖
@@ -748,12 +750,12 @@
         }
     }
 
-    // 新增：监控状态UI更新函数，与自动交易状态分离
+    // 全局自动操作总开关 UI 更新函数，与非网格策略自动状态分离
     function updateMonitoringUI() {
         if (isMonitoring) {
             elements.statusIndicator.textContent = '运行中';
             elements.statusIndicator.className = 'text-lg font-bold text-green-600';
-            elements.toggleMonitorBtn.textContent = '停止持仓更新';
+            elements.toggleMonitorBtn.textContent = '停止自动操作';
             elements.toggleMonitorBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
             elements.toggleMonitorBtn.classList.add('bg-red-600', 'hover:bg-red-700');
             
@@ -764,7 +766,7 @@
         } else {
             elements.statusIndicator.textContent = '未运行';
             elements.statusIndicator.className = 'text-lg font-bold text-red-600';
-            elements.toggleMonitorBtn.textContent = '开始持仓更新';
+            elements.toggleMonitorBtn.textContent = '开始自动操作';
             elements.toggleMonitorBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
             elements.toggleMonitorBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
             
@@ -803,11 +805,11 @@
         }
     }
 
-    // 更新监控状态UI，用于SSE - 修改后的版本，不再让监控状态和自动交易状态相互干扰
+    // 更新自动操作状态，用于 SSE；不让总开关和非网格策略自动状态相互干扰
     function updateMonitoringInfo(monitoringInfo) {
         if (!monitoringInfo) return;
 
-        // 只更新全局监控总开关状态，不影响监控开关状态
+        // 只更新非网格策略自动分开关状态，不影响全局自动操作总开关
         // 用户意图优先：SSE 推送也不能覆盖用户正在进行的切换操作
         if (monitoringInfo.autoTradingEnabled !== undefined) {
             if (userAutoTradingIntent !== null) {
@@ -1617,11 +1619,11 @@
 
 
     // --- 操作处理函数 ---
-    // 修改后的监控开启/关闭函数 - 只影响前端数据刷新，不再与后端自动交易状态混淆
+    // 全局自动操作总开关：控制所有自动策略是否产生新交易动作
     async function handleToggleMonitor() {
         // 先验证表单数据
         if (!validateForm()) {
-            showMessage("请检查配置参数，修正错误后再启动监控", 'error');
+            showMessage("请检查配置参数，修正错误后再启动自动操作", 'error');
             return;
         }
 
@@ -1632,10 +1634,10 @@
         const endpoint = isMonitoring ? API_ENDPOINTS.stopMonitor : API_ENDPOINTS.startMonitor;
         const actionText = isMonitoring ? '停止' : '启动';
         elements.toggleMonitorBtn.disabled = true;
-        // showMessage(`${actionText}监控中...`, 'loading', 0);
+        // showMessage(`${actionText}自动操作中...`, 'loading', 0);
 
         try {
-            // 构建仅包含监控状态的数据
+            // API 字段仍为 isMonitoring，语义为全局自动操作总开关
             const monitoringData = {
                 isMonitoring: newMonitoringState
             };
@@ -1652,16 +1654,16 @@
                 // 更新UI
                 updateMonitoringUI();
                 
-                // showMessage(`${actionText}监控成功: ${data.message || ''}（注意：此操作不影响自动交易）`, 'success');
+                // showMessage(`${actionText}自动操作成功: ${data.message || ''}`, 'success');
             } else {
-                showMessage(`${actionText}监控失败: ${data.message || '未知错误'}`, 'error');
+                showMessage(`${actionText}自动操作失败: ${data.message || '未知错误'}`, 'error');
                 // 恢复用户意图，因为操作失败
                 userMonitoringIntent = null;
             }
             
             // 跳过调用fetchStatus，因为我们已经主动设置了状态
         } catch (error) {
-            showMessage(`${actionText}监控失败: ${error.message}`, 'error');
+            showMessage(`${actionText}自动操作失败: ${error.message}`, 'error');
             // 恢复用户意图，因为操作失败
             userMonitoringIntent = null;
         } finally {
@@ -2189,6 +2191,68 @@
     let gridConfirmHandler = null;
     let gridCancelHandler = null;
 
+    function formatGridDeviationText(currentPrice, centerPrice) {
+        const current = Number(currentPrice || 0);
+        const center = Number(centerPrice || 0);
+        if (current <= 0 || center <= 0) {
+            return { text: '', className: 'ml-2 text-xs font-semibold text-gray-500' };
+        }
+        const deviation = calculateDeviation(center, current);
+        const sign = deviation > 0 ? '+' : '';
+        let className = 'ml-2 text-xs font-semibold ';
+        if (Math.abs(deviation) >= 10) {
+            className += 'text-amber-600';
+        } else if (deviation > 0) {
+            className += 'text-red-600';
+        } else if (deviation < 0) {
+            className += 'text-green-600';
+        } else {
+            className += 'text-gray-500';
+        }
+        return {
+            text: `偏离 ${sign}${deviation.toFixed(2)}%`,
+            className
+        };
+    }
+
+    function updateGridPriceDeviation(currentPrice, centerPrice) {
+        const deviationEl = document.getElementById('gridCurrentPriceDeviation');
+        if (!deviationEl) return;
+        const rendered = formatGridDeviationText(currentPrice, centerPrice);
+        deviationEl.textContent = rendered.text;
+        deviationEl.className = rendered.className;
+    }
+
+    function updateGridAutoToggleUI(enabled) {
+        const autoCheckbox = document.getElementById('gridAutoEnabled');
+        const autoLabel = document.getElementById('gridAutoStatusLabel');
+        if (autoCheckbox) {
+            autoCheckbox.checked = enabled;
+        }
+        if (autoLabel) {
+            autoLabel.textContent = enabled ? '自动' : '暂停';
+            autoLabel.className = enabled
+                ? 'ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700'
+                : 'ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-600';
+        }
+    }
+
+    async function setGridSessionEnabled(sessionId, enabled) {
+        const response = await fetch(`${API_BASE_URL}/api/grid/session/${sessionId}/enabled`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(elements.apiToken?.value.trim() ? { 'X-API-Token': elements.apiToken.value.trim() } : {})
+            },
+            body: JSON.stringify({ enabled })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || '更新网格自动开关失败');
+        }
+        return result;
+    }
+
     /**
      * 显示网格交易配置对话框
      * @param {string} stockCode - 股票代码
@@ -2264,6 +2328,8 @@
             const hasActiveSession = sessionData.has_session;
             let config = sessionData.config;  // ⭐ API直接返回配置（小数格式，前端乘以100显示）
             const activeSessionId = sessionData.session_id;
+            const sessionEnabled = sessionData.enabled !== false && (!config || config.enabled !== false);
+            const stats = sessionData.stats || {};
 
             // ⭐ 调试日志
             console.log('网格会话数据:', {
@@ -2278,20 +2344,78 @@
 
             // ⭐ 显示实时市场价（移除来源说明，界面已明确标注）
             const centerPriceInput = document.getElementById('gridCenterPriceInput');
+            const activeCenterPrice = hasActiveSession
+                ? Number(stats.current_center_price || config?.center_price || 0)
+                : 0;
 
             // ⭐ 优化: 如果有active session，输入框显示已保存的center_price，否则显示实时市场价
             if (hasActiveSession && config && config.center_price) {
                 // 有active session: 显示已保存的配置
                 document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)}`;
                 centerPriceInput.value = parseFloat(config.center_price).toFixed(2);
+                updateGridPriceDeviation(centerPrice, activeCenterPrice);
             } else if (centerPrice > 0) {
                 // 无active session: 显示实时市场价
                 document.getElementById('gridCurrentPrice').textContent = `¥${centerPrice.toFixed(2)}`;
                 centerPriceInput.value = centerPrice.toFixed(2);
+                updateGridPriceDeviation(centerPrice, centerPriceInput.value);
             } else {
                 document.getElementById('gridCurrentPrice').textContent = `价格不可用`;
                 centerPriceInput.value = '';
                 centerPriceInput.placeholder = '请手动输入网格中心价格';
+                updateGridPriceDeviation(0, 0);
+            }
+
+            if (gridCenterPriceInputHandler) {
+                centerPriceInput.removeEventListener('input', gridCenterPriceInputHandler);
+            }
+            gridCenterPriceInputHandler = () => {
+                const compareCenter = hasActiveSession
+                    ? activeCenterPrice
+                    : parseFloat(centerPriceInput.value);
+                updateGridPriceDeviation(centerPrice, compareCenter);
+            };
+            centerPriceInput.addEventListener('input', gridCenterPriceInputHandler);
+
+            const autoToggleRow = document.getElementById('gridAutoToggleRow');
+            const autoCheckbox = document.getElementById('gridAutoEnabled');
+            if (autoToggleRow && autoCheckbox) {
+                if (gridAutoToggleHandler) {
+                    autoCheckbox.removeEventListener('change', gridAutoToggleHandler);
+                }
+                if (hasActiveSession) {
+                    autoToggleRow.classList.remove('hidden');
+                    updateGridAutoToggleUI(sessionEnabled);
+                    gridAutoToggleHandler = async (event) => {
+                        const nextEnabled = event.target.checked;
+                        event.target.disabled = true;
+                        try {
+                            const result = await setGridSessionEnabled(activeSessionId, nextEnabled);
+                            updateGridAutoToggleUI(result.enabled);
+                            gridTradingStatus[normalizedCode] = {
+                                ...(gridTradingStatus[normalizedCode] || {}),
+                                sessionId: activeSessionId,
+                                status: 'active',
+                                enabled: result.enabled,
+                                config,
+                                lastUpdate: Date.now()
+                            };
+                            showMessage(result.message || (result.enabled ? '个股网格自动执行已开启' : '个股网格自动执行已关闭'), 'success');
+                            await updateAllGridTradingStatus();
+                        } catch (error) {
+                            console.error('更新网格自动开关失败:', error);
+                            updateGridAutoToggleUI(!nextEnabled);
+                            showMessage('更新网格自动开关失败: ' + error.message, 'error');
+                        } finally {
+                            event.target.disabled = false;
+                        }
+                    };
+                    autoCheckbox.addEventListener('change', gridAutoToggleHandler);
+                } else {
+                    autoToggleRow.classList.add('hidden');
+                    autoCheckbox.checked = true;
+                    gridAutoToggleHandler = null;
+                }
             }
 
             // ⭐ 如果存在active session，显示原网格中心价
@@ -2300,6 +2424,9 @@
             if (hasActiveSession && config && config.center_price) {
                 existingCenterPriceRow.style.display = 'block';
                 existingCenterPriceSpan.textContent = `¥${parseFloat(config.center_price).toFixed(2)}`;
+                if (stats.current_center_price && Number(stats.current_center_price) !== Number(config.center_price)) {
+                    existingCenterPriceSpan.textContent += ` / 当前 ¥${Number(stats.current_center_price).toFixed(2)}`;
+                }
             } else {
                 existingCenterPriceRow.style.display = 'none';
             }
@@ -2953,6 +3080,7 @@
                     gridTradingStatus[stockCode] = {
                         sessionId: session.session_id ?? session.sessionId ?? session.id,
                         status,
+                        enabled: session.enabled !== false,
                         config: session.config,
                         lastUpdate: Date.now()
                     };
@@ -3006,6 +3134,7 @@
                 gridTradingStatus[normalizedCode] = {
                     sessionId: data.session_id,
                     status: 'active',
+                    enabled: true,
                     lastUpdate: Date.now()
                 };
                 updateGridCheckboxStyle(normalizedCode, 'active');

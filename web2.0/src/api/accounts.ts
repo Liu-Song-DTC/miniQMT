@@ -104,7 +104,7 @@ export function getApiToken(): string {
 /**
  * 当前是否处于 xtquant_manager 网关模式。
  * 网关模式（模式=xtquant，或 auto 且同源）下只能做只读监控+下单，
- * 配置持久化/监控开关/初始化等写操作需 Flask 直连模式。
+ * 配置持久化/自动操作总开关/初始化等写操作需 Flask 直连模式。
  */
 export function isGatewayMode(): boolean {
   const conn = loadConnection()

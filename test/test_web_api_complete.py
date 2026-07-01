@@ -242,7 +242,7 @@ class WebAPITestBase(unittest.TestCase):
         web_server.app.config['WTF_CSRF_ENABLED'] = False
         cls.client = web_server.app.test_client()
         # 重置 config 状态，确保测试前状态一致
-        config.ENABLE_MONITORING = False
+        config.ENABLE_AUTO_OPERATION = False
         config.ENABLE_AUTO_TRADING = False
         config.ENABLE_SIMULATION_MODE = True
 
@@ -747,11 +747,11 @@ class TestMonitor(WebAPITestBase):
                 self.assertTrue(d.get('isMonitoring')),
             ),
         )
-        self.assertTrue(config.ENABLE_MONITORING)
+        self.assertTrue(config.ENABLE_AUTO_OPERATION)
 
     def test_02_stop_monitor(self):
         """POST /api/monitor/stop 应停止监控"""
-        config.ENABLE_MONITORING = True
+        config.ENABLE_AUTO_OPERATION = True
         resp, ms = self._post('/api/monitor/stop')
         data = self._parse(resp)
         self._record(
@@ -763,15 +763,15 @@ class TestMonitor(WebAPITestBase):
                 self.assertFalse(d.get('isMonitoring')),
             ),
         )
-        self.assertFalse(config.ENABLE_MONITORING)
+        self.assertFalse(config.ENABLE_AUTO_OPERATION)
 
     def test_03_monitor_toggle_sequence(self):
         """多次切换监控状态应保持一致性"""
-        config.ENABLE_MONITORING = False
+        config.ENABLE_AUTO_OPERATION = False
         self._post('/api/monitor/start')
-        self.assertTrue(config.ENABLE_MONITORING)
+        self.assertTrue(config.ENABLE_AUTO_OPERATION)
         self._post('/api/monitor/stop')
-        self.assertFalse(config.ENABLE_MONITORING)
+        self.assertFalse(config.ENABLE_AUTO_OPERATION)
         REPORT.record(
             '/api/monitor/start+stop', 'POST',
             '监控状态切换一致性',

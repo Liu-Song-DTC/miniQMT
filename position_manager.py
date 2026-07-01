@@ -3737,80 +3737,43 @@ class PositionManager:
                         logger.error(f"{stock_code} 获取行情异常: {e}")
                         continue
 
-                    # 调试日志
-                    logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号 (价格: {current_price:.2f})")
+                    global_monitor_enabled = config.is_global_monitor_enabled()
+                    if not global_monitor_enabled:
+                        with self.signal_lock:
+                            self.latest_signals.pop(stock_code, None)
+                        logger.debug(f"[MONITOR_CALL] 全局自动操作总开关关闭，跳过 {stock_code} 自动策略检测")
+                    else:
+                        # 调试日志
+                        logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号 (价格: {current_price:.2f})")
 
-                    # 使用统一的信号检查函数 (传入价格,避免内部重复调用API)
-                    signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
-                    force_grid_stop = False
+                        # 动态止盈止损只写入自身信号队列，不再与网格信号共享。
+                        signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
 
-                    with self.signal_lock:
-                        if signal_type:
-                            existing_signal = self.latest_signals.get(stock_code)
-
-                            # 🔑 信号优先级体系: stop_loss > grid_* > take_profit_*
-                            # 止损信号优先级最高,可以覆盖任何信号
-                            if signal_type == 'stop_loss':
-                                force_grid_stop = True
-                                self.latest_signals[stock_code] = {
-                                    'type': signal_type,
-                                    'info': signal_info,
-                                    'timestamp': datetime.now()
-                                }
-                                logger.info(f"🔔 {stock_code} 检测到止损信号(最高优先级),覆盖已有信号")
-                            # 普通止盈信号不能覆盖网格信号
-                            elif existing_signal and existing_signal.get('type') in ['grid_buy', 'grid_sell']:
-                                logger.info(f"{stock_code} 已有网格信号 {existing_signal.get('type')},跳过止盈信号 {signal_type}")
-                            else:
+                        with self.signal_lock:
+                            if signal_type:
                                 self.latest_signals[stock_code] = {
                                     'type': signal_type,
                                     'info': signal_info,
                                     'timestamp': datetime.now()
                                 }
                                 logger.info(f"🔔 {stock_code} 检测到信号: {signal_type},等待策略处理")
-                        else:
-                            # 清除已不存在的信号（但保留网格信号，网格信号由网格检测逻辑管理）
-                            # 已在锁保护范围内，无需再次获取
-                            existing = self.latest_signals.get(stock_code)
-                            if existing and existing.get('type', '').startswith('grid_'):
-                                pass  # 保留网格信号，不清除
                             else:
                                 self.latest_signals.pop(stock_code, None)
 
-                    # ===== 网格交易信号检测 (使用已获取的价格) =====
-                    # 网格信号检测应该独立于止盈止损信号
-                    # ===== ç¡¬ä¼åçº§ï¼stop_loss è§¦åæ¶ç«å³å¼ºå¶éåºç½æ ¼ä¼è¯ï¼éå¤æ§è¡ï¼ =====
-                    if force_grid_stop and self.grid_manager and config.ENABLE_GRID_TRADING:
-                        try:
-                            normalized = self.grid_manager._normalize_code(stock_code)
-                            session = self.grid_manager.sessions.get(normalized)
-                            if session and session.status == 'active':
-                                self.grid_manager.stop_grid_session(session.id, 'stop_loss')
-                                logger.warning(f"[GRID] {stock_code} æ­¢æè§¦åï¼å·²å¼ºå¶åæ­¢ç½æ ¼ä¼è¯ session_id={session.id}")
-                        except Exception as e:
-                            logger.warning(f"[GRID] {stock_code} æ­¢æè§¦åå¼ºå¶åä¼è¯å¤±è´¥(å¯å¿½ç¥): {e}")
-
-                    if self.grid_manager and config.ENABLE_GRID_TRADING:
-                        try:
-                            grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
-                            if grid_signal:
-                                # 转换信号格式：'BUY' -> 'grid_buy', 'SELL' -> 'grid_sell'
-                                grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
-                                with self.signal_lock:
-                                    # 🔑 信号优先级保护: stop_loss > grid_* > take_profit_*
-                                    existing = self.latest_signals.get(stock_code)
-                                    # 止损信号优先级最高,不被网格信号覆盖
-                                    if existing and existing.get('type') == 'stop_loss':
-                                        logger.warning(f"[GRID] {stock_code} 已有止损信号,网格信号 {grid_signal_type} 不覆盖")
+                        # 网格交易独立检测并直接执行，不进入 latest_signals/strategy 动态止盈链路。
+                        if self.grid_manager and config.ENABLE_GRID_TRADING:
+                            try:
+                                grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
+                                if grid_signal:
+                                    grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
+                                    logger.info(f"[GRID] {stock_code} 检测到网格信号: {grid_signal_type}")
+                                    success = self.grid_manager.execute_grid_trade(grid_signal)
+                                    if success:
+                                        logger.info(f"[GRID] {stock_code} 网格交易执行成功: {grid_signal_type}")
                                     else:
-                                        self.latest_signals[stock_code] = {
-                                            'type': grid_signal_type,
-                                            'info': grid_signal,
-                                            'timestamp': datetime.now()
-                                        }
-                                        logger.info(f"[GRID] {stock_code} 检测到网格信号: {grid_signal_type}")
-                        except Exception as e:
-                            logger.error(f"[GRID] {stock_code} 网格信号检测异常: {e}")
+                                        logger.warning(f"[GRID] {stock_code} 网格交易执行失败: {grid_signal_type}")
+                            except Exception as e:
+                                logger.error(f"[GRID] {stock_code} 网格信号检测/执行异常: {e}")
 
                     # 更新最高价（如果当前价格更高,使用已获取的价格）
                     try:

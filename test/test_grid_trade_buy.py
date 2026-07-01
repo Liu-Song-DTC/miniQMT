@@ -172,6 +172,28 @@ class TestGridTradeBuy(unittest.TestCase):
 
         print(f"[OK] 正确拒绝买入: investment={session.current_investment}/{session.max_investment}")
 
+    def test_execute_grid_trade_rejects_disabled_session(self):
+        """测试个股网格关闭后不执行网格交易"""
+        config.ENABLE_SIMULATION_MODE = True
+        session = self._create_test_session(max_investment=10000, current_investment=0)
+        session.enabled = False
+        self.manager.sessions[self.manager._normalize_code(session.stock_code)] = session
+        self.db.update_grid_session(session.id, {'enabled': 0})
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'session_id': session.id,
+            'signal_type': 'BUY',
+            'trigger_price': 9.5,
+            'grid_level': 9.5
+        }
+
+        result = self.manager.execute_grid_trade(signal)
+
+        self.assertFalse(result)
+        self.assertEqual(session.trade_count, 0)
+        self.assertEqual(len(self.db.get_grid_trades(session.id)), 0)
+
     def test_buy_amount_calculation(self):
         """测试3: 买入金额计算（单次不超过20%）"""
         print("\n========== 测试3: 买入金额计算（单次不超过20%）==========")

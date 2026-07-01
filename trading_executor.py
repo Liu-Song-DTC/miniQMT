@@ -865,9 +865,9 @@ class TradingExecutor:
                     logger.warning("当前不是交易时间，交易取消")
                     return None
 
-                # 检查全局监控总开关 - 在模拟模式下放宽限制
+                # 检查全局自动操作总开关 - 在模拟模式下放宽限制
                 # if hasattr(config, 'ENABLE_AUTO_TRADING') and not config.ENABLE_AUTO_TRADING and not is_simulation:
-                #     logger.warning("全局监控总开关已关闭，无法买入")
+                #     logger.warning("全局自动操作总开关已关闭，无法买入")
                 #     return None
                 
                 # 检查买入权限 - 在模拟模式下放宽限制

@@ -208,7 +208,8 @@ Web界面 → 交易执行器 → 内存数据库 (跳过QMT接口)
 ```python
 # 交易模式
 ENABLE_SIMULATION_MODE = True   # True=模拟, False=实盘 ⚠️
-ENABLE_AUTO_TRADING = False     # 自动交易执行开关 ⚠️
+ENABLE_AUTO_OPERATION = False   # 全局自动操作总开关：关闭时所有自动策略不产生新单 ⚠️
+ENABLE_AUTO_TRADING = False     # 非网格自动策略执行开关（动态止盈止损，不影响网格）
 
 # 策略功能
 ENABLE_DYNAMIC_STOP_PROFIT = True  # 止盈止损功能
@@ -245,6 +246,7 @@ DYNAMIC_TAKE_PROFIT = [
 
 ```python
 ENABLE_GRID_TRADING = True                   # 网格交易功能开关（默认已启用）
+grid_trading_sessions.enabled = 1            # 个股网格会话自动执行开关（Web“自动/暂停”）
 GRID_DEFAULT_PRICE_INTERVAL = 0.05           # 价格间隔5%（下跌触发买入/上涨触发卖出）
 GRID_DEFAULT_POSITION_RATIO = 0.25           # 每档交易持仓比例25%
 GRID_CALLBACK_RATIO = 0.005                  # 回调触发比例0.5%
@@ -399,7 +401,8 @@ tail -f logs/qmt_trading.log             # Git Bash
 **A**: 修改 `config.py`:
 ```python
 ENABLE_SIMULATION_MODE = False  # 切换到实盘
-ENABLE_AUTO_TRADING = True      # 启用自动交易
+ENABLE_AUTO_OPERATION = True    # 打开全局自动操作总开关
+ENABLE_AUTO_TRADING = True      # 启用非网格自动策略（动态止盈止损）
 ```
 **⚠️ 注意**: 确保QMT客户端已启动并登录!
 
@@ -437,7 +440,7 @@ tail -n 100 logs/qmt_trading.log
 
 ### Q6: 如何启用网格交易?
 
-**A**: 网格交易默认已启用（`ENABLE_GRID_TRADING = True`）。通过 Web 界面创建网格会话即可。网格会话支持自动止盈（需买卖配对）、止损和超时退出。如需禁用，修改 `config.py`：
+**A**: 网格交易默认已启用（`ENABLE_GRID_TRADING = True`），但仍受全局自动操作总开关 `ENABLE_AUTO_OPERATION` 控制。通过 Web 界面创建网格会话即可；每个个股网格会话还可以在 Web 里用“自动/暂停”开关控制 `grid_trading_sessions.enabled`，暂停后保留会话但不再发新网格单。如需全局禁用网格，修改 `config.py`：
 ```python
 ENABLE_GRID_TRADING = False
 ```
@@ -447,7 +450,7 @@ ENABLE_GRID_TRADING = False
 **A**: 访问 `http://localhost:5000/config` 页面，修改配置后点击保存。配置会立即生效，无需重启系统。支持的配置包括:
 - 止盈止损比例
 - 网格交易参数
-- 自动交易开关
+- 全局自动操作总开关、非网格策略自动开关、个股网格自动/暂停开关
 - 线程监控开关
 
 所有配置变更会记录到 `system_config` 和 `config_history` 表中，支持审计和回滚。

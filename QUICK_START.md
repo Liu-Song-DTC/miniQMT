@@ -96,7 +96,8 @@ http://localhost:5000          # web1.0 (Flask)，随系统自动启动
 | 开关 | 默认值 | 说明 |
 |------|--------|------|
 | `ENABLE_SIMULATION_MODE` | `True` | 模拟交易/实盘切换 ⚠️ |
-| `ENABLE_AUTO_TRADING` | `False` | 是否自动执行交易信号 ⚠️ |
+| `ENABLE_AUTO_OPERATION` | `False` | 全局自动操作总开关，关闭时所有自动策略不产生新单 ⚠️ |
+| `ENABLE_AUTO_TRADING` | `False` | 非网格自动策略执行开关（动态止盈止损） |
 | `ENABLE_DYNAMIC_STOP_PROFIT` | `True` | 动态止盈止损策略 |
 | `ENABLE_GRID_TRADING` | `True` | 网格交易功能 |
 | `GRID_REQUIRE_PROFIT_TRIGGERED` | `False` | 是否要求持仓已首次止盈后才能启动网格；默认不要求 |
@@ -121,7 +122,8 @@ http://localhost:5000          # web1.0 (Flask)，随系统自动启动
 ```python
 # config.py
 ENABLE_SIMULATION_MODE = False  # 切换到实盘
-ENABLE_AUTO_TRADING = True      # 启用自动交易
+ENABLE_AUTO_OPERATION = True    # 打开全局自动操作总开关
+ENABLE_AUTO_TRADING = True      # 启用非网格自动策略
 ```
 
 **⚠️ 切换实盘前检查清单**：
@@ -204,7 +206,7 @@ Get-Content logs/qmt_trading.log -Wait   # Windows PowerShell
 
 ### Q: 如何启用网格交易？
 
-网格交易默认已启用（`ENABLE_GRID_TRADING = True`）。通过 Web 界面 (`http://localhost:5000`) 创建网格会话即可。如需禁用，在 `config.py` 中设置：
+网格交易默认已启用（`ENABLE_GRID_TRADING = True`），但仍受全局自动操作总开关 `ENABLE_AUTO_OPERATION` 控制。通过 Web 界面 (`http://localhost:5000`) 创建网格会话即可；个股网格配置/详情界面里的“自动/暂停”开关对应 `grid_trading_sessions.enabled`，暂停后保留会话但不再发新网格单。如需全局禁用网格，在 `config.py` 中设置：
 ```python
 ENABLE_GRID_TRADING = False
 ```

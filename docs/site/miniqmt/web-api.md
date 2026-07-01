@@ -110,6 +110,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 | POST | `/api/grid/start` | 启动网格会话 | ❌ |
 | POST | `/api/grid/stop/<session_id>` | 停止指定网格 | ❌ |
 | POST | `/api/grid/stop` | 停止所有网格 | ❌ |
+| POST | `/api/grid/session/<session_id>/enabled` | 设置单个网格会话自动/暂停 | ❌ |
 | GET | `/api/grid/session/<stock_code>` | 按股票查网格状态 | ❌ |
 | GET | `/api/grid/session/<session_id>` | 按会话 ID 查详情 | ❌ |
 | GET | `/api/grid/sessions` | 所有网格会话 | ✅ 只读 |
@@ -127,6 +128,8 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 !!! info "网格写操作仅 Flask 直连"
     网格策略由 `grid_trading_manager` 主线程驱动，网关进程独立运行不持有策略状态。因此启动/停止/模板/账本详情等网格写操作和深度查询仍需 Flask 模式；网关模式仅兼容 `/api/grid/sessions`，从账号 SQLite 只读返回会话列表。
+!!! note "自动/暂停接口"
+    `POST /api/grid/session/<session_id>/enabled` 请求体为 `{"enabled": true|false}`。关闭后保留会话和账本，只暂停后续新网格单；停止会话仍使用 `/api/grid/stop...`。
 
 !!! tip "统一盈亏快照"
     Flask 直连下，`/api/grid/session/<...>`、`/api/grid/sessions`、`/api/grid/status/<stock_code>` 返回的会话数据含 `pnl_snapshot` 字段：基于 FIFO 账本计算的真实盈亏（`realized_pnl` / `unrealized_pnl` / `total_pnl` / `profit_ratio`），账本不可用时自动降级并以 `is_degraded` 标记。`/api/grid/ledger/<session_id>` 进一步返回 `summary`、`lots`、`matches`、`trades` 和分页信息，供前端账本详情面板展示。详见[网格交易 · 真实盈亏账本](grid-trading.md)。
@@ -146,8 +149,11 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 | 方法 | 路径 | 说明 | 🌐 网关 |
 |------|------|------|--------|
-| POST | `/api/monitor/start` | 启动持仓监控 | ❌ |
-| POST | `/api/monitor/stop` | 停止持仓监控 | ❌ |
+| POST | `/api/monitor/start` | 启动全局自动操作总开关（兼容旧 monitor 路径） | ❌ |
+| POST | `/api/monitor/stop` | 停止全局自动操作总开关（兼容旧 monitor 路径） | ❌ |
+
+!!! note "字段兼容"
+    `/api/status`、SSE 和上述接口仍返回 `isMonitoring` 字段以兼容 web1.0/web2.0，当前语义是 `ENABLE_AUTO_OPERATION`。持仓监控线程是否运行由 `positionMonitorRunning` 表示，非网格策略自动执行由 `autoTradingEnabled` / `enableAutoTrading` 表示。
 
 ---
 

@@ -149,21 +149,21 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     <div class="px-3 md:px-6 pb-2 flex items-center justify-between gap-2 flex-wrap">
       <!-- Control toggles -->
       <div class="touch-strip no-scrollbar flex-1 min-w-0">
-        <button v-if="!gatewayMode" @click="toggleMonitoring" :class="['min-h-9 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止监控' : '开始监控' }}</button>
+        <button v-if="!gatewayMode" @click="toggleMonitoring" :class="['min-h-9 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors', system.isMonitoring ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ system.isMonitoring ? '停止自动操作' : '开始自动操作' }}</button>
         <button v-if="!gatewayMode" @click="toggleStopProfit" :disabled="stopProfitLoading" :class="['min-h-9 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors', stopProfitEnabled ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100']">{{ stopProfitLoading ? '...' : (stopProfitEnabled ? '禁用动态止盈' : '开启动态止盈') }}</button>
-        <span v-if="gatewayMode" class="inline-flex min-h-9 items-center text-[11px] text-slate-400 bg-slate-50 px-3 py-1.5 rounded-md" title="网关模式不支持监控开关和动态止盈控制，请使用 Flask 直连模式">网关模式 · 只读监控+下单</span>
+        <span v-if="gatewayMode" class="inline-flex min-h-9 items-center text-[11px] text-slate-400 bg-slate-50 px-3 py-1.5 rounded-md" title="网关模式不支持自动操作总开关和动态止盈控制，请使用 Flask 直连模式">网关模式 · 只读监控+下单</span>
         <span v-if="!gatewayMode" class="w-px h-4 bg-slate-200 mx-0.5 hidden sm:inline"></span>
         <template v-if="!gatewayMode">
         <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
         <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
         <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
-        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />总开关</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none" title="非网格自动策略执行开关"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />策略自动</label>
         </template>
       </div>
 
       <!-- Status badges (right) -->
       <div class="flex items-center gap-1.5 ml-auto flex-shrink-0">
-        <span :class="['badge text-[10px]', system.isMonitoring ? 'badge-green' : 'badge-red']"><span :class="system.isMonitoring ? 'dot-green' : 'dot-red'"></span>{{ system.isMonitoring ? '监控ON' : '监控OFF' }}</span>
+        <span :class="['badge text-[10px]', system.isMonitoring ? 'badge-green' : 'badge-red']"><span :class="system.isMonitoring ? 'dot-green' : 'dot-red'"></span>{{ system.isMonitoring ? '自动ON' : '自动OFF' }}</span>
         <span :class="['badge text-[10px]', system.connected ? 'badge-green' : 'badge-amber']"><span :class="system.connected ? 'dot-green' : 'dot-amber'"></span>QMT{{ system.connected ? '·OK' : '·断' }}</span>
         <span class="hidden sm:inline" :class="['badge text-[10px]', sseHealthy ? 'badge-green' : 'badge-amber']" :title="sseHealthy ? 'SSE实时推送正常' : 'SSE断开, 使用轮询(功能不受影响)'">SSE</span>
         <span v-if="system.lastUpdateTime" class="text-[10px] text-slate-400 font-mono hidden sm:inline">{{ system.lastUpdateTime }}</span>

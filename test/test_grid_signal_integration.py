@@ -61,6 +61,37 @@ class TestGridSignalIntegration(unittest.TestCase):
         logger.info(f"测试完成: {self._testMethodName}")
         logger.info("")
 
+    def test_disabled_session_does_not_generate_signal(self):
+        """测试个股网格关闭后不再生成新信号"""
+        session = GridSession(
+            id=1,
+            stock_code='000001.SZ',
+            status='active',
+            enabled=False,
+            center_price=10.0,
+            current_center_price=10.0,
+            price_interval=0.05,
+            callback_ratio=0.005,
+            max_deviation=0.15,
+            target_profit=0.10,
+            stop_loss=-0.10,
+            end_time=datetime.now() + timedelta(days=1)
+        )
+        tracker = PriceTracker(
+            session_id=1,
+            last_price=10.6,
+            peak_price=10.7,
+            direction='rising',
+            crossed_level=10.5,
+            waiting_callback=True
+        )
+        self.manager.sessions['000001'] = session
+        self.manager.trackers[1] = tracker
+
+        signal = self.manager.check_grid_signals('000001.SZ', 10.54)
+
+        self.assertIsNone(signal)
+
     def test_oscillating_price_pattern(self):
         """测试震荡行情的信号生成"""
         logger.info("[TEST] 测试震荡行情的信号生成")
