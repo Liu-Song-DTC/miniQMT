@@ -13,6 +13,7 @@ export const useSystemStore = defineStore('system', () => {
   })
   const isMonitoring = ref(false)
   const autoTrading = ref(false)
+  const gridTrading = ref(true)
   const allowBuy = ref(true)
   const allowSell = ref(true)
   const simulationMode = ref(false)
@@ -77,6 +78,7 @@ export const useSystemStore = defineStore('system', () => {
     if (s) {
       isMonitoring.value = s.isMonitoring
       autoTrading.value = s.enableAutoTrading
+      gridTrading.value = s.enableGridTrading ?? true
       allowBuy.value = s.allowBuy
       allowSell.value = s.allowSell
       simulationMode.value = s.simulationMode
@@ -96,7 +98,7 @@ export const useSystemStore = defineStore('system', () => {
 
   return {
     connected, accounts, currentAccountId, currentAccount, account,
-    isMonitoring, autoTrading, allowBuy, allowSell,
+    isMonitoring, autoTrading, gridTrading, allowBuy, allowSell,
     simulationMode, positionMonitorRunning, lastUpdateTime,
     switchAccount, addAccount, removeAccount, syncAccountsFromGateway,
     fetchStatus, fetchConnection, toggleMonitor,

@@ -18,6 +18,7 @@ const DEFAULTS: ConfigData = {
   singleStockMaxPosition: 70000,
   totalMaxPosition: 400000,
   globalAllowBuySell: true,
+  globalAllowGridTrading: true,
   simulationMode: false,
 }
 

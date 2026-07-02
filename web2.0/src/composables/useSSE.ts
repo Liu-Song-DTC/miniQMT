@@ -38,6 +38,7 @@ export function useSSE() {
           }
           if (msg.monitoring) {
             system.autoTrading = msg.monitoring.autoTradingEnabled
+            system.gridTrading = msg.monitoring.gridTradingEnabled ?? system.gridTrading
             system.allowBuy = msg.monitoring.allowBuy
             system.allowSell = msg.monitoring.allowSell
             system.simulationMode = msg.monitoring.simulationMode

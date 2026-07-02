@@ -49,9 +49,12 @@ async function toggleStopProfit() {
   stopProfitLoading.value = true; const next = !stopProfitEnabled.value
   await xqApi.toggleStopProfit(next); stopProfitEnabled.value = next; stopProfitLoading.value = false
 }
-function toggleConfigBool(key: string) {
-  const val = !(config.config as any)[key]; (config.config as any)[key] = val
-  config.saveConfig({ [key]: val } as any)
+async function toggleConfigBool(key: string) {
+  const previous = Boolean((config.config as any)[key])
+  const next = !previous
+  ;(config.config as any)[key] = next
+  const ok = await config.saveConfig({ [key]: next } as any)
+  if (!ok) (config.config as any)[key] = previous
 }
 async function loadStopProfitStatus() { try { const d = await xqApi.getStopProfitStatus(); if (d?.config) stopProfitEnabled.value = d.config.enabled } catch {} }
 
@@ -156,8 +159,9 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
         <template v-if="!gatewayMode">
         <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowBuy" @change="toggleConfigBool('allowBuy')" class="w-3 h-3 rounded accent-blue-600" />买</label>
         <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.allowSell" @change="toggleConfigBool('allowSell')" class="w-3 h-3 rounded accent-blue-600" />卖</label>
-        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟</span></label>
-        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none" title="非网格自动策略执行开关"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />策略自动</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none" title="模拟交易模式"><input type="checkbox" :checked="config.config.simulationMode" @change="toggleConfigBool('simulationMode')" class="w-3 h-3 rounded accent-amber-500" /><span :class="config.config.simulationMode ? 'text-amber-600 font-medium' : ''">模拟交易</span></label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none" title="动态止盈止损自动执行开关"><input type="checkbox" :checked="config.config.globalAllowBuySell" @change="toggleConfigBool('globalAllowBuySell')" class="w-3 h-3 rounded accent-blue-600" />允许自动止盈</label>
+        <label class="flex min-h-9 items-center gap-1 px-3 py-1.5 rounded-md text-[11px] cursor-pointer hover:bg-slate-100 transition-colors select-none" title="网格交易自动执行开关"><input type="checkbox" :checked="config.config.globalAllowGridTrading" @change="toggleConfigBool('globalAllowGridTrading')" class="w-3 h-3 rounded accent-blue-600" />允许自动网格</label>
         </template>
       </div>
 

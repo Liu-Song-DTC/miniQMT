@@ -38,6 +38,7 @@ export interface AccountInfo {
 export interface SystemStatus {
   isMonitoring: boolean
   enableAutoTrading: boolean
+  enableGridTrading: boolean
   positionMonitorRunning: boolean
   allowBuy: boolean
   allowSell: boolean
@@ -61,6 +62,7 @@ export interface ConfigData {
   singleStockMaxPosition: number
   totalMaxPosition: number
   globalAllowBuySell: boolean
+  globalAllowGridTrading: boolean
   simulationMode: boolean
 }
 
@@ -245,6 +247,7 @@ export interface SSEMessage {
   monitoring?: {
     isMonitoring: boolean
     autoTradingEnabled: boolean
+    gridTradingEnabled: boolean
     allowBuy: boolean
     allowSell: boolean
     simulationMode: boolean
