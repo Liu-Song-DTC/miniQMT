@@ -23,10 +23,12 @@ class TestOrderRejection(unittest.TestCase):
 
     def setUp(self):
         self.orig_sim = config.ENABLE_SIMULATION_MODE
+        self.orig_confirm = getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
         config.ENABLE_SIMULATION_MODE = False  # 实盘模式才走 order_id 路径
 
     def tearDown(self):
         config.ENABLE_SIMULATION_MODE = self.orig_sim
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = self.orig_confirm
 
     def _make_executor(self):
         """创建已完成初始化的 TradingExecutor，并 mock 全部外部依赖"""
@@ -182,6 +184,61 @@ class TestOrderRejection(unittest.TestCase):
         count = cursor.fetchone()[0]
         self.assertEqual(count, 1, "正常 order_id 应写入 1 条交易记录")
         print(f"[OK] order_id={result}, trade_records 行数={count}")
+
+    def test_grid_buy_confirm_mode_defers_trade_record(self):
+        """实盘网格买入确认模式下，下单成功不立即写 trade_records。"""
+        executor = self._make_executor()
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+
+        executor.position_manager.qmt_trader.buy = Mock(return_value=215722)
+        executor.position_manager._get_real_order_id = Mock(return_value=2014314497)
+        executor._save_trade_record = Mock(return_value=True)
+
+        with patch('config.is_trade_time', return_value=True):
+            result = executor.buy_stock(
+                stock_code='301399.SZ',
+                price=24.41,
+                volume=2000,
+                strategy=config.GRID_STRATEGY_NAME
+            )
+
+        self.assertEqual(result, 2014314497)
+        executor._save_trade_record.assert_not_called()
+        self.assertEqual(
+            executor.order_cache[str(result)]['strategy'],
+            config.GRID_STRATEGY_NAME
+        )
+
+    def test_grid_sell_confirm_mode_defers_trade_record(self):
+        """实盘网格卖出确认模式下，下单成功不立即写 trade_records。"""
+        executor = self._make_executor()
+        config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
+
+        executor.position_manager.get_position = Mock(return_value={
+            'stock_code': '300057.SZ',
+            'volume': 3000,
+            'available': 3000,
+            'cost_price': 6.18
+        })
+        executor.position_manager.qmt_trader.check_stock_is_av_sell = Mock(return_value=True)
+        executor.position_manager.qmt_trader.sell = Mock(return_value=215739)
+        executor.position_manager._get_real_order_id = Mock(return_value=672137217)
+        executor._save_trade_record = Mock(return_value=True)
+
+        with patch('config.is_trade_time', return_value=True):
+            result = executor.sell_stock(
+                stock_code='300057.SZ',
+                volume=400,
+                price=7.42,
+                strategy=config.GRID_STRATEGY_NAME
+            )
+
+        self.assertEqual(result, 672137217)
+        executor._save_trade_record.assert_not_called()
+        self.assertEqual(
+            executor.order_cache[str(result)]['strategy'],
+            config.GRID_STRATEGY_NAME
+        )
 
 
 def run_tests():

@@ -39,6 +39,7 @@ class TestGridTradeSell(unittest.TestCase):
         # Mock position_manager 和 trading_executor
         self.position_manager = Mock(spec=PositionManager)
         self.executor = Mock(spec=TradingExecutor)
+        self.executor._save_trade_record.return_value = True
 
         # 创建管理器
         self.manager = GridTradingManager(
@@ -389,6 +390,7 @@ class TestGridTradeSell(unittest.TestCase):
         self.assertIn('REAL_SELL_12345', self.manager.pending_grid_orders)
         self.assertEqual(session.sell_count, 0)
         self.assertAlmostEqual(session.current_investment, 5000.0, places=2)
+        self.executor._save_trade_record.assert_not_called()
 
         fake_trade = type('FakeTrade', (), {})()
         fake_trade.order_id = 'REAL_SELL_12345'
@@ -407,6 +409,13 @@ class TestGridTradeSell(unittest.TestCase):
         self.assertNotIn('REAL_SELL_12345', self.manager.pending_grid_orders)
         self.assertEqual(session.sell_count, 1)
         self.assertAlmostEqual(session.current_investment, 5000.0 - 200 * 10.5, places=2)
+        self.executor._save_trade_record.assert_called_once()
+        record_kwargs = self.executor._save_trade_record.call_args.kwargs
+        self.assertEqual(record_kwargs['trade_type'], 'SELL')
+        self.assertEqual(record_kwargs['trade_id'], 'REAL_SELL_DEAL_1')
+        self.assertEqual(record_kwargs['volume'], 200)
+        self.assertAlmostEqual(record_kwargs['price'], 10.5, places=4)
+        self.assertEqual(record_kwargs['strategy'], config.GRID_STRATEGY_NAME)
 
         print(f"[OK] 实盘卖出成功, trade_id={trade['trade_id']}")
 

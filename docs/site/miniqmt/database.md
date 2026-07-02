@@ -36,9 +36,11 @@
 | `trade_type` | `BUY` / `SELL` |
 | `price` | 成交价格 |
 | `volume` | 成交数量 |
-| `trade_id` | 订单 ID（实盘为 QMT 返回的 order_id，模拟为 `SIM{timestamp}{counter}`） |
+| `trade_id` | 成交/流水 ID；模拟为 `SIM{timestamp}{counter}`，普通实盘流水可使用订单 ID，实盘网格确认模式下为券商成交回报 ID |
 | `strategy` | 策略标识（`simu` / `auto_partial` / `stop_loss` / `grid`） |
 | `timestamp` | 交易时间 |
+
+实盘网格在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时，委托阶段不会写入本表；只有收到真实成交回报并完成网格账本落账后，才补写 `strategy = grid` 的普通成交流水。
 
 ---
 
@@ -87,11 +89,11 @@
 
 ## 网格实盘订单与账本表 ⭐
 
-实盘模式以**成交回报**为准的订单闭环依赖以下三张表（详见[网格交易 · 实盘交易机制](grid-trading.md)）。
+实盘模式以**成交回报**为准的订单闭环依赖以下三张表（详见[网格交易 · 实盘交易机制](grid-trading.md)）。网格委托阶段只更新 `grid_orders`，真实成交确认后才写 `grid_trades`、`grid_lots` / `grid_lot_matches` 和普通 `trade_records`。
 
 ### grid_orders（网格委托表）
 
-登记每笔实盘委托，待成交回报到达后更新状态。
+登记每笔实盘委托，待成交回报到达后更新状态。它是已报未成交网格单的唯一本地落点，用于重启恢复、拒单/撤单状态闭环和成交补偿对账。
 
 | 字段 | 说明 |
 |------|------|

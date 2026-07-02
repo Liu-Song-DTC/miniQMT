@@ -79,6 +79,9 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 | POST | `/api/initialize_positions` | 初始化持仓数据 | ❌ |
 | POST | `/api/holdings/init` | 初始化持股配置 | ❌ |
 
+!!! note "交易记录口径"
+    实盘网格在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时，`/api/trade-records` 只返回真实成交确认后的 `trade_records`。已报未成交的网格委托只体现在 `grid_orders` / 网格会话状态中，不会以 `ORDER_xxx` 形式伪装成成交。
+
 ---
 
 ## 交易操作
@@ -128,6 +131,8 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 !!! info "网格写操作仅 Flask 直连"
     网格策略由 `grid_trading_manager` 主线程驱动，网关进程独立运行不持有策略状态。因此启动/停止/模板/账本详情等网格写操作和深度查询仍需 Flask 模式；网关模式仅兼容 `/api/grid/sessions`，从账号 SQLite 只读返回会话列表。
+!!! note "实盘委托与成交分离"
+    实盘网格下单成功后先登记到 `grid_orders`，等成交回报确认后才写入 `grid_trades`、真实盈亏账本和普通 `trade_records`。前端读取交易记录或账本时，应把未成交委托视为待确认状态，而不是成交。
 !!! note "自动/暂停接口"
     `POST /api/grid/session/<session_id>/enabled` 请求体为 `{"enabled": true|false}`。关闭后保留会话和账本，只暂停后续新网格单；停止会话仍使用 `/api/grid/stop...`。
 

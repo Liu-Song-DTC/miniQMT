@@ -257,32 +257,41 @@ class TradingExecutor:
             trade_id = deal_info.m_strTradeID
             commission = deal_info.m_dComssion
             trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # 保存交易记录到数据库 - 确保传递正确的策略名称
-            # 在这里处理可能需要从order_cache或其他地方获取strategy信息
-            strategy = 'default'  # 默认值
-            
-            # 查找对应的订单信息
             order_id = deal_info.m_strOrderID
-            if order_id in self.order_cache:
-                # 如果缓存中有这个订单，尝试获取它的策略标识
-                order_info = self.order_cache[order_id]
-                if hasattr(order_info, 'strategy'):
-                    strategy = order_info.strategy
-            
-            self._save_trade_record(stock_code, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy)
-            
-            # 更新持仓信息
-            self._update_position_after_trade(stock_code, trade_type, price, volume)
-            
-            # 处理网格交易
+
+            strategy = self._get_order_strategy(order_id)
             grid_manager = getattr(self.position_manager, 'grid_manager', None)
+            defer_grid_record = self._should_defer_trade_record_until_deal(strategy, is_simulation=False)
+            if (not defer_grid_record and grid_manager
+                    and getattr(config, 'ENABLE_GRID_TRADING', False)
+                    and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)):
+                pending_orders = getattr(grid_manager, 'pending_grid_orders', {})
+                if isinstance(pending_orders, dict) and str(order_id) in pending_orders:
+                    strategy = getattr(config, 'GRID_STRATEGY_NAME', 'grid')
+                    defer_grid_record = True
+
+            grid_handled = False
             if getattr(config, 'ENABLE_GRID_TRADING', False) and grid_manager:
                 try:
-                    grid_manager.handle_deal_callback(deal_info)
+                    grid_handled = bool(grid_manager.handle_deal_callback(deal_info))
                 except Exception as grid_err:
                     logger.warning(f"网格成交确认处理失败: {grid_err}")
-            
+
+            if defer_grid_record:
+                if not grid_handled:
+                    logger.warning(
+                        f"实盘网格成交回报未匹配待确认委托，跳过通用交易流水写入: "
+                        f"order_id={order_id}, trade_id={trade_id}"
+                    )
+            else:
+                self._save_trade_record(
+                    stock_code, trade_time, trade_type, price, volume, amount,
+                    trade_id, commission, strategy
+                )
+
+            # 更新持仓信息
+            self._update_position_after_trade(stock_code, trade_type, price, volume)
+
             # 执行回调函数
             if trade_id in self.callbacks:
                 callback_fn = self.callbacks.pop(trade_id)
@@ -302,9 +311,16 @@ class TradingExecutor:
             order_id = order_info.m_strOrderSysID
             stock_code = order_info.m_strInstrumentID
             status = order_info.m_nOrderStatus
-            
+
             # 缓存委托记录
-            self.order_cache[order_id] = order_info
+            existing_order_info = self._get_order_cache_entry(order_id)
+            if isinstance(existing_order_info, dict):
+                cached_order_info = dict(existing_order_info)
+                cached_order_info['raw_order_info'] = order_info
+                cached_order_info['order_status'] = status
+            else:
+                cached_order_info = order_info
+            self.order_cache[str(order_id)] = cached_order_info
             
             status_desc = {
                 48: "未报",
@@ -401,6 +417,39 @@ class TradingExecutor:
             
         except Exception as e:
             logger.error(f"处理错误回调时出错: {str(e)}")
+
+    def _get_order_cache_entry(self, order_id):
+        """从委托缓存读取记录，兼容字符串和数字订单号。"""
+        if order_id is None:
+            return None
+        candidates = [order_id, str(order_id)]
+        try:
+            candidates.append(int(order_id))
+        except (TypeError, ValueError):
+            pass
+        for candidate in candidates:
+            if candidate in self.order_cache:
+                return self.order_cache[candidate]
+        return None
+
+    def _get_order_strategy(self, order_id, default='default'):
+        """读取委托对应的策略名称。"""
+        order_info = self._get_order_cache_entry(order_id)
+        if isinstance(order_info, dict):
+            return order_info.get('strategy', default)
+        if hasattr(order_info, 'strategy'):
+            return order_info.strategy
+        return default
+
+    def _should_defer_trade_record_until_deal(self, strategy, is_simulation=None):
+        """实盘网格确认模式下，普通成交流水等真实成交回报后再写入。"""
+        if is_simulation is None:
+            is_simulation = getattr(config, 'ENABLE_SIMULATION_MODE', True)
+        return (
+            not is_simulation
+            and getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)
+            and str(strategy) == getattr(config, 'GRID_STRATEGY_NAME', 'grid')
+        )
     
     def _save_trade_record(self, stock_code, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy='default'):
         """保存交易记录到数据库"""
@@ -996,22 +1045,32 @@ class TradingExecutor:
                             order_id = None
 
                         if order_id and order_id > 0:
-                            # 添加：实盘下单成功后也立即保存交易记录
-                            trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            trade_saved= self._save_trade_record(
-                                stock_code=stock_code,
-                                trade_time=trade_time,
-                                trade_type='BUY',
-                                price=price,
-                                volume=volume,
-                                amount=price * volume,
-                                trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
-                                commission=price * volume * 0.0003,  # 预估手续费
-                                strategy=strategy
+                            should_defer_record = self._should_defer_trade_record_until_deal(
+                                strategy,
+                                is_simulation=False
                             )
+                            trade_saved = True
+                            if should_defer_record:
+                                logger.info(
+                                    f"实盘网格买入委托已提交，等待成交回报后写入交易流水: "
+                                    f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
+                                )
+                            else:
+                                trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                trade_saved= self._save_trade_record(
+                                    stock_code=stock_code,
+                                    trade_time=trade_time,
+                                    trade_type='BUY',
+                                    price=price,
+                                    volume=volume,
+                                    amount=price * volume,
+                                    trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
+                                    commission=price * volume * 0.0003,  # 预估手续费
+                                    strategy=strategy
+                                )
                             if trade_saved:
                                 # 缓存订单信息，供回调使用
-                                self.order_cache[order_id] = {
+                                self.order_cache[str(order_id)] = {
                                     'stock_code': stock_code,
                                     'strategy': strategy,
                                     'trade_type': 'BUY',
@@ -1253,23 +1312,33 @@ class TradingExecutor:
                             order_id = None
 
                         if order_id and order_id > 0:
-                            # 参考buy_stock：立即保存交易记录到数据库
-                            trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            trade_saved = self._save_trade_record(
-                                stock_code=stock_code,
-                                trade_time=trade_time,
-                                trade_type='SELL',
-                                price=price,
-                                volume=volume,
-                                amount=price * volume,
-                                trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
-                                commission=price * volume * 0.0003,  # 预估手续费
-                                strategy=strategy
+                            should_defer_record = self._should_defer_trade_record_until_deal(
+                                strategy,
+                                is_simulation=False
                             )
-                            
+                            trade_saved = True
+                            if should_defer_record:
+                                logger.info(
+                                    f"实盘网格卖出委托已提交，等待成交回报后写入交易流水: "
+                                    f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
+                                )
+                            else:
+                                trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                trade_saved = self._save_trade_record(
+                                    stock_code=stock_code,
+                                    trade_time=trade_time,
+                                    trade_type='SELL',
+                                    price=price,
+                                    volume=volume,
+                                    amount=price * volume,
+                                    trade_id=f"ORDER_{order_id}",  # 使用订单ID作为交易ID
+                                    commission=price * volume * 0.0003,  # 预估手续费
+                                    strategy=strategy
+                                )
+
                             if trade_saved:
                                 # 参考buy_stock：缓存订单信息
-                                self.order_cache[order_id] = {
+                                self.order_cache[str(order_id)] = {
                                     'stock_code': stock_code,
                                     'strategy': strategy,
                                     'trade_type': 'SELL',

@@ -1944,7 +1944,8 @@ class GridTradingManager:
         )
 
     def _record_confirmed_grid_trade(self, session: GridSession, signal: dict, side: str,
-                                     price: float, volume: int, trade_id: str) -> bool:
+                                     price: float, volume: int, trade_id: str,
+                                     commission: float = None) -> bool:
         """按真实成交回报落账，并在DB失败时回滚内存统计"""
         return self._record_confirmed_grid_trade_with_order(
             session=session,
@@ -1952,13 +1953,15 @@ class GridTradingManager:
             side=side,
             price=price,
             volume=volume,
-            trade_id=trade_id
+            trade_id=trade_id,
+            commission=commission
         )
 
     def _record_confirmed_grid_trade_with_order(self, session: GridSession, signal: dict, side: str,
                                                 price: float, volume: int, trade_id: str,
                                                 order_id: str = None,
-                                                order_updates: dict = None) -> bool:
+                                                order_updates: dict = None,
+                                                commission: float = None) -> bool:
         """按真实成交回报落账，并在DB失败时回滚内存统计"""
         stock_code = session.stock_code
         price = float(price)
@@ -2066,6 +2069,17 @@ class GridTradingManager:
             session.current_investment = old_investment
             return False
 
+        self._save_confirmed_trade_record(
+            stock_code=stock_code,
+            trade_time=trade_data['trade_time'],
+            trade_type=side,
+            price=price,
+            volume=volume,
+            amount=amount,
+            trade_id=trade_id,
+            commission=commission
+        )
+
         self._rebuild_grid(session, price)
         try:
             self.position_manager._increment_data_version()
@@ -2077,6 +2091,38 @@ class GridTradingManager:
             f"price={price:.2f}, amount={amount:.2f}, trade_id={trade_id}"
         )
         return True
+
+    def _save_confirmed_trade_record(self, stock_code: str, trade_time: str, trade_type: str,
+                                     price: float, volume: int, amount: float, trade_id: str,
+                                     commission: float = None) -> None:
+        """实盘网格成交确认后，补写普通交易流水。"""
+        if (getattr(config, 'ENABLE_SIMULATION_MODE', True)
+                or not getattr(config, 'GRID_CONFIRM_LIVE_ORDER_BY_DEAL', True)):
+            return
+
+        save_trade_record = getattr(self.executor, '_save_trade_record', None)
+        if not callable(save_trade_record):
+            return
+
+        if commission is None:
+            commission = amount * 0.0003
+
+        try:
+            saved = save_trade_record(
+                stock_code=stock_code,
+                trade_time=str(trade_time).replace('T', ' '),
+                trade_type=trade_type,
+                price=price,
+                volume=volume,
+                amount=amount,
+                trade_id=trade_id,
+                commission=commission,
+                strategy=getattr(config, 'GRID_STRATEGY_NAME', 'grid')
+            )
+            if not saved:
+                logger.warning(f"[GRID] confirmed trade_records写入失败: trade_id={trade_id}")
+        except Exception as err:
+            logger.warning(f"[GRID] confirmed trade_records写入异常: trade_id={trade_id}, err={err}")
 
     def handle_deal_callback(self, trade) -> bool:
         """实盘成交回调确认网格委托；只有真实成交后才更新网格统计和交易表"""
@@ -2094,10 +2140,12 @@ class GridTradingManager:
             volume = self._get_attr_or_key(trade, ('traded_volume', 'm_nVolume', 'volume'))
             stock_code = self._get_attr_or_key(trade, ('stock_code', 'm_strInstrumentID'), pending['stock_code'])
             raw_trade_id = self._get_attr_or_key(trade, ('trade_id', 'traded_id', 'm_strTradeID'))
+            commission = self._get_attr_or_key(trade, ('commission', 'm_dComssion', 'm_dCommission'))
 
             try:
                 price = float(price)
                 volume = int(volume)
+                commission = float(commission) if commission is not None else None
             except (TypeError, ValueError):
                 logger.warning(f"[GRID] handle_deal_callback: 成交价格/数量无效 order_id={order_id}, price={price}, volume={volume}")
                 return False
@@ -2152,7 +2200,8 @@ class GridTradingManager:
                     'status': order_status,
                     'filled_volume': new_filled_volume,
                     'filled_amount': new_filled_amount
-                }
+                },
+                commission=commission
             )
             if not success:
                 return False
