@@ -1,9 +1,27 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const RELEASE_VERSION_PLACEHOLDER = '%MINIQMT_RELEASE_VERSION%'
+
+function getReleaseVersion() {
+  const versionPath = fileURLToPath(new URL('../release_version.json', import.meta.url))
+  const versionInfo = JSON.parse(readFileSync(versionPath, 'utf-8')) as { releaseVersion?: string }
+  return versionInfo.releaseVersion || 'unknown'
+}
+
+const releaseVersion = getReleaseVersion()
 
 export default defineConfig({
   plugins: [
+    {
+      name: 'miniqmt-release-version',
+      transformIndexHtml(html) {
+        return html.split(RELEASE_VERSION_PLACEHOLDER).join(releaseVersion)
+      },
+    },
     vue(),
     VitePWA({
       registerType: 'autoUpdate',

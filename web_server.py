@@ -31,6 +31,20 @@ import utils
 # 获取logger
 logger = get_logger("web_server")
 webpage_dir = 'web1.0'
+RELEASE_VERSION_PLACEHOLDER = '%MINIQMT_RELEASE_VERSION%'
+
+
+def get_release_version():
+    try:
+        version_path = os.path.join(os.path.dirname(__file__), 'release_version.json')
+        with open(version_path, 'r', encoding='utf-8') as f:
+            version_info = json.load(f)
+        release_version = version_info.get('releaseVersion')
+        if release_version:
+            return str(release_version)
+    except Exception as e:
+        logger.warning(f"读取发布版本号失败: {str(e)}")
+    return 'unknown'
 
 # 创建Flask应用
 app = Flask(__name__, static_folder=webpage_dir, static_url_path='')
@@ -323,6 +337,7 @@ def index():
         script_path = os.path.join(web_dir, 'script.js')
         version = str(int(os.path.getmtime(script_path)))
         html = html.replace('src="script.js"', f'src="script.js?v={version}"')
+        html = html.replace(RELEASE_VERSION_PLACEHOLDER, get_release_version())
         resp = make_response(html)
         resp.headers['Content-Type'] = 'text/html; charset=utf-8'
         resp.headers['Cache-Control'] = 'no-store'
@@ -334,6 +349,8 @@ def index():
 @app.route('/<path:filename>')
 def serve_static(filename):
     """Serve static files from the 'web' directory"""
+    if filename == 'index.html':
+        return index()
     return send_from_directory(os.path.join(os.path.dirname(__file__), webpage_dir), filename)
 
 @app.route('/api/connection/status', methods=['GET'])
