@@ -217,6 +217,7 @@
       "modules": [
         "test.test_data_manager_history_dates",
         "test.test_methods_data_source",
+        "test.test_market_health_tracker",
         "test.test_xtdata_data_source",
         "test.test_history_data_source_routing",
         "test.test_stock_name_resolution",

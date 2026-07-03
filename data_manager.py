@@ -172,21 +172,13 @@ class MarketDataHealthTracker:
         success_events = [event for event in events if event["ok"] and event["data_quality_ok"]]
         success_count = len(success_events)
         failure_count = total - success_count
-        success_rate_score = 100 * success_count / total
-        quality_score = 100 * sum(1 for event in events if event["data_quality_ok"]) / total
 
         if success_events:
             avg_latency = sum(event["latency_ms"] for event in success_events) / success_count
-            latency_score = max(0, 100 - (avg_latency / 30))
             last_success_ts = success_events[-1]["ts"]
-            age = max(0, time.time() - last_success_ts)
-            window_seconds = max(1, getattr(config, "MARKET_HEALTH_WINDOW_SECONDS", 300))
-            freshness_score = max(0, 100 - (age / window_seconds * 100))
             last_success_at = datetime.fromtimestamp(last_success_ts).strftime("%Y-%m-%d %H:%M:%S")
         else:
             avg_latency = None
-            latency_score = 0
-            freshness_score = 0
             last_success_at = None
 
         consecutive_failures = 0
@@ -194,8 +186,39 @@ class MarketDataHealthTracker:
             if event["ok"] and event["data_quality_ok"]:
                 break
             consecutive_failures += 1
-        consecutive_score = max(0, 100 - consecutive_failures * 25)
 
+        base_result = {
+            "event_count": total,
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "consecutive_failures": consecutive_failures,
+            "last_success_at": last_success_at,
+            "last_event_at": datetime.fromtimestamp(events[-1]["ts"]).strftime("%Y-%m-%d %H:%M:%S"),
+            "avg_latency_ms": None if avg_latency is None else int(round(avg_latency)),
+            "last_reason": events[-1]["reason"],
+        }
+
+        min_events = max(1, int(getattr(config, "MARKET_HEALTH_MIN_EVENTS", 3) or 1))
+        if total < min_events:
+            return {
+                "score": None,
+                "status": "unknown",
+                **base_result,
+            }
+
+        success_rate_score = 100 * success_count / total
+        quality_score = 100 * sum(1 for event in events if event["data_quality_ok"]) / total
+
+        if success_events:
+            latency_score = max(0, 100 - (avg_latency / 30))
+            age = max(0, time.time() - success_events[-1]["ts"])
+            window_seconds = max(1, getattr(config, "MARKET_HEALTH_WINDOW_SECONDS", 300))
+            freshness_score = max(0, 100 - (age / window_seconds * 100))
+        else:
+            latency_score = 0
+            freshness_score = 0
+
+        consecutive_score = max(0, 100 - consecutive_failures * 25)
         score = (
             success_rate_score * 0.45
             + latency_score * 0.20
@@ -208,14 +231,7 @@ class MarketDataHealthTracker:
         return {
             "score": score,
             "status": self._status_for_score(score),
-            "event_count": total,
-            "success_count": success_count,
-            "failure_count": failure_count,
-            "consecutive_failures": consecutive_failures,
-            "last_success_at": last_success_at,
-            "last_event_at": datetime.fromtimestamp(events[-1]["ts"]).strftime("%Y-%m-%d %H:%M:%S"),
-            "avg_latency_ms": None if avg_latency is None else int(round(avg_latency)),
-            "last_reason": events[-1]["reason"],
+            **base_result,
         }
 
     def _status_for_score(self, score):

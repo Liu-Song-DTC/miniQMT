@@ -167,6 +167,57 @@ class TestGetLatestDataFallback(TestBase):
         self.assertEqual(snapshot['sources']['xtdata']['failure_count'], 1)
         self.assertEqual(snapshot['sources']['xtdata']['last_reason'], 'empty_quote')
 
+    def test_get_latest_xtdata_records_invalid_price_failure(self):
+        """xtdata 返回 lastPrice=0 时应记录 invalid_price 失败样本"""
+        self.mock_xt.get_full_tick.return_value = {
+            '000920.SZ': {'lastPrice': 0, 'lastClose': 13.97}
+        }
+
+        result = self.dm.get_latest_xtdata('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result.get('_source'), 'xtdata')
+        self.assertEqual(result.get('lastPrice'), 0)
+        self.assertEqual(snapshot['sources']['xtdata']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['xtdata']['last_reason'], 'invalid_price')
+
+    def test_get_latest_xtdata_records_exception_failure(self):
+        """xtdata 调用异常时应记录 exception 失败样本"""
+        self.mock_xt.get_full_tick.side_effect = RuntimeError("模拟xtdata异常")
+
+        result = self.dm.get_latest_xtdata('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result, {})
+        self.assertEqual(snapshot['sources']['xtdata']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['xtdata']['last_reason'], 'exception')
+
+    def test_get_latest_xtdata_records_timeout_failure(self):
+        """xtdata 调用超时时应记录 timeout 失败样本"""
+        import concurrent.futures
+
+        class FakeFuture:
+            def result(self, timeout=None):
+                raise concurrent.futures.TimeoutError()
+
+        class FakeExecutor:
+            def __init__(self, max_workers=None):
+                pass
+
+            def submit(self, *args, **kwargs):
+                return FakeFuture()
+
+            def shutdown(self, wait=True):
+                pass
+
+        with patch('concurrent.futures.ThreadPoolExecutor', FakeExecutor):
+            result = self.dm.get_latest_xtdata('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result, {})
+        self.assertEqual(snapshot['sources']['xtdata']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['xtdata']['last_reason'], 'timeout')
+
     def test_xtdata_price_zero_subscribed_fallback_with_warning(self):
         """已订阅但 lastPrice=0：应记录 WARNING，降级到 Mootdx"""
         self.dm.subscribed_stocks = ['000920.SZ']
@@ -206,6 +257,70 @@ class TestGetLatestDataFallback(TestBase):
         self.assertIsNone(result)
         self.assertEqual(snapshot['sources']['Mootdx']['failure_count'], 1)
         self.assertEqual(snapshot['sources']['Mootdx']['last_reason'], 'empty')
+
+    def test_get_latest_data_records_mootdx_insufficient_rows_failure(self):
+        """Mootdx 返回不足2行时应记录 insufficient_rows 失败原因"""
+        import pandas as pd
+        self.dm.xt = None
+        mock_df = pd.DataFrame({'close': [13.59], 'volume': [1000], 'amount': [13590]})
+
+        with patch('config.is_trade_time', return_value=False), \
+             patch('Methods.getStockData', return_value=mock_df):
+            result = self.dm.get_latest_data('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertIsNone(result)
+        self.assertEqual(snapshot['sources']['Mootdx']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['Mootdx']['last_reason'], 'insufficient_rows')
+
+    def test_get_latest_data_records_mootdx_invalid_price_failure(self):
+        """Mootdx 返回0价格时应记录 invalid_price 数据质量失败"""
+        import pandas as pd
+        self.dm.xt = None
+        mock_df = pd.DataFrame({
+            'close': [0.0, 0.0],
+            'volume': [1000, 1000],
+            'amount': [0, 0],
+        })
+
+        with patch('config.is_trade_time', return_value=False), \
+             patch('Methods.getStockData', return_value=mock_df):
+            result = self.dm.get_latest_data('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertEqual(result.get('_source'), 'Mootdx')
+        self.assertEqual(result.get('lastPrice'), 0)
+        self.assertEqual(snapshot['sources']['Mootdx']['success_count'], 0)
+        self.assertEqual(snapshot['sources']['Mootdx']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['Mootdx']['last_reason'], 'invalid_price')
+
+    def test_get_latest_data_records_mootdx_timeout_failure(self):
+        """Mootdx 调用超时时应记录 timeout 失败原因"""
+        import concurrent.futures
+        self.dm.xt = None
+
+        class FakeFuture:
+            def result(self, timeout=None):
+                raise concurrent.futures.TimeoutError()
+
+        class FakeExecutor:
+            def __init__(self, max_workers=None):
+                pass
+
+            def submit(self, *args, **kwargs):
+                return FakeFuture()
+
+            def shutdown(self, wait=True):
+                pass
+
+        with patch('config.is_trade_time', return_value=False), \
+             patch('concurrent.futures.ThreadPoolExecutor', FakeExecutor):
+            result = self.dm.get_latest_data('000920.SZ')
+
+        snapshot = self.dm.get_market_health_snapshot()
+        self.assertIsNone(result)
+        self.assertEqual(snapshot['sources']['Mootdx']['failure_count'], 1)
+        self.assertEqual(snapshot['sources']['Mootdx']['last_reason'], 'timeout')
 
     def test_xtdata_price_zero_not_subscribed_triggers_subscribe(self):
         """未订阅且 lastPrice=0：应触发 ensure_subscribed，降级到 Mootdx，记录 INFO"""
