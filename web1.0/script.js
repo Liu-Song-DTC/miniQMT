@@ -33,6 +33,7 @@
     const ACTIVE_POLLING_INTERVAL = 3000; // 活跃状态：3秒
     const INACTIVE_POLLING_INTERVAL = 10000; // 非活跃状态：10秒
     let pollingIntervalId = null;
+    let logRefreshIntervalId = null;
     let isMonitoring = false; // 兼容字段：全局自动操作总开关状态
     let isAutoTradingEnabled = false; // 非网格策略自动执行状态
     let isGridTradingEnabled = true; // 网格策略自动执行状态
@@ -198,6 +199,10 @@
         if (pollingIntervalId && isMonitoring) {
             stopPolling();
             startPolling();
+        }
+
+        if (logRefreshIntervalId) {
+            startOrderLogRefresh();
         }
     });
     
@@ -2014,6 +2019,24 @@
         pollingIntervalId = null;
     }
 
+    function getOrderLogRefreshInterval() {
+        return isPageActive ? DATA_REFRESH_INTERVALS.logs : INACTIVE_POLLING_INTERVAL;
+    }
+
+    function startOrderLogRefresh() {
+        if (logRefreshIntervalId) {
+            clearInterval(logRefreshIntervalId);
+            logRefreshIntervalId = null;
+        }
+
+        const refreshInterval = getOrderLogRefreshInterval();
+        logRefreshIntervalId = setInterval(() => {
+            fetchLogs();
+        }, refreshInterval);
+
+        console.log(`Order log refresh started with interval: ${refreshInterval}ms`);
+    }
+
     async function pollData() {
         if (!isMonitoring) {
             console.log("Monitor is off, stopping polling");
@@ -2243,6 +2266,8 @@
         } catch (error) {
             showMessage("部分数据加载失败", 'error', 3000);
         }
+
+        startOrderLogRefresh();
 
         // 如果监控状态为开启，则自动启动轮询
         if (isMonitoring) {
