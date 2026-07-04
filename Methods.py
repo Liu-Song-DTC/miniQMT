@@ -79,7 +79,7 @@ def _mootdx_daily_bars(code, freq, offset, adjustflag):
 def _baostock_daily_bars(code, fields, start_date, end_date, freq, adjustflag):
     """用 baostock 拉取日/周/月线；不可用/失败时返回 None 以便上层降级到 mootdx。
 
-    适配新版 baostock(00.9.x) 收紧后的访问：登录前应用 API Key、复权类型
+    适配新版 baostock(0.9.x) 收紧后的访问：登录前应用 API Key、复权类型
     归一化为 '1'/'2'/'3'、登录与查询错误码显式校验、确保 logout 释放连接。
     """
     try:

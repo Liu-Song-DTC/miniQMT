@@ -111,7 +111,7 @@ class TestMethodsDataSource(unittest.TestCase):
 
 
 class TestMethodsBaostockPath(unittest.TestCase):
-    """验证新版 baostock(00.9.x) 收紧访问后的规范化行为。"""
+    """验证新版 baostock(0.9.x) 收紧访问后的规范化行为。"""
 
     def test_baostock_enabled_builds_df_and_normalizes(self):
         methods = _load_methods()

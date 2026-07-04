@@ -6,6 +6,34 @@
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-07-04
+
+> 本版本聚焦**无人值守长稳运行与自动操作开关解耦**：新增数据库维护与日志轮转，将自动交易拆为「总开关 → 策略分开关 → 单只会话开关」三层结构，并把发布版本号收敛到单一来源统一管理。
+
+### Added
+- **自动操作三层开关**：新增全局总开关 `ENABLE_AUTO_OPERATION`（默认 `False`，运行时开关、不持久化），与 `ENABLE_AUTO_TRADING`（动态止盈止损分开关）、`ENABLE_GRID_TRADING`（网格分开关）解耦，形成「总开关 → 策略分开关 → 单只网格会话 `grid_trading_sessions.enabled`」结构；关闭总开关时所有自动策略停止产生新单，监控线程仍持续检测信号。web1.0 / web2.0 自动操作控制同步调整。
+- **数据库维护任务**（[maintenance.py](https://github.com/weihong-su/miniQMT/blob/main/maintenance.py)，`ENABLE_DB_MAINTENANCE=True`）：独立线程每日非交易时段（`DB_MAINTENANCE_TIME="00:10:00"`）清理过期追加型历史数据，删除行数达阈值（`DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS=1000`）后执行 `VACUUM` 回收空间；`DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME=True` 确保不影响盘中交易。
+- **日志轮转**：XtQuantManager 批处理重定向日志按大小轮转（`XQM_LOG_MAX_SIZE=10MB` × `XQM_LOG_BACKUP_COUNT=5`），随维护任务触发；主日志沿用 `RotatingFileHandler`。
+- **发布版本号单一来源**：新增 `release_version.json` 作为唯一版本号出处，web1.0 / web2.0 页面标题、[web_server.py](https://github.com/weihong-su/miniQMT/blob/main/web_server.py)、`web2.0/vite.config.ts` 均通过 `%MINIQMT_RELEASE_VERSION%` 占位符注入，避免版本号分散硬编码。
+- **baostock API Key 支持**：新版 baostock(0.9.x) 收紧访问后，登录前经 `set_API_key` 传入 `BAOSTOCK_API_KEY`（环境变量，默认空则匿名访问）。
+
+### Changed
+- **baostock 接入规范化**：依赖约束由 `==0.9.1` 放宽为 `>=0.9.1`；新增登录超时 `BAOSTOCK_LOGIN_TIMEOUT=5s`、连续失败冷却 `BAOSTOCK_RETRY_COOLDOWN=300s`、失败阈值 `BAOSTOCK_MAX_CONSECUTIVE_FAILURES=3`；`ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP` / `ENABLE_BAOSTOCK_HISTORY_DATA` 默认关闭，历史行情默认改走 Mootdx，避免无人值守时外部接口反复报错。
+- **web1.0 下单日志**：改为定时刷新并优化视觉样式与可读性。
+- **Web 页面标题**：统一附带发布版本号（如「交易监控面板 - miniQMT v3.4.0」）。
+
+### Fixed
+- 完善行情源健康检测验证逻辑，减少误判。
+- 优化止损委托阻断处理，避免异常委托状态阻塞后续止损。
+- 网格实盘成交记录延迟到成交回报到达后再登记，避免委托未成交即入账。
+- 修复 MkDocs strict 模式构建告警。
+
+### Docs
+- 无人值守文档新增「数据库维护与日志轮转」章节；配置参考补充自动操作三层开关、baostock 接入、数据库维护与保留天数、日志轮转参数。
+
+### Database
+- 数据库维护任务按保留策略清理追加型历史表：`trade_records`（`TRADE_RECORD_RETENTION_DAYS=1095`，3 年）、`grid_trading_sessions`（`GRID_SESSION_RETENTION_DAYS=365`，仅非 active）、`premarket_sync_history`（365）、`config_history`（365）、autobuy `decision_log`（`AUTOBUY_DECISION_LOG_RETENTION_DAYS=90`）。
+
 ## [3.3.0] - 2026-06-27
 
 ### Added
@@ -156,7 +184,8 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.4.0...HEAD
+[3.4.0]: https://github.com/weihong-su/miniQMT/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/weihong-su/miniQMT/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/weihong-su/miniQMT/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/weihong-su/miniQMT/compare/v3.0.0...v3.1.0

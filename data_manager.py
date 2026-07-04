@@ -1311,7 +1311,7 @@ class DataManager:
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            # 新版 baostock(00.9.x) 收紧访问：登录前应用 API Key（已配置且版本支持时）
+            # 新版 baostock(0.9.x) 收紧访问：登录前应用 API Key（已配置且版本支持时）
             try:
                 import baostock_helper
                 baostock_helper.apply_api_key(bs)

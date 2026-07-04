@@ -144,11 +144,14 @@ DYNAMIC_TAKE_PROFIT = [
 | `HISTORY_INVALID_DATE_LOG_INTERVAL` | `600` | 同一股票同一数据源非法历史日期告警降噪间隔 |
 | `ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP` | `False` | 是否允许用 baostock 兜底查询股票名称；默认关闭，避免无人值守时外部接口反复报错 |
 | `ENABLE_BAOSTOCK_HISTORY_DATA` | `False` | 是否允许旧 `Methods.getStockData(freq='d/w/m')` 路径使用 baostock；默认改走 Mootdx |
-| `BAOSTOCK_API_KEY` | `""`（环境变量 `BAOSTOCK_API_KEY`） | 新版 baostock(00.9.x) 收紧访问后支持的 API Key，登录前经 `set_API_key` 传入；为空则匿名访问。⚠️ 仅用环境变量，切勿硬编码 |
+| `BAOSTOCK_API_KEY` | `""`（环境变量 `BAOSTOCK_API_KEY`） | 新版 baostock(0.9.x) 收紧访问后支持的 API Key，登录前经 `set_API_key` 传入；为空则匿名访问。⚠️ 仅用环境变量，切勿硬编码 |
+| `BAOSTOCK_LOGIN_TIMEOUT` | `5` | baostock 登录超时秒数，防止外部接口阻塞无人值守循环 |
+| `BAOSTOCK_RETRY_COOLDOWN` | `300` | baostock 连续失败后冷却时间（秒） |
+| `BAOSTOCK_MAX_CONSECUTIVE_FAILURES` | `3` | 连续失败达到阈值后进入冷却期 |
 
 历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
 
-新版 baostock(00.9.x) 收紧了访问格式与行为，本项目已统一适配（见 [baostock_helper.py](../../../baostock_helper.py)）：登录前自动应用 `BAOSTOCK_API_KEY`（旧版 0.8.x 无 `set_API_key` 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 `'1'/'2'/'3'`，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖已锁定到 `baostock==0.9.1`（PyPI 发行版本，对应包内 client 版本 `00.9.10`）。
+新版 baostock(0.9.x) 收紧了访问格式与行为，本项目已统一适配（见 [baostock_helper.py](../../../baostock_helper.py)）：登录前自动应用 `BAOSTOCK_API_KEY`（旧版 0.8.x 无 `set_API_key` 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 `'1'/'2'/'3'`，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖约束为 `baostock>=0.9.1`（仅在显式开启 baostock 功能时需要）。
 
 ### 行情源健康评分参数
 
@@ -170,6 +173,37 @@ DYNAMIC_TAKE_PROFIT = [
 评分综合成功率、平均延迟、最近成功时间和数据质量。持仓监控会调用 `data_manager.is_quote_tradable()`；在默认观察模式下始终放行，只有将 `MARKET_HEALTH_OBSERVE_ONLY` 设为 `False` 后才按分数和数据源限制拦截。
 
 健康快照接口见 [Web API · 行情源健康](web-api.md#market-health)。
+
+---
+
+## 数据库维护与日志轮转参数
+
+维护任务由 `maintenance.py` 执行，主程序启动时在后台线程调度。默认每天非交易时段清理追加型历史数据，并按大小轮转 XtQuantManager 批处理重定向日志。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_DB_MAINTENANCE` | `True` | 启用数据库维护后台线程 |
+| `DB_MAINTENANCE_TIME` | `"00:10:00"` | 每日维护目标时间 |
+| `DB_MAINTENANCE_CHECK_INTERVAL` | `600` | 调度检查间隔（秒） |
+| `DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME` | `True` | 仅允许非交易时段执行维护 |
+| `DB_MAINTENANCE_ENABLE_VACUUM` | `True` | 清理达到阈值后执行 SQLite `VACUUM` |
+| `DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS` | `1000` | 触发 `VACUUM` 的最小删除行数 |
+| `TRADE_RECORD_RETENTION_DAYS` | `1095` | `trade_records` 保留天数（3 年） |
+| `GRID_SESSION_RETENTION_DAYS` | `365` | 非 active 网格会话保留天数 |
+| `AUTOBUY_DECISION_LOG_RETENTION_DAYS` | `90` | 自动买入 `decision_log` 保留天数 |
+| `PREMARKET_HISTORY_RETENTION_DAYS` | `365` | 盘前同步历史保留天数 |
+| `CONFIG_HISTORY_RETENTION_DAYS` | `365` | 配置变更审计保留天数 |
+| `XQM_LOG_FILE` | `"logs/xqm_manager.log"` | XtQuantManager 批处理重定向日志路径 |
+| `XQM_LOG_MAX_SIZE` | `10 MB` | XtQuantManager 日志轮转阈值 |
+| `XQM_LOG_BACKUP_COUNT` | `5` | XtQuantManager 日志备份数量 |
+
+主交易日志 `logs/qmt_trading.log` 仍由 `logger.py` 的 `RotatingFileHandler` 管理；上述 `XQM_LOG_*` 只处理 `xqm_manager.bat` / 独立网关进程追加写入的普通日志文件。
+
+---
+
+## 发布版本号
+
+发布版本号统一存放在项目根目录的 `release_version.json`。web1.0 由 `web_server.py` 渲染首页时替换 `%MINIQMT_RELEASE_VERSION%`，web2.0 由 `web2.0/vite.config.ts` 在构建时替换同名占位符；发布新版本时只需要同步更新 `release_version.json` 和 `CHANGELOG.md`。
 
 ---
 

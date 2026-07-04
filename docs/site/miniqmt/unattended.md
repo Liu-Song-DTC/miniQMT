@@ -92,6 +92,38 @@ if not config.is_trade_time():
 
 ---
 
+## 数据库维护与日志轮转
+
+主程序启动时会根据 `ENABLE_DB_MAINTENANCE` 启动数据库维护线程。默认每天 `00:10:00` 附近执行一次，且 `DB_MAINTENANCE_REQUIRE_NON_TRADE_TIME = True` 时只在非交易时段运行，避免盘中对 SQLite 做重维护。
+
+维护内容：
+
+- 清理 `trade_records`、非 active 的 `grid_trading_sessions`、`premarket_sync_history`、`config_history` 等追加型历史表
+- 清理自动买入复盘库 `data/autobuy.db` 中过期的 `decision_log`
+- 删除行数达到 `DB_MAINTENANCE_VACUUM_MIN_DELETED_ROWS` 且 `DB_MAINTENANCE_ENABLE_VACUUM = True` 时执行 `VACUUM`
+- 按 `XQM_LOG_MAX_SIZE` / `XQM_LOG_BACKUP_COUNT` 轮转 `logs/xqm_manager.log`
+
+保留策略集中在 `config.py`：
+
+```python
+TRADE_RECORD_RETENTION_DAYS = 1095
+GRID_SESSION_RETENTION_DAYS = 365
+AUTOBUY_DECISION_LOG_RETENTION_DAYS = 90
+PREMARKET_HISTORY_RETENTION_DAYS = 365
+CONFIG_HISTORY_RETENTION_DAYS = 365
+```
+
+如需临时手动执行，可在确认非交易时段后运行：
+
+```python
+from maintenance import run_database_maintenance, rotate_xqm_log
+
+rotate_xqm_log()
+run_database_maintenance()
+```
+
+---
+
 ## 5 分钟启用清单
 
 ```python
@@ -99,6 +131,7 @@ if not config.is_trade_time():
 ENABLE_THREAD_MONITOR = True     # 线程自愈（默认已开）
 ENABLE_SELL_MONITOR = True       # 卖出超时撤单（默认已开）
 ENABLE_HEARTBEAT_LOG = True      # 心跳日志（默认已开）
+ENABLE_DB_MAINTENANCE = True     # 数据库维护与 XtQuantManager 日志轮转（默认已开）
 ```
 
 ```bash
