@@ -122,6 +122,9 @@ class MarketDataHealthTracker:
         unstable_score = getattr(config, "MARKET_HEALTH_UNSTABLE_SCORE", 40)
         for source, info in sorted(sources.items()):
             score = info.get("score")
+            if source == "Mootdx" and score is None:
+                parts.append(f"{source}=idle")
+                continue
             score_text = "unknown" if score is None else str(score)
             parts.append(f"{source}={info.get('status', 'unknown')}({score_text})")
 

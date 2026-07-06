@@ -63,7 +63,7 @@ class TestMarketDataHealthTrackerCore(unittest.TestCase):
         self.assertEqual(score["status"], "healthy")
         self.assertEqual(score["event_count"], 3)
 
-    def test_window_filters_expired_events_and_summary_marks_source_unknown(self):
+    def test_window_filters_expired_events_and_summary_marks_mootdx_idle(self):
         tracker = data_manager_module.MarketDataHealthTracker()
 
         with patch.object(config, "MARKET_HEALTH_MIN_EVENTS", 1), \
@@ -82,7 +82,7 @@ class TestMarketDataHealthTrackerCore(unittest.TestCase):
         self.assertIsNone(score["score"])
         self.assertEqual(score["status"], "unknown")
         self.assertEqual(score["event_count"], 0)
-        self.assertIn("Mootdx=unknown(unknown)", summary)
+        self.assertIn("Mootdx=idle", summary)
 
     def test_max_events_limits_each_source_purpose_stock_bucket(self):
         with patch.object(config, "MARKET_HEALTH_MAX_EVENTS", 3), \
