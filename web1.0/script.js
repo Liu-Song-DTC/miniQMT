@@ -1261,7 +1261,10 @@
     function updateHoldingsTable(holdings) {
         // 检查数据是否实际发生变化
         const holdingsStr = JSON.stringify(holdings);
-        if (window._lastHoldingsStr === holdingsStr) {
+        const hasStaleEmptyRow = Array.isArray(holdings)
+            && holdings.length > 0
+            && elements.holdingsTableBody.querySelector('tr:not([data-stock-code])');
+        if (window._lastHoldingsStr === holdingsStr && !hasStaleEmptyRow) {
             console.log("Holdings data unchanged, skipping update");
             return;
         }
@@ -1272,9 +1275,12 @@
         elements.holdingsError.classList.add('hidden');
 
         if (!Array.isArray(holdings) || holdings.length === 0) {
-            elements.holdingsTableBody.innerHTML = '<tr><td colspan="15" class="text-center p-4 text-gray-500">无持仓数据</td></tr>';
+            elements.holdingsTableBody.innerHTML = '<tr data-empty-row="true"><td colspan="15" class="text-center p-4 text-gray-500">无持仓数据</td></tr>';
             return;
         }
+
+        // 从空仓切换到有仓时，先清理空状态占位行，避免“无持仓数据”和真实持仓同时显示。
+        elements.holdingsTableBody.querySelectorAll('tr:not([data-stock-code])').forEach(row => row.remove());
 
         // 获取现有行
         const existingRows = {};

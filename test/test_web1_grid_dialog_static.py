@@ -60,6 +60,22 @@ class TestWeb1GridDialogStatic(unittest.TestCase):
         self.assertIn('globalAllowGridTrading: elements.globalAllowGridTrading.checked', script)
         self.assertIn('{ globalAllowGridTrading: gridTradingEnabled }', script)
 
+    def test_holdings_empty_row_removed_before_rendering_positions(self):
+        script = self._read_web1_file("script.js")
+
+        stale_check = "const hasStaleEmptyRow = Array.isArray(holdings)"
+        cleanup = "querySelectorAll('tr:not([data-stock-code])').forEach(row => row.remove())"
+        existing_rows = "const existingRows = {}"
+
+        self.assertIn('data-empty-row="true"', script)
+        self.assertIn(stale_check, script)
+        self.assertIn(cleanup, script)
+        self.assertLess(
+            script.index(cleanup),
+            script.index(existing_rows),
+            "有持仓数据时必须先移除空状态占位行，再执行增量行更新"
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
