@@ -281,6 +281,12 @@ class DataManager:
         self._bs_consecutive_failures = 0
         self._bs_cooldown_until = 0.0  # 冷却截止时间戳
 
+        # Tushare 客户端惰性初始化与冷却机制（与 baostock 机制对称）
+        self._tushare_pro = None
+        self._tushare_token_attempted = False
+        self._ts_consecutive_failures = 0
+        self._ts_cooldown_until = 0.0  # 冷却截止时间戳
+
         # 行情源健康评分（仅内存，不持久化）
         self.market_health = MarketDataHealthTracker()
 
@@ -956,6 +962,23 @@ class DataManager:
                 return xt_df
             logger.debug(f"xtdata 未返回 {stock_code} 有效历史数据，fallback 到 Mootdx")
 
+        # ── 标准模式：Tushare 优先 → Mootdx 兜底 ──
+        # 仅在日线/周线/月线周期时走 Tushare（分钟线需单独购买 2000元/年权限）
+        _is_daily_period = period in ('day', '1d', 'week', '1w', 'mon', '1mon')
+        if _is_daily_period and getattr(config, 'ENABLE_TUSHARE_DATA_SOURCE', False):
+            ts_start_date = start_date
+            ts_end_date = end_date
+            # 网关模式 xtdata 失败 fallthrough 时，日期格式已经是 YYYYMMDD
+            # 标准模式直接走此路径时，日期可能为 YYYY-MM-DD 或 YYYYMMDD
+            ts_df = self._download_history_tushare(
+                stock_code,
+                start_date=ts_start_date,
+                end_date=ts_end_date,
+            )
+            if ts_df is not None and not ts_df.empty:
+                return ts_df
+            logger.debug(f"Tushare 未返回 {stock_code} 有效历史数据，fallback 到 Mootdx")
+
         try:
             import Methods  # Import the Methods module
 
@@ -1294,6 +1317,261 @@ class DataManager:
             logger.debug(f"通过xtdata获取股票 {stock_code} 名称失败: {e}")
         return None
 
+    def _get_tushare_pro(self):
+        """
+        Tushare Pro 客户端惰性初始化。
+
+        仅在第一次调用时 import tushare + set_token + pro_api，
+        后续调用直接返回已初始化的实例。
+
+        Returns:
+            tushare.pro_api 实例，或 None（token 为空/未安装/初始化失败）
+        """
+        if self._tushare_token_attempted:
+            return self._tushare_pro
+        self._tushare_token_attempted = True
+
+        token = getattr(config, 'TUSHARE_TOKEN', '') or ''
+        if not token:
+            logger.debug("TUSHARE_TOKEN 为空，跳过 Tushare 数据源")
+            return None
+
+        try:
+            import tushare as ts
+            ts.set_token(token)
+            self._tushare_pro = ts.pro_api()
+            # 快速连通性探针：获取任意一只股票确认 token 有效
+            import concurrent.futures
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                self._tushare_pro.query, 'stock_basic',
+                exchange='', list_status='L',
+                fields='ts_code'
+            )
+            executor.shutdown(wait=False)
+            try:
+                result = future.result(timeout=getattr(config, 'TUSHARE_STOCK_NAME_TIMEOUT', 5))
+                if result is not None and not result.empty:
+                    logger.info("Tushare Pro 初始化成功，token 验证通过")
+                    return self._tushare_pro
+                else:
+                    logger.warning("Tushare Pro token 验证失败（返回空数据），跳过 Tushare 数据源")
+                    self._tushare_pro = None
+                    return None
+            except concurrent.futures.TimeoutError:
+                logger.warning("Tushare Pro 初始化超时，跳过 Tushare 数据源")
+                self._tushare_pro = None
+                return None
+        except ImportError:
+            logger.debug("tushare 包未安装，跳过 Tushare 数据源")
+            return None
+        except Exception as e:
+            logger.warning(f"Tushare Pro 初始化失败: {e}")
+            self._tushare_pro = None
+            return None
+
+    @staticmethod
+    def _to_tushare_code(stock_code):
+        """
+        将 miniQMT 内部代码统一为 Tushare ts_code 格式。
+
+        miniQMT 使用 000001.SZ / 600036.SH 等格式，
+        Tushare 使用完全相同的 ts_code 格式，直接透传即可。
+
+        处理裸代码（如 '002771'）或带 sh./sz. 前缀的情况。
+        """
+        code = str(stock_code).strip().upper()
+        # 已有 .SH/.SZ 后缀 → 直接返回（Tushare 标准格式）
+        if code.endswith(('.SH', '.SZ')):
+            return code
+        # sh.600036 / sz.002771 格式 → 转为 600036.SH / 002771.SZ
+        if code.startswith('SH.') or code.startswith('SZ.'):
+            return code[3:] + '.' + code[:2]
+        # 裸代码：根据前缀判断交易所
+        if code.startswith(('6', '5', '9')):
+            return code + '.SH'
+        else:
+            return code + '.SZ'
+
+    def _download_history_tushare(self, stock_code, start_date=None, end_date=None):
+        """
+        通过 Tushare Pro 获取日线历史数据。
+
+        Args:
+            stock_code: 股票代码（支持 000001.SZ / 600036.SH / 裸代码）
+            start_date: 开始日期 YYYYMMDD
+            end_date: 结束日期 YYYYMMDD
+
+        Returns:
+            pandas.DataFrame（列 date/open/high/low/close/volume/amount）或 None
+        """
+        # 冷却期检查
+        if time.time() < self._ts_cooldown_until:
+            logger.debug(f"Tushare 历史数据处于冷却期，跳过 {stock_code}")
+            return None
+
+        pro = self._get_tushare_pro()
+        if pro is None:
+            return None
+
+        ts_code = self._to_tushare_code(stock_code)
+
+        # 日期格式转换
+        ts_start = start_date if start_date else (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
+        ts_end = end_date if end_date else datetime.now().strftime('%Y%m%d')
+
+        import concurrent.futures
+        start_ts = time.time()
+
+        try:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                pro.daily,
+                ts_code=ts_code,
+                start_date=ts_start,
+                end_date=ts_end,
+            )
+            executor.shutdown(wait=False)
+            df = future.result(timeout=getattr(config, 'TUSHARE_API_TIMEOUT', 10))
+
+            latency_ms = int((time.time() - start_ts) * 1000)
+
+            if df is None or df.empty:
+                self._record_market_health("Tushare", "history", stock_code, False, latency_ms, reason="empty")
+                self._ts_consecutive_failures += 1
+                self._check_tushare_cooldown()
+                return None
+
+            # 列重命名：Tushare daily() 返回 trade_date, open, high, low, close, vol, amount
+            df = df.rename(columns={
+                'trade_date': 'date',
+                'vol': 'volume',
+            })
+
+            # 日期标准化：Tushare 返回 YYYYMMDD 格式字符串
+            df['date'] = df['date'].astype(str).str.strip()
+
+            df = self._normalize_history_dates(df, stock_code, source='Tushare')
+            if df.empty:
+                self._record_market_health("Tushare", "history", stock_code, False, latency_ms, reason="invalid_dates")
+                self._ts_consecutive_failures += 1
+                self._check_tushare_cooldown()
+                return None
+
+            # 筛选需要的列
+            keep_cols = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount']
+            available_cols = [c for c in keep_cols if c in df.columns]
+            df = df[available_cols]
+
+            df = self._filter_history_date_range(df, start_date=start_date, end_date=end_date)
+            if df.empty:
+                logger.debug(f"Tushare: {stock_code} 历史数据无新增记录(start={ts_start}, end={ts_end})")
+                self._record_market_health("Tushare", "history", stock_code, True, latency_ms, reason="no_new_data")
+                return None
+
+            # 确保数值列类型正确
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            df['stock_code'] = stock_code
+
+            # 成功：重置失败计数
+            self._ts_consecutive_failures = 0
+            self._ts_cooldown_until = 0.0
+            self._record_market_health("Tushare", "history", stock_code, True, latency_ms, reason="success")
+            logger.debug(f"Tushare: {stock_code} 获取 {len(df)} 条日线数据 (start={ts_start}, end={ts_end})")
+            return df
+
+        except concurrent.futures.TimeoutError:
+            latency_ms = int((time.time() - start_ts) * 1000)
+            self._record_market_health("Tushare", "history", stock_code, False, latency_ms, reason="timeout")
+            logger.warning(f"Tushare: 下载 {stock_code} 历史数据超时")
+            self._ts_consecutive_failures += 1
+            self._check_tushare_cooldown()
+            return None
+        except Exception as e:
+            latency_ms = int((time.time() - start_ts) * 1000)
+            self._record_market_health("Tushare", "history", stock_code, False, latency_ms, reason="exception")
+            logger.warning(f"Tushare: 下载 {stock_code} 历史数据异常: {e}")
+            self._ts_consecutive_failures += 1
+            self._check_tushare_cooldown()
+            return None
+
+    def _get_stock_name_from_tushare(self, stock_code):
+        """
+        通过 Tushare Pro stock_basic 查询股票名称。
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            str 股票名称，失败或不可用返回 None
+        """
+        # 冷却期检查
+        if time.time() < self._ts_cooldown_until:
+            return None
+
+        pro = self._get_tushare_pro()
+        if pro is None:
+            return None
+
+        ts_code = self._to_tushare_code(stock_code)
+        import concurrent.futures
+        start_ts = time.time()
+
+        try:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                pro.stock_basic,
+                ts_code=ts_code,
+                fields='ts_code,name',
+            )
+            executor.shutdown(wait=False)
+            df = future.result(timeout=getattr(config, 'TUSHARE_STOCK_NAME_TIMEOUT', 5))
+
+            latency_ms = int((time.time() - start_ts) * 1000)
+
+            if df is not None and not df.empty:
+                name = str(df.iloc[0].get('name', '')).strip()
+                if self._is_valid_stock_name(stock_code, name):
+                    self._record_market_health("Tushare", "stock_name", stock_code, True, latency_ms, reason="success")
+                    # 成功：重置失败计数
+                    self._ts_consecutive_failures = 0
+                    self._ts_cooldown_until = 0.0
+                    return self._cache_stock_name(stock_code, name)
+
+            self._record_market_health("Tushare", "stock_name", stock_code, False, latency_ms, reason="empty_or_invalid")
+            self._ts_consecutive_failures += 1
+            self._check_tushare_cooldown()
+            return None
+
+        except concurrent.futures.TimeoutError:
+            latency_ms = int((time.time() - start_ts) * 1000)
+            self._record_market_health("Tushare", "stock_name", stock_code, False, latency_ms, reason="timeout")
+            logger.warning(f"Tushare: 查询 {stock_code} 名称超时")
+            self._ts_consecutive_failures += 1
+            self._check_tushare_cooldown()
+            return None
+        except Exception as e:
+            latency_ms = int((time.time() - start_ts) * 1000)
+            self._record_market_health("Tushare", "stock_name", stock_code, False, latency_ms, reason="exception")
+            logger.debug(f"Tushare: 查询 {stock_code} 名称异常: {e}")
+            self._ts_consecutive_failures += 1
+            self._check_tushare_cooldown()
+            return None
+
+    def _check_tushare_cooldown(self):
+        """检查 Tushare 连续失败次数，达到阈值时进入冷却期。"""
+        max_fail = getattr(config, 'TUSHARE_MAX_CONSECUTIVE_FAILURES', 3)
+        if self._ts_consecutive_failures >= max_fail:
+            cooldown = getattr(config, 'TUSHARE_RETRY_COOLDOWN', 300)
+            self._ts_cooldown_until = time.time() + cooldown
+            logger.warning(
+                f"Tushare 连续失败 {self._ts_consecutive_failures} 次，"
+                f"进入冷却期 {cooldown} 秒"
+            )
+
     def _baostock_login_with_timeout(self, timeout=None):
         """带超时的 baostock login，防止网络异常时无限阻塞。
 
@@ -1382,6 +1660,11 @@ class DataManager:
                 logger.debug(f"通过qmt_trader获取股票名称出错: {str(e)}")
 
             stock_name = self._get_stock_name_from_xtdata(stock_code)
+            if stock_name:
+                return stock_name
+
+            # ── Tushare Pro 股票名称查询（xtdata 之后、baostock 之前）──
+            stock_name = self._get_stock_name_from_tushare(stock_code)
             if stock_name:
                 return stock_name
 

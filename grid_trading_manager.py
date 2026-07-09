@@ -2125,7 +2125,12 @@ class GridTradingManager:
             logger.warning(f"[GRID] confirmed trade_records写入异常: trade_id={trade_id}, err={err}")
 
     def handle_deal_callback(self, trade) -> bool:
-        """实盘成交回调确认网格委托；只有真实成交后才更新网格统计和交易表"""
+        """实盘成交回调确认网格委托；只有真实成交后才更新网格统计和交易表
+
+        部分成交阶段只累积填充量并更新 grid_orders 状态，不写 grid_trades/trade_records、不重建网格。
+        全部成交后一次性落账：写一条聚合 grid_trades + 一条 trade_records + 重建一次网格。
+        避免 QMT 拆单（如 1300 股拆成 12 笔部分成交）导致重复落账和统计失真。
+        """
         order_id = self._get_attr_or_key(trade, ('order_id', 'm_strOrderID', 'order_sys_id'))
         if order_id is None:
             return False
@@ -2184,40 +2189,82 @@ class GridTradingManager:
                 logger.warning(f"[GRID] handle_deal_callback: 会话不存在或非active order_id={order_id}, session_id={pending['session_id']}")
                 return False
 
+            # ── 累积填充量 ──
             new_filled_volume = pending.get('filled_volume', 0) + confirmed_volume
             new_filled_amount = pending.get('filled_amount', 0.0) + price * confirmed_volume
+            pending.setdefault('filled_weighted_price_sum', 0.0)
+            pending['filled_weighted_price_sum'] += price * confirmed_volume
+            pending.setdefault('filled_total_commission', 0.0)
+            if commission is not None:
+                pending['filled_total_commission'] += commission
             order_status = 'filled' if new_filled_volume >= pending['requested_volume'] else 'partial_filled'
-
-            success = self._record_confirmed_grid_trade_with_order(
-                session=session,
-                signal=pending['signal'],
-                side=pending['side'],
-                price=price,
-                volume=confirmed_volume,
-                trade_id=trade_id,
-                order_id=order_id,
-                order_updates={
-                    'status': order_status,
-                    'filled_volume': new_filled_volume,
-                    'filled_amount': new_filled_amount
-                },
-                commission=commission
-            )
-            if not success:
-                return False
 
             pending['filled_volume'] = new_filled_volume
             pending['filled_amount'] = new_filled_amount
             confirmed_trade_ids.add(trade_id)
 
-            if pending['filled_volume'] >= pending['requested_volume']:
-                self.pending_grid_orders.pop(order_id, None)
-                logger.info(f"[GRID] handle_deal_callback: 委托已全部成交并移除 pending order_id={order_id}")
-            else:
+            # 更新 grid_orders 表状态（部分成交也写入，便于重启恢复 pendings）
+            if order_id and hasattr(self.db, 'update_grid_order'):
+                try:
+                    self.db.update_grid_order(order_id, {
+                        'status': order_status,
+                        'filled_volume': new_filled_volume,
+                        'filled_amount': new_filled_amount
+                    })
+                except Exception as db_err:
+                    logger.warning(f"[GRID] handle_deal_callback: 更新grid_order状态失败 order_id={order_id}, err={db_err}")
+
+            if order_status == 'partial_filled':
                 logger.info(
-                    f"[GRID] handle_deal_callback: 委托部分成交 order_id={order_id}, "
+                    f"[GRID] handle_deal_callback: 部分成交累积 order_id={order_id}, "
                     f"filled={pending['filled_volume']}/{pending['requested_volume']}"
                 )
+                self._complete_stop_if_no_open_orders_unlocked(pending['session_id'])
+                return True
+
+            # ── 全部成交：一次性落账（聚合） ──
+            side = pending['side']
+            signal = pending['signal']
+            total_volume = pending['filled_volume']
+            total_amount = pending['filled_amount']
+            avg_price = pending['filled_weighted_price_sum'] / total_volume if total_volume > 0 else price
+            total_commission = pending.get('filled_total_commission', None)
+
+            success = self._record_confirmed_grid_trade_with_order(
+                session=session,
+                signal=signal,
+                side=side,
+                price=avg_price,
+                volume=total_volume,
+                trade_id=str(order_id),
+                order_id=order_id,
+                order_updates={
+                    'status': 'filled',
+                    'filled_volume': total_volume,
+                    'filled_amount': total_amount
+                },
+                commission=total_commission
+            )
+            if not success:
+                # DB 落账失败时回滚 pending 累积量（保留 pending 等待补偿确认重试）
+                pending['filled_volume'] = pending.get('filled_volume', 0) - confirmed_volume
+                pending['filled_amount'] = pending.get('filled_amount', 0.0) - price * confirmed_volume
+                pending['filled_weighted_price_sum'] = pending.get('filled_weighted_price_sum', 0.0) - price * confirmed_volume
+                if commission is not None:
+                    pending['filled_total_commission'] = pending.get('filled_total_commission', 0.0) - commission
+                confirmed_trade_ids.discard(trade_id)
+                logger.warning(
+                    f"[GRID] handle_deal_callback: 聚合落账失败，已回滚 pending 累积量 "
+                    f"order_id={order_id}, rolled_back_volume={confirmed_volume}"
+                )
+                return False
+
+            self.pending_grid_orders.pop(order_id, None)
+            logger.info(
+                f"[GRID] handle_deal_callback: 委托已全部成交并聚合落账 order_id={order_id}, "
+                f"total_volume={total_volume}, avg_price={avg_price:.2f}, "
+                f"partial_fill_count={len(confirmed_trade_ids)}"
+            )
             self._complete_stop_if_no_open_orders_unlocked(pending['session_id'])
             return True
 
@@ -2377,7 +2424,35 @@ class GridTradingManager:
                 logger.warning(f"[GRID] _build_grid_order_plan: {stock_code} 买入风险价无效")
                 return None
 
-            volume = (int(buy_amount / reserved_price) // 100) * 100
+            # ── 买入量基数统一：与卖出量一致，取持仓总数 × position_ratio ──
+            # 原方案买入基于金额(max_investment×position_ratio/price)，卖出基于持仓(available×ratio)，
+            # 导致买卖每档操作量不一致（如买800股 vs 卖1300股），网格不对称。
+            # 修复：买入量优先基于当前总持仓数量 × position_ratio，与卖出量基数统一；
+            #       如无持仓（首次买入）回退为基于金额计算。
+            position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
+            current_volume = int(position.get('volume', 0) or 0) if position else 0
+            if current_volume > 0:
+                # 有持仓：买入量与卖出量统一基数 = 总持仓 × position_ratio
+                volume = (int(current_volume * session.position_ratio) // 100) * 100
+                if volume < 100:
+                    volume = 100
+                # 硬上限：不得超出剩余投资额度
+                max_vol = int(remaining_investment / reserved_price) // 100 * 100
+                if volume > max_vol:
+                    logger.debug(f"[GRID] _build_grid_order_plan: {stock_code} 买入量{volume}超出剩余额度限制{max_vol}, 调整")
+                    volume = max_vol
+                logger.debug(
+                    f"[GRID] _build_grid_order_plan: {stock_code} 买入量基于持仓基数 "
+                    f"current_volume={current_volume}, position_ratio={session.position_ratio*100:.0f}%, "
+                    f"volume={volume}"
+                )
+            else:
+                # 无持仓（首次买入）：回退为基于金额计算
+                volume = (int(buy_amount / reserved_price) // 100) * 100
+                logger.debug(
+                    f"[GRID] _build_grid_order_plan: {stock_code} 无持仓，买入量基于金额 "
+                    f"buy_amount={buy_amount:.2f}, reserved_price={reserved_price:.4f}, volume={volume}"
+                )
             if volume < 100:
                 logger.warning(
                     f"[GRID] _build_grid_order_plan: {stock_code} 按风险价{reserved_price:.4f}计算后买入数量{volume}不足100股"
@@ -2550,9 +2625,10 @@ class GridTradingManager:
         try:
             # 锁外预取外部依赖，避免在网格全局锁内调用持仓/行情/QMT接口。
             position_snapshot = None
-            if signal_type == 'SELL' and stock_code:
+            if stock_code:
+                # BUY 需要持仓快照用于统一买卖量基数（持仓×ratio）；SELL 需要用于T+1可卖数量
                 position_snapshot = self.position_manager.get_position(stock_code)
-                logger.debug(f"[GRID] execute_grid_trade: RISK-3预取持仓 stock_code={stock_code}, "
+                logger.debug(f"[GRID] execute_grid_trade: 预取持仓 stock_code={stock_code}, "
                              f"snapshot={'有持仓' if position_snapshot else '无持仓'}")
             latest_price = self._get_latest_price_for_signal(stock_code, position_snapshot=position_snapshot) if stock_code else None
             tradable_result = (True, "")

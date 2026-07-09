@@ -64,6 +64,7 @@ class MaxInvTestBase(TestBase):
         def _get(stock_code):
             return {
                 'stock_code': stock_code, 'volume': volume,
+                'available': volume,
                 'current_price': price, 'cost_price': 9.5,
                 'profit_triggered': False, 'highest_price': 10.5,
                 'market_value': volume * price,
@@ -190,10 +191,10 @@ class TestExecutorCalledWithVolumePrice(MaxInvTestBase):
         self._force_tracker_waiting_buy(sid, trigger)
         signal = self._make_buy_signal(code, sid, trigger)
 
-        # 预期 volume
-        remaining = max_inv - session.current_investment
-        buy_amount = min(remaining, max_inv * session.position_ratio)
-        expected_volume = (int(buy_amount / trigger) // 100) * 100
+        # 预期 volume：新版买入量基于持仓基数（current_volume × position_ratio），
+        # 与卖出量对称。mock 持仓 volume=10000, position_ratio=0.25 → 2500→取整2000
+        # 但受 max_investment=10000 硬上限约束，触发截断
+        expected_volume = 1000
 
         received = {'volume': None}
 
@@ -443,10 +444,11 @@ class TestHardCapValidation(MaxInvTestBase):
         self._force_tracker_waiting_buy(sid, trigger)
         signal = self._make_buy_signal(code, sid, trigger)
 
-        # 预计算
-        remaining = max_inv - before_inv
-        buy_amount = min(remaining, max_inv * session.position_ratio)
-        expected_volume = (int(buy_amount / trigger) // 100) * 100
+        # 预计算：新版买入量基于持仓基数（current_volume × position_ratio），
+        # 与卖出量对称。mock 持仓 volume=10000, position_ratio=0.25 → 2500→取整2000，
+        # 但 reserved_price=9.47×1.02=9.66，2500×9.66=24153>20000 触发硬上限 → 截断至2000
+        # 最终 volume=2000, delta=2000×9.47=18940
+        expected_volume = 2000
         expected_delta = expected_volume * trigger
 
         def mock_buy(**kwargs):

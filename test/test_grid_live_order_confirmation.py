@@ -10,7 +10,7 @@
 
 import os
 import sys
-import sqlite3
+import json
 import unittest
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -75,6 +75,9 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.position_manager._increment_data_version = Mock()
         self.position_manager.data_manager = Mock()
         self.position_manager.data_manager.get_latest_data.return_value = {'lastPrice': 10.0}
+        # 大部分 BUY 测试不需要持仓快照，Mock 返回 None 表示没有持仓
+        # → _build_grid_order_plan 中 BUY 无持仓时走金额回退路径
+        self.position_manager.get_position.return_value = None
         self.executor = Mock(spec=TradingExecutor)
         self.executor._save_trade_record.return_value = True
         self.manager = GridTradingManager(self.db, self.position_manager, self.executor)
@@ -130,6 +133,7 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         }
 
     def test_live_order_waits_for_deal_and_partial_fills_incrementally(self):
+        """部分成交只更新填充量不落账，全部成交后一次性聚合落账"""
         config.ENABLE_SIMULATION_MODE = False
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
         session = self._make_session()
@@ -147,24 +151,23 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.assertEqual(len(self.db.get_grid_trades(session.id)), 0)
         self.executor._save_trade_record.assert_not_called()
 
+        # 第1笔部分成交：只累积填充量，不落账
         self.assertTrue(self.manager.handle_deal_callback(
             FakeTrade('ORDER_PARTIAL', volume=100, price=10.0, trade_id='DEAL_1')
         ))
-        self.executor._save_trade_record.assert_called_once()
-        first_record = self.executor._save_trade_record.call_args_list[0].kwargs
-        self.assertEqual(first_record['trade_type'], 'BUY')
-        self.assertEqual(first_record['trade_id'], 'DEAL_1')
-        self.assertEqual(first_record['volume'], 100)
-        self.assertAlmostEqual(first_record['price'], 10.0, places=4)
-        self.assertEqual(first_record['strategy'], config.GRID_STRATEGY_NAME)
+        # 部分成交阶段不应写 trade_records 或 grid_trades
+        self.executor._save_trade_record.assert_not_called()
+        self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 0)
         self.assertIn('ORDER_PARTIAL', self.manager.pending_grid_orders)
         db_order = self.db.get_grid_order('ORDER_PARTIAL')
         self.assertEqual(db_order['status'], 'partial_filled')
         self.assertEqual(db_order['filled_volume'], 100)
-        self.assertEqual(session.buy_count, 1)
-        self.assertEqual(session.total_buy_volume, 100)
-        self.assertAlmostEqual(session.current_investment, 1000.0, places=2)
+        # session 统计在部分成交阶段不变
+        self.assertEqual(session.buy_count, 0)
+        self.assertEqual(session.total_buy_volume, 0)
+        self.assertAlmostEqual(session.current_investment, 0.0, places=2)
 
+        # 第2笔部分成交：委托量200已满，全部成交 → 一次性聚合落账
         self.assertTrue(self.manager.handle_deal_callback(
             FakeTrade('ORDER_PARTIAL', volume=100, price=10.1, trade_id='DEAL_2')
         ))
@@ -172,15 +175,23 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         db_order = self.db.get_grid_order('ORDER_PARTIAL')
         self.assertEqual(db_order['status'], 'filled')
         self.assertEqual(db_order['filled_volume'], 200)
-        self.assertEqual(session.buy_count, 2)
+        # 统计只 +1（聚合），总量用加权均价
+        self.assertEqual(session.buy_count, 1)
         self.assertEqual(session.total_buy_volume, 200)
-        self.assertAlmostEqual(session.current_investment, 2010.0, places=2)
-        self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 2)
-        self.assertEqual(self.executor._save_trade_record.call_count, 2)
-        second_record = self.executor._save_trade_record.call_args_list[1].kwargs
-        self.assertEqual(second_record['trade_id'], 'DEAL_2')
-        self.assertEqual(second_record['volume'], 100)
-        self.assertAlmostEqual(second_record['price'], 10.1, places=4)
+        self.assertAlmostEqual(session.current_investment, 200 * 10.05, places=2)  # 加权均价 (100*10.0+100*10.1)/200=10.05
+        # grid_trades 只有一条聚合记录
+        trades = self.db.get_grid_trades(session.id, limit=10)
+        self.assertEqual(len(trades), 1)
+        self.assertAlmostEqual(trades[0]['trigger_price'], 10.05, places=4)
+        self.assertEqual(trades[0]['volume'], 200)
+        # trade_records 只写一条
+        self.assertEqual(self.executor._save_trade_record.call_count, 1)
+        record = self.executor._save_trade_record.call_args_list[0].kwargs
+        self.assertEqual(record['trade_type'], 'BUY')
+        self.assertEqual(record['trade_id'], 'ORDER_PARTIAL')
+        self.assertEqual(record['volume'], 200)
+        self.assertAlmostEqual(record['price'], 10.05, places=4)
+        self.assertEqual(record['strategy'], config.GRID_STRATEGY_NAME)
 
     def test_order_cancel_reject_cleans_pending_and_persists_status(self):
         config.ENABLE_SIMULATION_MODE = False
@@ -265,6 +276,7 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 1)
 
     def test_duplicate_deal_ignored_by_db_idempotency(self):
+        """重复成交回报（同一 trade_id）在部分成交阶段被忽略"""
         config.ENABLE_SIMULATION_MODE = False
         config.GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True
         session = self._make_session()
@@ -272,8 +284,10 @@ class TestGridLiveOrderConfirmation(unittest.TestCase):
         self.executor.buy_stock.return_value = {'order_id': 'ORDER_DUP'}
 
         self.assertTrue(self.manager.execute_grid_trade(signal))
-        trade = FakeTrade('ORDER_DUP', volume=100, price=10.0, trade_id='DEAL_DUP')
+        # 第一笔回调：200股全部成交 → 一次性聚合落账
+        trade = FakeTrade('ORDER_DUP', volume=200, price=10.0, trade_id='DEAL_DUP')
         self.assertTrue(self.manager.handle_deal_callback(trade))
+        # 同一 trade_id 重复回调 → 忽略
         self.assertFalse(self.manager.handle_deal_callback(trade))
         self.assertEqual(len(self.db.get_grid_trades(session.id, limit=10)), 1)
 

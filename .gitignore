@@ -110,6 +110,7 @@ xtquant/__pycache__/xtdatacenter.cpython-38.pyc
 xtquant/__pycache__/xtutil.cpython-38.pyc
 .omc/
 .env.example
+.env
 
 # Playwright MCP 临时产物
 .playwright-mcp/

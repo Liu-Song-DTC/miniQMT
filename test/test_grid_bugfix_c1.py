@@ -222,6 +222,9 @@ class TestBugC1DbFailureProtection(unittest.TestCase):
         self.db = DatabaseManager(':memory:')
         self.db.init_grid_tables()
         self.position_manager = Mock(spec=PositionManager)
+        self.position_manager.get_position.return_value = None  # 无持仓→买入走金额回退路径
+        self.position_manager.data_manager = Mock()
+        self.position_manager.data_manager.get_latest_data.return_value = {'lastPrice': 10.0}
         self.executor = Mock(spec=TradingExecutor)
         self.manager = GridTradingManager(
             db_manager=self.db,
@@ -418,7 +421,7 @@ class TestDesign4StopLossWithoutSell(unittest.TestCase):
             trading_executor=self.executor
         )
         self.position_manager.get_position.return_value = {
-            'volume': 1000, 'cost_price': 10.0
+            'volume': 1000, 'available': 1000, 'cost_price': 10.0
         }
 
     def tearDown(self):
@@ -540,7 +543,7 @@ class TestGapDownDeviationExit(unittest.TestCase):
             trading_executor=self.executor
         )
         self.position_manager.get_position.return_value = {
-            'volume': 1000, 'cost_price': 10.0
+            'volume': 1000, 'available': 1000, 'cost_price': 10.0
         }
         self.orig_sim = config.ENABLE_SIMULATION_MODE
         config.ENABLE_SIMULATION_MODE = True
@@ -696,7 +699,7 @@ class TestBuyProtectionWithoutCooldown(unittest.TestCase):
             trading_executor=self.executor
         )
         self.position_manager.get_position.return_value = {
-            'volume': 1000, 'cost_price': 10.0
+            'volume': 1000, 'available': 1000, 'cost_price': 10.0
         }
         self.orig_sim = config.ENABLE_SIMULATION_MODE
         self.orig_cooldown = getattr(config, 'GRID_BUY_COOLDOWN', 0)
@@ -779,6 +782,9 @@ class TestBugC1EndToEnd(unittest.TestCase):
         self.db = DatabaseManager(':memory:')
         self.db.init_grid_tables()
         self.position_manager = Mock(spec=PositionManager)
+        self.position_manager.get_position.return_value = None  # 无持仓→买入走金额回退
+        self.position_manager.data_manager = Mock()
+        self.position_manager.data_manager.get_latest_data.return_value = {'lastPrice': 10.0}
         self.executor = Mock(spec=TradingExecutor)
         self.manager = GridTradingManager(
             db_manager=self.db,

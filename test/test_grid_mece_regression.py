@@ -356,6 +356,7 @@ class TestGridOrderCallbackMece(GridMeceRegressionBase):
         self.executor.buy_stock.return_value = {'order_id': 'ORDER_PART_CANCEL'}
 
         self.assertTrue(self.manager.execute_grid_trade(self.buy_signal(session, price=10.0)))
+        # 部分成交（100/200），新语义下只累积不落账
         self.assertTrue(self.manager.handle_deal_callback(
             FakeTrade('ORDER_PART_CANCEL', volume=100, price=10.0, trade_id='DEAL_PART_ONLY')
         ))
@@ -365,7 +366,8 @@ class TestGridOrderCallbackMece(GridMeceRegressionBase):
         self.assertEqual(order['status'], 'partial_filled_canceled')
         self.assertEqual(order['filled_volume'], 100)
         self.assertNotIn('ORDER_PART_CANCEL', self.manager.pending_grid_orders)
-        self.assertEqual(session.buy_count, 1)
+        # 新语义：部分成交未落账，buy_count 仍为 0
+        self.assertEqual(session.buy_count, 0)
 
     def test_terminal_callback_updates_historical_order_even_not_in_memory(self):
         session = self.make_session()

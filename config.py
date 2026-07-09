@@ -74,6 +74,21 @@ BAOSTOCK_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
 # 为空则匿名访问（免费数据仍可用）。⚠️ 必须用环境变量，切勿硬编码。
 BAOSTOCK_API_KEY = os.environ.get("BAOSTOCK_API_KEY", "")
 
+# ============ Tushare Pro 数据源配置 ============
+# Tushare 数据源总开关。True = 在标准模式下优先于 Mootdx 使用 Tushare 获取历史数据，
+# 并在 get_stock_name 链路中 xtdata 之后、baostock 之前插入 Tushare 查询。
+ENABLE_TUSHARE_DATA_SOURCE = _env_bool("ENABLE_TUSHARE_DATA_SOURCE", True)
+
+# Tushare API Token。⚠️ 必须从环境变量读取，切勿硬编码。
+# 建议在 .env 文件中设置 TUSHARE_TOKEN，通过 miniqmt.bat 加载。
+TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
+
+# Tushare API 调用超时与冷却配置（与 baostock 机制对称）
+TUSHARE_API_TIMEOUT = 10              # Tushare 历史数据 API 超时(秒)
+TUSHARE_STOCK_NAME_TIMEOUT = 5        # Tushare 股票名称 API 超时(秒)
+TUSHARE_RETRY_COOLDOWN = 300          # 连续失败后冷却时间(秒，默认5分钟)
+TUSHARE_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
+
 # 其他功能开关
 ENABLE_DATA_SYNC = True             # 是否启用数据同步
 ENABLE_POSITION_MONITOR = True      # 是否启用持仓监控
