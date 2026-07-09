@@ -3734,6 +3734,41 @@ class PositionManager:
                 logger.warning(f"清除 {count} 个待处理信号{f'（原因: {reason}）' if reason else ''}: {list(self.latest_signals.keys())}")
                 self.latest_signals.clear()
 
+    def _detect_and_enqueue_dynamic_signal(self, stock_code, current_price):
+        """检测动态止盈止损信号并写入 latest_signals（含开关门控）。
+
+        仅在「检测开关 ENABLE_DYNAMIC_STOP_PROFIT」与「自动执行开关 ENABLE_AUTO_TRADING」
+        同时开启时才检测并入队；二者任一关闭时该信号永远不会被执行，若仍持续检测会形成
+        detect(监控) → 策略"自动交易已关闭"清除 → detect 的循环，每 3 秒在日志刷屏
+        （曾出现账户级 take_profit_full 一天刷屏近 2 万行）。
+
+        网格信号走独立分支(ENABLE_GRID_TRADING)，不受此门控影响；因此清理残留信号时
+        仅清理非 grid_ 前缀的动态信号。
+
+        返回入队的 signal_type（未入队时返回 None），便于单元测试断言。
+        """
+        if config.ENABLE_DYNAMIC_STOP_PROFIT and config.ENABLE_AUTO_TRADING:
+            signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
+            with self.signal_lock:
+                if signal_type:
+                    self.latest_signals[stock_code] = {
+                        'type': signal_type,
+                        'info': signal_info,
+                        'timestamp': datetime.now()
+                    }
+                    logger.info(f"🔔 {stock_code} 检测到信号: {signal_type},等待策略处理")
+                else:
+                    self.latest_signals.pop(stock_code, None)
+            return signal_type
+
+        # 自动止盈止损未启用：清理可能残留的动态信号（不触碰网格信号），
+        # 避免策略线程反复读取并打印"自动交易已关闭"。
+        with self.signal_lock:
+            stale = self.latest_signals.get(stock_code)
+            if stale and not str(stale.get('type', '')).startswith('grid_'):
+                self.latest_signals.pop(stock_code, None)
+        return None
+
     def _position_monitor_loop(self):
         """持仓监控循环 - 鲁棒性优化版本,支持无人值守运行"""
         logger.info("🚀 持仓监控循环已启动")
@@ -3956,19 +3991,8 @@ class PositionManager:
                         # 调试日志
                         logger.debug(f"[MONITOR_CALL] 开始检查 {stock_code} 的交易信号 (价格: {current_price:.2f})")
 
-                        # 动态止盈止损只写入自身信号队列，不再与网格信号共享。
-                        signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
-
-                        with self.signal_lock:
-                            if signal_type:
-                                self.latest_signals[stock_code] = {
-                                    'type': signal_type,
-                                    'info': signal_info,
-                                    'timestamp': datetime.now()
-                                }
-                                logger.info(f"🔔 {stock_code} 检测到信号: {signal_type},等待策略处理")
-                            else:
-                                self.latest_signals.pop(stock_code, None)
+                        # 动态止盈止损信号检测与入队（含开关门控，见方法内注释）。
+                        self._detect_and_enqueue_dynamic_signal(stock_code, current_price)
 
                         # 网格交易独立检测并直接执行，不进入 latest_signals/strategy 动态止盈链路。
                         if self.grid_manager and config.ENABLE_GRID_TRADING:

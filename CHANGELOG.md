@@ -4,6 +4,11 @@
 
 > 本文件是 **唯一的变更记录源**。文档站 `/changelog/` 页面通过 `include-markdown` 引用本文件，请在此处直接编辑。
 
+## [Unreleased]
+
+### Fixed
+- **动态止盈止损信号日志刷屏**：监控线程的动态止盈止损检测原先只受总开关 `ENABLE_AUTO_OPERATION` 门控（网格需其常开），未受执行开关 `ENABLE_AUTO_TRADING` 门控。当"允许自动止盈"关闭而持仓持续满足止盈条件时，会形成"检测→策略因自动交易关闭而清除→再检测"的每 3 秒死循环（曾出现单账户 `take_profit_full` 一天刷屏近 2 万行）。现抽取 `_detect_and_enqueue_dynamic_signal()`，仅在 `ENABLE_DYNAMIC_STOP_PROFIT` 且 `ENABLE_AUTO_TRADING` 同时开启时才检测并入队；关闭时清理残留动态信号（保留网格信号）。网格检测走独立分支不受影响。
+
 ## [3.5.0] - 2026-07-09
 
 > 本版本聚焦**网格交易实盘落账准确性**：部分成交聚合落账避免QMT拆单导致重复记录，买卖量基数统一确保网格对称运行。同时新增 Tushare 数据源适配。

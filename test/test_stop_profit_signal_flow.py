@@ -654,5 +654,129 @@ class TestStopProfitSignalFlow(TestBase):
         self.assertIn("dynamic_take_profit_price", signal_info)
 
 
+class TestDynamicSignalGating(TestBase):
+    """监控线程动态止盈止损信号入队门控测试。
+
+    回归：当"允许自动止盈"(ENABLE_AUTO_TRADING) 关闭时，即使价格持续满足
+    take_profit_full 条件，监控线程也不应反复检测/入队/刷屏（detect→clear→detect）。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pm = PositionManager()
+        self.pm.stop_sync_thread()
+
+        # 确保内存表包含止盈突破相关字段
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "profit_breakout_triggered" not in cols:
+            cursor.execute("ALTER TABLE positions ADD COLUMN profit_breakout_triggered BOOLEAN DEFAULT FALSE")
+        if "breakout_highest_price" not in cols:
+            cursor.execute("ALTER TABLE positions ADD COLUMN breakout_highest_price REAL")
+        cursor.execute("DELETE FROM positions")
+        self.pm.memory_conn.commit()
+
+        self._orig_auto_op = config.ENABLE_AUTO_OPERATION
+        self._orig_auto_trading = config.ENABLE_AUTO_TRADING
+        self._orig_dyn = config.ENABLE_DYNAMIC_STOP_PROFIT
+
+    def tearDown(self):
+        config.ENABLE_AUTO_OPERATION = self._orig_auto_op
+        config.ENABLE_AUTO_TRADING = self._orig_auto_trading
+        config.ENABLE_DYNAMIC_STOP_PROFIT = self._orig_dyn
+        try:
+            self.pm.stop_sync_thread()
+            self.pm.memory_conn.close()
+        finally:
+            super().tearDown()
+
+    def _insert_take_profit_full_position(self):
+        """构造一个持续满足 take_profit_full 的持仓，返回 (stock_code, current_price)。"""
+        cost_price = 10.0
+        highest_price = 12.0
+        current_price = highest_price * 0.87 - 0.05  # 跌破动态止盈位
+        stock_code = "000001.SZ"
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO positions
+            (stock_code, volume, available, cost_price, current_price,
+             open_date, profit_triggered, highest_price, stop_loss_price,
+             profit_breakout_triggered, breakout_highest_price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            stock_code, 1000, 400, cost_price, current_price,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 1, highest_price,
+            cost_price * (1 + config.STOP_LOSS_RATIO), 0, 0.0
+        ))
+        self.pm.memory_conn.commit()
+        return stock_code, current_price
+
+    def test_auto_trading_off_does_not_enqueue_signal(self):
+        """ENABLE_AUTO_TRADING=False：不检测/不入队，返回 None，latest_signals 保持空。"""
+        stock_code, current_price = self._insert_take_profit_full_position()
+        config.ENABLE_DYNAMIC_STOP_PROFIT = True
+        config.ENABLE_AUTO_TRADING = False
+
+        result = self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+
+        self.assertIsNone(result, "自动止盈关闭时不应入队动态信号")
+        self.assertNotIn(stock_code, self.pm.latest_signals)
+
+    def test_dynamic_detection_off_does_not_enqueue_signal(self):
+        """ENABLE_DYNAMIC_STOP_PROFIT=False：即使自动交易开着也不入队。"""
+        stock_code, current_price = self._insert_take_profit_full_position()
+        config.ENABLE_DYNAMIC_STOP_PROFIT = False
+        config.ENABLE_AUTO_TRADING = True
+
+        result = self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+
+        self.assertIsNone(result)
+        self.assertNotIn(stock_code, self.pm.latest_signals)
+
+    def test_both_switches_on_enqueues_signal(self):
+        """两个开关都开：正常检测并入队 take_profit_full。"""
+        stock_code, current_price = self._insert_take_profit_full_position()
+        config.ENABLE_DYNAMIC_STOP_PROFIT = True
+        config.ENABLE_AUTO_TRADING = True
+
+        result = self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+
+        self.assertEqual(result, "take_profit_full")
+        self.assertIn(stock_code, self.pm.latest_signals)
+        self.assertEqual(self.pm.latest_signals[stock_code]['type'], "take_profit_full")
+
+    def test_switch_off_clears_stale_dynamic_signal(self):
+        """从开到关：残留的动态信号应被清理，避免策略线程反复处理。"""
+        stock_code, current_price = self._insert_take_profit_full_position()
+        config.ENABLE_DYNAMIC_STOP_PROFIT = True
+        config.ENABLE_AUTO_TRADING = True
+        self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+        self.assertIn(stock_code, self.pm.latest_signals)
+
+        config.ENABLE_AUTO_TRADING = False
+        result = self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+
+        self.assertIsNone(result)
+        self.assertNotIn(stock_code, self.pm.latest_signals)
+
+    def test_switch_off_preserves_grid_signal(self):
+        """关闭自动止盈清理动态信号时，不应误删网格信号。"""
+        stock_code, current_price = self._insert_take_profit_full_position()
+        config.ENABLE_AUTO_TRADING = False
+        with self.pm.signal_lock:
+            self.pm.latest_signals[stock_code] = {
+                'type': 'grid_buy',
+                'info': {},
+                'timestamp': datetime.now()
+            }
+
+        self.pm._detect_and_enqueue_dynamic_signal(stock_code, current_price)
+
+        self.assertIn(stock_code, self.pm.latest_signals,
+                      "网格信号不应被动态止盈门控清理")
+        self.assertEqual(self.pm.latest_signals[stock_code]['type'], 'grid_buy')
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
