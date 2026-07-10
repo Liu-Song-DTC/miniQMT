@@ -45,6 +45,7 @@ if sys.platform == "win32":
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH  = PROJECT_ROOT / "account_config.json"
+ENV_PATH     = PROJECT_ROOT / ".env"
 MAIN_PY      = PROJECT_ROOT / "main.py"
 WEB_MODE_PREF = PROJECT_ROOT / "data" / ".web_mode"
 
@@ -960,6 +961,224 @@ def cmd_autobuy_logs(_args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Tushare 数据源配置
+# ---------------------------------------------------------------------------
+def _read_env_key(key: str) -> str:
+    """从 .env 文件读取指定 key 的值。"""
+    if not ENV_PATH.exists():
+        return ""
+    for raw_line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() == key:
+            return v.strip()
+    return ""
+
+def _write_env_key(key: str, value: str) -> None:
+    """在 .env 中设置或更新 KEY=value。"""
+    if ENV_PATH.exists():
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+    found = False
+    for i, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, _ = line.partition("=")
+        if k.strip() == key:
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def _mask_token(token: str) -> str:
+    """Token 脱敏显示: 空=未配置, 只显示后8位。"""
+    if not token:
+        return "未配置"
+    return "***" + token[-8:]
+
+def cmd_tushare_config(_args) -> int:
+    """Tushare 数据源配置子菜单。"""
+    import webbrowser
+
+    def _status():
+        token = _read_env_key("TUSHARE_TOKEN")
+        enabled = _read_env_key("ENABLE_TUSHARE_DATA_SOURCE").lower() in ("true", "1", "yes", "on")
+        print("\n" + "=" * 48)
+        print("  Tushare Pro 数据源 — 当前状态")
+        print("=" * 48)
+        print(f"  Token   : {_mask_token(token)}")
+        print(f"  总开关  : {'✓ 已启用' if enabled else '✗ 已禁用'}")
+        print(f"  说明    : 启用后在标准模式下优先于 Mootdx 获取历史K线和股票名称")
+        print("-" * 48)
+
+    while True:
+        _status()
+        print("  [1] 开启 / 关闭 Tushare 数据源")
+        print("  [2] 修改 Tushare Token")
+        print("  [3] 测试 Tushare 连通性")
+        print("  [4] 打开 Tushare Pro 官网 (注册/获取 Token)")
+        print("  [0] 返回主菜单")
+        print()
+        c = input("请选择 [0-4]: ").strip()
+
+        if c == "0":
+            return 0
+        elif c == "1":
+            current = _read_env_key("ENABLE_TUSHARE_DATA_SOURCE").lower() in ("true", "1", "yes", "on")
+            new_val = "false" if current else "true"
+            _write_env_key("ENABLE_TUSHARE_DATA_SOURCE", new_val)
+            print(f"\n  ✓ ENABLE_TUSHARE_DATA_SOURCE → {new_val}")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+        elif c == "2":
+            print("\n请输入新的 Tushare Token (留空=取消):")
+            new_token = input("> ").strip()
+            if new_token:
+                _write_env_key("TUSHARE_TOKEN", new_token)
+                print(f"\n  ✓ TUSHARE_TOKEN → {_mask_token(new_token)}")
+                print("  ⚠ 重启 miniQMT 后生效")
+            else:
+                print("  已取消")
+            input("\n按回车键继续...")
+        elif c == "3":
+            print("\n正在测试 Tushare 连通性...")
+            token = _read_env_key("TUSHARE_TOKEN")
+            if not token:
+                print("  ✗ TUSHARE_TOKEN 未配置，请先设置 Token")
+                input("\n按回车键继续...")
+                continue
+            try:
+                import tushare as ts
+                ts.set_token(token)
+                pro = ts.pro_api()
+                df = pro.stock_basic(ts_code='000001.SZ', fields='name')
+                if not df.empty:
+                    print(f"  ✓ 连通正常！示例: 000001.SZ = {df.iloc[0]['name']}")
+                else:
+                    print("  ✗ Token 可能无效（返回空数据）")
+            except ImportError:
+                print("  ✗ tushare 包未安装 (pip install tushare)")
+            except Exception as e:
+                print(f"  ✗ 连通性测试失败: {e}")
+            input("\n按回车键继续...")
+        elif c == "4":
+            webbrowser.open("https://tushare.pro")
+            print("\n  已打开浏览器...")
+            time.sleep(1)
+        else:
+            print(f"\n  无效选择: {c!r}")
+            time.sleep(1)
+
+
+# ---------------------------------------------------------------------------
+# 大QMT IPC Trader 配置
+# ---------------------------------------------------------------------------
+def cmd_qmt_ipc_config(_args) -> int:
+    """大QMT文件IPC Trader 配置子菜单。"""
+    import webbrowser
+
+    def _heartbeat_status():
+        """扫描 IPC_ROOT 下所有账号子目录的心跳文件。"""
+        ipc_root = _read_env_key("QMT_IPC_ROOT") or r"C:\QuantIPC"
+        if not os.path.isdir(ipc_root):
+            return []
+        results = []
+        for name in sorted(os.listdir(ipc_root)):
+            sub = os.path.join(ipc_root, name)
+            if not os.path.isdir(sub):
+                continue
+            hb = os.path.join(sub, "status", "heartbeat.json")
+            if os.path.exists(hb):
+                try:
+                    age = time.time() - os.path.getmtime(hb)
+                    alive = age < 10
+                    with open(hb, encoding="utf-8") as f:
+                        data = json.load(f)
+                    acc = data.get("account_id", name)
+                except Exception:
+                    acc = name
+                    alive = False
+                    age = -1
+                results.append((acc, alive, age))
+        return results
+
+    def _status():
+        enabled = _read_env_key("ENABLE_QMT_IPC_FALLBACK").lower() in ("true", "1", "yes", "on")
+        ipc_root = _read_env_key("QMT_IPC_ROOT") or "C:\\QuantIPC"
+        print("\n" + "=" * 48)
+        print("  大QMT文件IPC Trader — 当前状态")
+        print("=" * 48)
+        print(f"  总开关  : {'✓ 已启用' if enabled else '✗ 已禁用 (使用 xttrader 直连)'}")
+        print(f"  IPC目录 : {ipc_root}")
+        hb_list = _heartbeat_status()
+        if hb_list:
+            print(f"  大QMT心跳:")
+            for acc, alive, age in hb_list:
+                tag = f"在线 ({age:.0f}秒前)" if alive else f"离线 (上次 {age:.0f}秒前)" if age > 0 else "离线"
+                print(f"    {acc}: {tag}")
+        else:
+            print(f"  大QMT心跳: 未检测到 (等待 executor 启动)")
+        if enabled:
+            print(f"  提示    : 下单后 1-2 秒成交, 适合中低频策略")
+        print("-" * 48)
+
+    while True:
+        _status()
+        print("  [1] 开启 / 关闭 大QMT IPC Fallback")
+        print("  [2] 修改 IPC 文件目录")
+        print("  [3] 打开部署操作手册")
+        print("  [0] 返回主菜单")
+        print()
+        c = input("请选择 [0-3]: ").strip()
+
+        if c == "0":
+            return 0
+        elif c == "1":
+            current = _read_env_key("ENABLE_QMT_IPC_FALLBACK").lower() in ("true", "1", "yes", "on")
+            new_val = "false" if current else "true"
+            _write_env_key("ENABLE_QMT_IPC_FALLBACK", new_val)
+            print(f"\n  ✓ ENABLE_QMT_IPC_FALLBACK → {new_val}")
+            if new_val == "true":
+                print("  ℹ 大QMT模式: 所有交易通过文件IPC路由到 executor 执行")
+            else:
+                print("  ℹ xttrader 直连模式: 恢复默认行为")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+        elif c == "2":
+            current = _read_env_key("QMT_IPC_ROOT") or "C:\\QuantIPC"
+            print(f"\n当前 IPC 目录: {current}")
+            print("请输入新路径 (留空=取消):")
+            new_path = input("> ").strip()
+            if new_path:
+                _write_env_key("QMT_IPC_ROOT", new_path)
+                print(f"\n  ✓ QMT_IPC_ROOT → {new_path}")
+                print("  ⚠ 两端路径必须一致，重启后生效")
+            else:
+                print("  已取消")
+            input("\n按回车键继续...")
+        elif c == "3":
+            doc_path = PROJECT_ROOT / "qmt-trader" / "部署手册.md"
+            if doc_path.exists():
+                webbrowser.open(str(doc_path))
+                print("\n  已打开部署手册...")
+            else:
+                print("\n  ✗ 部署手册未找到")
+            time.sleep(1)
+        else:
+            print(f"\n  无效选择: {c!r}")
+            time.sleep(1)
+
+
+# ---------------------------------------------------------------------------
+# 主菜单
+# ---------------------------------------------------------------------------
 def cmd_menu(_args) -> int:
     """交互式中文菜单循环（由 miniqmt.bat 启动）。
 
@@ -1070,11 +1289,15 @@ def cmd_menu(_args) -> int:
         print("   [k] 停止自动买入服务")
         print("   [l] 查看自动买入状态")
         print("   [m] 查看自动买入日志")
+        print()
+        print("  [数据源 & 交易通道配置]")
+        print("   [n] Tushare Pro 数据源配置")
+        print("   [o] 大QMT IPC Trader 配置")
         print(DASH)
         print("   [0] 退出")
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-m]: ").lower()
+        choice = ask("请选择 [0-9, a-o]: ").lower()
 
         if choice == "0":
             print("\n再见!")
@@ -1226,6 +1449,17 @@ def cmd_menu(_args) -> int:
         elif choice == "m":
             print()
             cmd_autobuy_logs(None)
+            pause_return()
+
+        # ---- 数据源 & 交易通道配置 ----
+        elif choice == "n":
+            print()
+            cmd_tushare_config(None)
+            pause_return()
+
+        elif choice == "o":
+            print()
+            cmd_qmt_ipc_config(None)
             pause_return()
 
         else:

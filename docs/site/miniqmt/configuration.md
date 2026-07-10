@@ -33,6 +33,116 @@
 
 ---
 
+## 配置开关全景图
+
+下面两张图把 `config.py` 的核心开关映射到**功能投退 / 执行逻辑**和**数据源 / 交易通道切换**，帮助一眼看清每个开关控制什么。
+
+### 图 1 · 功能投退与执行逻辑
+
+信号检测始终运行；`ENABLE_AUTO_OPERATION` 是所有自动策略的总闸，下面挂两个策略分开关，网格再细分到单只股票会话，最后由 `ENABLE_SIMULATION_MODE` 决定走模拟还是实盘通道。
+
+```mermaid
+flowchart TD
+    MON["持仓监控线程（始终运行，每 3s）"] --> SIG["信号检测 → latest_signals 队列"]
+
+    SIG --> OP{"ENABLE_AUTO_OPERATION<br/>全局自动操作总闸"}
+    OP -->|False| STOP["只监控、不产生新单"]
+    OP -->|True| AT{"ENABLE_AUTO_TRADING<br/>非网格策略分开关"}
+    OP -->|True| GT{"ENABLE_GRID_TRADING<br/>网格分开关"}
+
+    AT -->|True| SP{"ENABLE_DYNAMIC_STOP_PROFIT"}
+    SP -->|True| SPX["动态止盈止损信号"]
+    GT -->|True| GSESS{"grid_trading_sessions.enabled<br/>单只股票网格开关"}
+    GSESS -->|自动| GRID["网格买卖信号"]
+    GSESS -->|暂停| GPAUSE["保留会话、不发新网格单"]
+
+    SPX --> EXEC["trading_executor 交易执行"]
+    GRID --> EXEC
+
+    EXEC --> BUYSELL{"ENABLE_ALLOW_BUY / ENABLE_ALLOW_SELL"}
+    BUYSELL --> SIM{"ENABLE_SIMULATION_MODE"}
+    SIM -->|True 模拟| SIMU["模拟成交（SIMULATION_BALANCE 扣减）"]
+    SIM -->|False 实盘| REAL["真实下单 → 交易通道（见图 2）"]
+```
+
+### 图 2 · 数据源与交易通道切换
+
+交易通道由工厂函数 `_create_qmt_trader()` 三选一；行情/历史/名称三条数据链各有独立的降级顺序和开关门控。
+
+```mermaid
+flowchart TD
+    subgraph CH["交易通道（下单 / 查持仓 / 查资产）"]
+        direction LR
+        F{"_create_qmt_trader()"}
+        F -->|默认| EASY["easy_qmt_trader<br/>xttrader 直连"]
+        F -->|ENABLE_XTQUANT_MANAGER| XQM["XtQuantClient<br/>HTTP 网关 :8888"]
+        F -->|ENABLE_QMT_IPC_FALLBACK| IPC["QmtIpcTrader<br/>大QMT 文件 IPC"]
+    end
+
+    subgraph RT["实时行情 get_latest_data"]
+        direction TB
+        RT1["xtdata get_full_tick"] -->|失败/超时| RT2["Mootdx 兜底"]
+    end
+
+    subgraph HIS["历史 K 线 download_history_data"]
+        direction TB
+        HGW{"ENABLE_XTQUANT_MANAGER?"}
+        HGW -->|网关模式| HXT["xtdata"]
+        HXT -->|失败/空| HTS{"ENABLE_TUSHARE_DATA_SOURCE?"}
+        HGW -->|标准模式| HTS
+        HTS -->|True| HTS2["Tushare 优先"]
+        HTS2 -->|失败/空| HMO["Mootdx 兜底"]
+        HTS -->|False| HMO
+    end
+
+    subgraph NAME["股票名称 get_stock_name（逐层降级）"]
+        direction TB
+        N1["内存缓存"] --> N2["QMT 持仓"] --> N3["xtdata"] --> N4{"Tushare<br/>ENABLE_TUSHARE_DATA_SOURCE"} --> N5{"baostock<br/>ENABLE_BAOSTOCK_STOCK_NAME_LOOKUP"} --> N6["返回代码兜底"]
+    end
+```
+
+!!! warning "xtdata 历史接口的 BSON 崩溃约束"
+    标准模式（`ENABLE_XTQUANT_MANAGER=False`）下历史数据**绝不走 xtdata**，因为部分 QMT 客户端的 `get_market_data_ex` 会触发底层 BSON 断言直接 abort 进程，`try/except` 与超时都拦不住。因此标准模式的历史链是 `Tushare → Mootdx`，只有网关模式才用 xtdata 拉历史。
+
+---
+
+## 交易通道配置
+
+交易接口（下单/撤单/查持仓/查资产）由 `position_manager._create_qmt_trader()` 工厂三选一，两个开关互斥、`ENABLE_XTQUANT_MANAGER` 优先级更高：
+
+| 开关组合 | 交易通道 | 适用场景 |
+|---------|---------|---------|
+| 都为 `False`（默认） | `easy_qmt_trader`（xttrader 直连） | 单机直连 QMT，最低延迟 |
+| `ENABLE_XTQUANT_MANAGER=True` | `XtQuantClient`（HTTP 网关 :8888） | 多账号统一入口、远程 API |
+| `ENABLE_QMT_IPC_FALLBACK=True` | `QmtIpcTrader`（大QMT 文件 IPC） | xttrader 失效时的降级：券商收紧 miniQMT 权限后，用大QMT自带授权下单 |
+
+### XtQuantManager 网关参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_XTQUANT_MANAGER` | `False` | 启用后所有交易/行情走 HTTP 网关 |
+| `XTQUANT_MANAGER_URL` | `"http://127.0.0.1:8888"` | 网关服务地址 |
+| `XTQUANT_MANAGER_TOKEN` | `""` | 网关 API Token（空=不验证） |
+| `XTQUANT_MANAGER_RATE_LIMIT` | `600` | 速率限制（次/分钟，0=不限速） |
+
+### 大QMT文件IPC Fallback 参数
+
+启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（`qmt_trade_executor.py`）读取执行。多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/` 子目录。部署见 [qmt-trader/部署手册.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md)。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_QMT_IPC_FALLBACK` | `False`（环境变量 `ENABLE_QMT_IPC_FALLBACK`） | 大QMT文件IPC 交易通道总开关；与 `ENABLE_XTQUANT_MANAGER` 互斥 |
+| `QMT_IPC_ROOT` | `"C:\QuantIPC"`（环境变量 `QMT_IPC_ROOT`） | IPC 文件目录，策略端与大QMT端必须一致 |
+| `QMT_IPC_ORDER_TIMEOUT` | `30` | 下单后等待成交回执最大秒数 |
+| `QMT_IPC_HEARTBEAT_MAX_AGE` | `10` | 心跳超过此秒数判定大QMT离线 |
+| `QMT_IPC_DEAL_POLL_INTERVAL` | `1.0` | 成交回报轮询间隔（秒） |
+| `QMT_IPC_DONE_LOOKBACK_SECONDS` | `86400` | done/ 目录委托查询回溯窗口（秒） |
+
+!!! tip "控制台快捷配置"
+    `miniqmt.bat` 菜单 `[n] Tushare Pro 数据源配置` / `[o] 大QMT IPC Trader 配置` 可直接开关、改 Token/目录、测连通性、查心跳，改动写入 `.env`，重启后生效。
+
+---
+
 ## 交易参数
 
 | 参数 | 默认值 | 说明 |
@@ -150,6 +260,22 @@ DYNAMIC_TAKE_PROFIT = [
 | `BAOSTOCK_MAX_CONSECUTIVE_FAILURES` | `3` | 连续失败达到阈值后进入冷却期 |
 
 历史数据源策略为 `xtdata` 优先、`Mootdx` 兜底；baostock 默认不参与常规行情/名称路径。历史日期会做格式规范化和范围过滤，异常或空数据会降级跳过而不阻塞主循环。
+
+### Tushare Pro 数据源参数
+
+启用后，标准模式下历史 K 线优先走 Tushare（比 Mootdx 复权更准），股票名称查询在 xtdata 之后、baostock 之前插入 Tushare。Token 为空或未安装 `tushare` 包时自动跳过，行为与关闭一致。降级链见[图 2](#2)。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_TUSHARE_DATA_SOURCE` | `True`（环境变量 `ENABLE_TUSHARE_DATA_SOURCE`） | Tushare 数据源总开关；Token 为空时自动跳过 |
+| `TUSHARE_TOKEN` | `""`（环境变量 `TUSHARE_TOKEN`） | Tushare Pro Token。⚠️ 仅用环境变量，切勿硬编码 |
+| `TUSHARE_API_TIMEOUT` | `10` | 历史数据 API 超时（秒） |
+| `TUSHARE_STOCK_NAME_TIMEOUT` | `5` | 股票名称 API 超时（秒） |
+| `TUSHARE_RETRY_COOLDOWN` | `300` | 连续失败后冷却时间（秒） |
+| `TUSHARE_MAX_CONSECUTIVE_FAILURES` | `3` | 连续失败达到阈值后进入冷却期 |
+
+!!! info "Tushare 权限说明"
+    免费版（120 积分）仅能取非复权日线，实际不可用于生产；推荐 2000 积分（200 元/年）版本，可用复权日线 + 股票基础信息。Tushare 无 tick 级实时行情，**只用于历史数据和股票名称**，实时价格仍由 xtdata/Mootdx 提供。
 
 新版 baostock(0.9.x) 收紧了访问格式与行为，本项目已统一适配（见 [baostock_helper.py](../../../baostock_helper.py)）：登录前自动应用 `BAOSTOCK_API_KEY`（旧版 0.8.x 无 `set_API_key` 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 `'1'/'2'/'3'`，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖约束为 `baostock>=0.9.1`（仅在显式开启 baostock 功能时需要）。
 

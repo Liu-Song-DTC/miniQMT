@@ -279,6 +279,25 @@ XTQUANT_MANAGER_TOKEN = ""
 # 合计约90次/分钟；设600留足6倍余量，避免 HTTP 429 错误。
 XTQUANT_MANAGER_RATE_LIMIT = 600
 
+# ======================= 大QMT文件IPC Fallback 集成开关 =======================
+# xttrader 降级替代方案：当券商收紧 miniQMT 权限或 xttrader 失效时，
+# 通过文件系统 IPC 把订单交给大QMT内置Python执行（大QMT自带xttrader授权）。
+# 详见 qmt-trader/大QMT文件IPC方案.md
+# False（默认）: 使用 xttrader 直连（现有行为不变）
+# True: 所有交易操作通过文件 IPC 路由到大QMT执行
+# ⚠️ 与 ENABLE_XTQUANT_MANAGER 互斥，ENABLE_XTQUANT_MANAGER=True 时此开关不生效
+ENABLE_QMT_IPC_FALLBACK = _env_bool("ENABLE_QMT_IPC_FALLBACK", False)
+# IPC 文件目录（策略端与QMT端必须指向同一路径；跨机器时用网络共享路径）
+QMT_IPC_ROOT = os.environ.get("QMT_IPC_ROOT", r"C:\QuantIPC")
+# 下单后等待成交回执的最大秒数
+QMT_IPC_ORDER_TIMEOUT = 30
+# 心跳文件最大允许间隔（秒），超过此值判定大QMT离线
+QMT_IPC_HEARTBEAT_MAX_AGE = 10
+# 成交回报轮询线程扫描 done/ 目录的间隔（秒）
+QMT_IPC_DEAL_POLL_INTERVAL = 1.0
+# done/ 目录回执聚合查询的回溯窗口（秒），默认24小时
+QMT_IPC_DONE_LOOKBACK_SECONDS = 86400
+
 # ======================= 策略配置 =======================
 # 仓位管理
 POSITION_UNIT = 35000  # 每次买入金额

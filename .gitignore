@@ -114,3 +114,6 @@ xtquant/__pycache__/xtutil.cpython-38.pyc
 
 # Playwright MCP 临时产物
 .playwright-mcp/
+
+# test_smoke 冒烟脚本（本地验证用，不提交）
+test/smoke_*.py

@@ -22,11 +22,12 @@ logger = get_logger("position_manager")
 
 def _create_qmt_trader():
     """
-    工厂函数：根据 config.ENABLE_XTQUANT_MANAGER 返回交易接口对象。
+    工厂函数：根据配置返回交易接口对象。
 
     Returns:
         XtQuantClient: ENABLE_XTQUANT_MANAGER=True 时，返回 HTTP 客户端
-        easy_qmt_trader: ENABLE_XTQUANT_MANAGER=False 时，返回原始接口
+        QmtIpcTrader: ENABLE_QMT_IPC_FALLBACK=True 时，返回文件IPC客户端
+        easy_qmt_trader: 默认返回 xttrader 直连接口
     """
     if getattr(config, "ENABLE_XTQUANT_MANAGER", False):
         from xtquant_manager.client import XtQuantClient, ClientConfig
@@ -37,6 +38,20 @@ def _create_qmt_trader():
                 account_id=account_config.get("account_id", ""),
                 api_token=getattr(config, "XTQUANT_MANAGER_TOKEN", ""),
             )
+        )
+    elif getattr(config, "ENABLE_QMT_IPC_FALLBACK", False):
+        # xttrader 降级替代：通过文件 IPC 把订单交给大QMT执行
+        import os as _os
+        import sys as _sys
+        _ipc_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "qmt-trader")
+        if _ipc_dir not in _sys.path:
+            _sys.path.insert(0, _ipc_dir)
+        from qmt_ipc_trader import QmtIpcTrader
+        account_config = config.get_account_config()
+        return QmtIpcTrader(
+            path=config.QMT_PATH,
+            account=account_config.get("account_id"),
+            account_type=account_config.get("account_type", "STOCK"),
         )
     else:
         account_config = config.get_account_config()
