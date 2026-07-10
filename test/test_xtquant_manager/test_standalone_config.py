@@ -18,7 +18,18 @@ class TestLoadStandaloneConfigDefaults(unittest.TestCase):
     """无配置文件时，返回全部默认值"""
 
     def test_returns_default_config_when_no_file(self):
-        cfg = load_standalone_config("/nonexistent/path.json")
+        old_cwd = os.getcwd()
+        old_env = os.environ.pop("XTQUANT_MANAGER_CONFIG", None)
+        if old_env is not None:
+            self.addCleanup(os.environ.__setitem__, "XTQUANT_MANAGER_CONFIG", old_env)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chdir(tmp)
+                cfg = load_standalone_config("/nonexistent/path.json")
+            finally:
+                os.chdir(old_cwd)
+
         self.assertIsInstance(cfg, StandaloneConfig)
         self.assertEqual(cfg.host, "127.0.0.1")
         self.assertEqual(cfg.port, 8888)
@@ -62,13 +73,13 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
         path = self._write_config({
             "accounts": [
                 {
-                    "account_id": "25105132",
+                    "account_id": "TEST_ACC_1",
                     "qmt_path": "C:/test/userdata_mini",
                     "account_type": "STOCK",
                     "call_timeout": 5.0,
                 },
                 {
-                    "account_id": "25105133",
+                    "account_id": "TEST_ACC_2",
                     "qmt_path": "C:/test/userdata_mini2",
                 },
             ]
@@ -76,9 +87,9 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
         self.addCleanup(os.unlink, path)
         cfg = load_standalone_config(path)
         self.assertEqual(len(cfg.accounts), 2)
-        self.assertEqual(cfg.accounts[0].account_id, "25105132")
+        self.assertEqual(cfg.accounts[0].account_id, "TEST_ACC_1")
         self.assertEqual(cfg.accounts[0].call_timeout, 5.0)
-        self.assertEqual(cfg.accounts[1].account_id, "25105133")
+        self.assertEqual(cfg.accounts[1].account_id, "TEST_ACC_2")
         self.assertEqual(cfg.accounts[1].account_type, "STOCK")  # 默认值
 
     def test_loads_watchdog_and_heartbeat_fields(self):

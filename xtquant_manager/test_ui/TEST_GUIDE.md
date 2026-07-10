@@ -55,7 +55,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8888
 2. 填写以下参数：
 
    ```
-   账号 ID   : 25105132
+   账号 ID   : TEST_ACC_1
    账号类型  : STOCK
    QMT 路径  : C:/QMT/userdata_mini
    ```
@@ -67,7 +67,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8888
 ```json
 HTTP 201 Created
 {
-  "account_id": "25105132",
+  "account_id": "TEST_ACC_1",
   "connected": true,
   "message": "账号注册成功"
 }
@@ -92,7 +92,7 @@ HTTP 201 Created
 ```json
 {
   "accounts": [
-    { "account_id": "25105132", "connected": true, "account_type": "STOCK" }
+    { "account_id": "TEST_ACC_1", "connected": true, "account_type": "STOCK" }
   ],
   "total": 1
 }
@@ -107,14 +107,14 @@ HTTP 201 Created
 **操作步骤**：
 
 1. 左侧选择 **账号状态**
-2. 账号 ID 从下拉选择（或手动填写 `25105132`）
+2. 账号 ID 从下拉选择（或手动填写 `TEST_ACC_1`）
 3. 点击 **发送请求**
 
 **预期结果**（正常连接时）：
 
 ```json
 {
-  "account_id": "25105132",
+  "account_id": "TEST_ACC_1",
   "connected": true,
   "xtdata_available": true,
   "xttrader_available": true,
@@ -137,7 +137,7 @@ HTTP 201 Created
 
 ```json
 HTTP 200 OK
-{ "message": "账号 25105132 已注销" }
+{ "message": "账号 TEST_ACC_1 已注销" }
 ```
 
 **验证点**：注销后再调用 **列出账号**，该账号不再出现。
@@ -156,7 +156,7 @@ HTTP 200 OK
 2. 填写参数（可使用界面快速填充预设）：
 
    ```
-   账号 ID    : 25105132
+   账号 ID    : TEST_ACC_1
    股票代码   : 000001.SZ
    方向       : BUY
    数量       : 100
@@ -278,7 +278,7 @@ HTTP 201 Created
 
 1. 左侧选择 **实时行情**
 2. 股票代码填写（支持多只，逗号分隔）：`000001.SZ,600036.SH`
-3. 账号 ID：`25105132`
+3. 账号 ID：`TEST_ACC_1`
 4. 点击 **发送请求**
 
 **预期结果**：
@@ -313,7 +313,7 @@ HTTP 201 Created
    周期      : 1d
    开始日期  : 20260101
    结束日期  : 20260407
-   账号 ID   : 25105132
+   账号 ID   : TEST_ACC_1
    ```
 
 3. 点击 **发送请求**
@@ -367,7 +367,7 @@ HTTP 201 Created
 {
   "status": "healthy",
   "accounts": {
-    "25105132": { "connected": true, "last_check": "2026-04-07T09:30:00" }
+    "TEST_ACC_1": { "connected": true, "last_check": "2026-04-07T09:30:00" }
   },
   "uptime_seconds": 3600
 }
@@ -388,7 +388,7 @@ HTTP 201 Created
 
 ```json
 {
-  "account_id": "25105132",
+  "account_id": "TEST_ACC_1",
   "connected": true,
   "reconnect_attempts": 0,
   "last_ping_ok": "2026-04-07T09:30:00"

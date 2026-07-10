@@ -1170,7 +1170,20 @@ class TradingExecutor:
                 if hasattr(config, 'ENABLE_ALLOW_SELL') and not config.ENABLE_ALLOW_SELL and not is_simulation:
                     logger.warning("[E_ALLOW_SELL_001] 系统当前不允许卖出操作 (ENABLE_ALLOW_SELL=False)，请检查配置管理器或手动开启卖出开关")
                     return None
-                
+
+                def _positive_price(value):
+                    try:
+                        price_value = float(value)
+                    except (TypeError, ValueError):
+                        return None
+                    return price_value if price_value > 0 else None
+
+                if price is not None:
+                    normalized_price = _positive_price(price)
+                    if normalized_price is None:
+                        logger.warning(f"传入卖出价格无效: {price}，改为自动获取买盘/最新价")
+                    price = normalized_price
+
                 # 如果未提供价格，获取买三价（提高成交概率）
                 if price is None:
                     try:
@@ -1179,25 +1192,30 @@ class TradingExecutor:
                         if ticks and formatted_stock_code in ticks:
                             tick = ticks[formatted_stock_code]
                             if hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 3:
-                                price = tick.bidPrice[2]
-                                logger.info(f"获取到 {formatted_stock_code} 买三价: {price:.2f}")
-                            elif hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 1:
-                                price = tick.bidPrice[0]
-                                logger.info(f"获取到 {formatted_stock_code} 买一价: {price:.2f}")
+                                price = _positive_price(tick.bidPrice[2])
+                                if price is not None:
+                                    logger.info(f"获取到 {formatted_stock_code} 买三价: {price:.2f}")
+                            if price is None and hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 1:
+                                price = _positive_price(tick.bidPrice[0])
+                                if price is not None:
+                                    logger.info(f"获取到 {formatted_stock_code} 买一价: {price:.2f}")
                             elif isinstance(tick, dict) and 'bidPrice' in tick:
                                 bid_prices = tick['bidPrice']
                                 if len(bid_prices) >= 3:
-                                    price = bid_prices[2]
-                                elif len(bid_prices) >= 1:
-                                    price = bid_prices[0]
+                                    price = _positive_price(bid_prices[2])
+                                if price is None and len(bid_prices) >= 1:
+                                    price = _positive_price(bid_prices[0])
                     except Exception as e:
                         logger.warning(f"获取 {formatted_stock_code} 价格时出错: {str(e)}")
-                    
+
                     # 如果仍然没有获取到价格，尝试使用最新行情
                     if price is None:
                         latest_quote = self.data_manager.get_latest_data(stock_code)
                         if latest_quote:
-                            price = latest_quote.get('lastPrice') or 0
+                            price = (
+                                _positive_price(latest_quote.get('lastPrice')) or
+                                _positive_price(latest_quote.get('close'))
+                            )
                 
                 # 确保价格有效
                 if price is None or price <= 0:

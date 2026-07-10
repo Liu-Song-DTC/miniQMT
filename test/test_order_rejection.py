@@ -240,6 +240,40 @@ class TestOrderRejection(unittest.TestCase):
             config.GRID_STRATEGY_NAME
         )
 
+    def test_sell_zero_price_falls_back_to_latest_price(self):
+        """传入卖出价为0时，应降级使用有效最新价继续下单。"""
+        executor = self._make_executor()
+
+        executor.position_manager.get_position = Mock(return_value={
+            'stock_code': '300057.SZ',
+            'volume': 3000,
+            'available': 3000,
+            'cost_price': 6.18
+        })
+        executor.position_manager.qmt_trader.check_stock_is_av_sell = Mock(return_value=True)
+        executor.position_manager.qmt_trader.sell = Mock(return_value=215739)
+        executor.position_manager._get_real_order_id = Mock(return_value=672137218)
+        executor._save_trade_record = Mock(return_value=True)
+        executor.data_manager.get_latest_data = Mock(return_value={
+            'lastPrice': 7.41,
+            'close': 7.40,
+        })
+
+        with patch('config.is_trade_time', return_value=True), \
+             patch('xtquant.xtdata.get_full_tick', return_value={
+                 '300057.SZ': {'bidPrice': [0, 0, 0]}
+             }):
+            result = executor.sell_stock(
+                stock_code='300057.SZ',
+                volume=400,
+                price=0,
+                strategy='auto_partial'
+            )
+
+        self.assertEqual(result, 672137218)
+        sell_kwargs = executor.position_manager.qmt_trader.sell.call_args.kwargs
+        self.assertEqual(sell_kwargs['price'], 7.41)
+
 
 def run_tests():
     loader = unittest.TestLoader()

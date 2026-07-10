@@ -17,7 +17,7 @@
 # 部署拓扑：
 #   - 同券商多账号：一个大QMT + 一个 executor 进程，自动处理所有账号。
 #   - 不同券商各一个账号：每大QMT跑一个 executor，用 QMT_IPC_ACCOUNT_FILTER 隔离。
-#   - 当前项目（光大证券 25105132 + 25106531）：只需一个大QMT，一个 executor。
+#   - 同券商双账号示例：只需一个大QMT，一个 executor。
 
 import os
 import json

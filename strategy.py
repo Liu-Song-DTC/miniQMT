@@ -344,15 +344,8 @@ class TradingStrategy:
                 )
                 if order_id:
                     logger.info(f"[实盘交易] {stock_code} 首次止盈卖出委托已下达，委托号: {order_id}")
-                    # 标记已触发首次止盈
-                    mark_success = self.position_manager.mark_profit_triggered(stock_code)
-                    if mark_success:
-                        logger.info(f"[状态标记] {stock_code} profit_triggered已标记为True")                        
-                        # 返回True表示整个止盈操作成功
-                        return True
-                    else:
-                        logger.error(f"[状态标记] {stock_code} profit_triggered标记失败")
-                        return False            
+                    logger.info(f"[状态标记] {stock_code} 等待成交回报确认后再标记profit_triggered=True")
+                    return True
                 else:
                     logger.error(f"[E_ORDER_SELL_101] {stock_code} 首次止盈卖出委托下达失败，原因: trading_executor返回None (可能是ENABLE_ALLOW_SELL=False、持仓不足或QMT连接异常)，本次信号已标记为未处理，下次循环将自动重试")
                     return False

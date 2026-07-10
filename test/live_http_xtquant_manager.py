@@ -4,7 +4,7 @@ XtQuantManager 真实 HTTP 端到端 live 测试（零真实 QMT 接触）
 与 test_server.py 的区别：本脚本启动真实 uvicorn 进程内服务（真实端口绑定、
 真实网络栈、真实 HealthMonitor），用 httpx 发真实 HTTP 请求，而非 FastAPI TestClient。
 
-账号数据用 Mock 注入，模拟生产双账号场景（25105132 / 25106531），
+账号数据用 Mock 注入，模拟生产双账号场景（TEST_ACC_1 / TEST_ACC_2），
 全程不连接真实 QMT，不下任何真实订单 —— 零风险。
 
 覆盖：
@@ -30,8 +30,8 @@ from xtquant_manager.account import AccountConfig, XtQuantAccount
 from xtquant_manager.server_runner import XtQuantServer, XtQuantServerConfig
 from test.test_xtquant_manager.mocks import MockXtTrader, MockXtData, MockStockAccount
 
-ACC1 = "25105132"
-ACC2 = "25106531"
+ACC1 = "TEST_ACC_1"
+ACC2 = "TEST_ACC_2"
 
 _results = []
 

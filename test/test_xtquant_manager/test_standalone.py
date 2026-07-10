@@ -82,11 +82,11 @@ class TestStandaloneApplicationLifecycle(unittest.TestCase):
         MockWatchdog.return_value = mock_watchdog_instance
 
         mock_manager_instance = MagicMock()
-        mock_manager_instance.list_accounts.return_value = ["25105132"]
+        mock_manager_instance.list_accounts.return_value = ["TEST_ACC_1"]
         MockManager.get_instance.return_value = mock_manager_instance
 
         accounts = [
-            AccountEntry(account_id="25105132", qmt_path="C:/mock/path"),
+            AccountEntry(account_id="TEST_ACC_1", qmt_path="C:/mock/path"),
         ]
         app = self._make_app(accounts=accounts)
         t = threading.Thread(target=app.run, daemon=True)
@@ -98,7 +98,7 @@ class TestStandaloneApplicationLifecycle(unittest.TestCase):
         mock_manager_instance.register_account.assert_called_once()
         call_args = mock_manager_instance.register_account.call_args
         registered_config = call_args[0][0]
-        self.assertEqual(registered_config.account_id, "25105132")
+        self.assertEqual(registered_config.account_id, "TEST_ACC_1")
 
     @patch("xtquant_manager.standalone.XtQuantServer")
     @patch("xtquant_manager.standalone.XtQuantManager")

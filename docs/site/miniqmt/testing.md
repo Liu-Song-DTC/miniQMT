@@ -2,9 +2,9 @@
 
 ## 概述
 
-项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 29 个测试组（含 `fast` 快速子集）、89 个模块引用、64 个唯一测试模块。
+项目测试代码位于 [test/](https://github.com/weihong-su/miniQMT/tree/main/test) 目录，使用标准 `unittest`。当前回归配置见 `test/integration_test_config.json`，包含 29 个测试组（含 `fast` 快速子集）。
 
-最近一次 `python test/run_integration_regression_tests.py --all` 实测运行 28 个非 fast 组、65 个模块引用、961 个用例，结果为 961 通过、0 失败、0 错误、0 跳过，成功率 100%。
+最近一次使用 `C:\Users\PC\Anaconda3\envs\python39\python.exe test/run_integration_regression_tests.py --all` 实测运行 28 个非 fast 组、70 个模块、1039 个用例，结果为 1039 通过、0 失败、0 错误、0 跳过，成功率 100%。
 
 ---
 

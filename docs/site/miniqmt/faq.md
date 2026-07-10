@@ -102,7 +102,7 @@ monitor.register_thread(
 3. 确认网格会话已启动（`GET /api/grid/sessions`）
 4. 查看日志中的网格信号检测记录
 5. 若你显式设置了 `GRID_REQUIRE_PROFIT_TRIGGERED = True`，确认该持仓已触发首次止盈；默认 `False` 时不需要这个前提
-6. 若关闭了行情健康观察模式（`MARKET_HEALTH_OBSERVE_ONLY = False`），检查 `/api/market/health` 中该股票行情评分是否低于 `MARKET_HEALTH_TRADING_MIN_SCORE`
+6. 若行情健康门禁保持默认开启（`MARKET_HEALTH_OBSERVE_ONLY = False`），检查 `/api/market/health` 中该股票行情评分是否低于 `MARKET_HEALTH_TRADING_MIN_SCORE`
 
 ---
 
@@ -114,4 +114,4 @@ Flask 直连模式提供轻量内存版健康快照：
 curl http://localhost:5000/api/market/health
 ```
 
-该评分默认只观察不拦截交易（`MARKET_HEALTH_OBSERVE_ONLY = True`）。如果改为严格模式，持仓监控会按评分阈值和是否允许 Mootdx 兜底来判断行情是否可用于交易信号检测。
+该评分当前默认启用严格门禁（`MARKET_HEALTH_OBSERVE_ONLY = False`），持仓监控会按评分阈值和是否允许 Mootdx 兜底来判断行情是否可用于交易信号检测。如果只想观察评分而不影响交易，可改为 `True`。

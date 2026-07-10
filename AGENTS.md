@@ -340,10 +340,10 @@ DYNAMIC_TAKE_PROFIT = [
 | `stock_code`, `volume`, `available`, `cost_price` | QMT实盘 `qmt_trader.position()` | 每10秒同步一次 |
 | `current_price` | `data_manager.get_latest_data()` | 实时更新 |
 | `market_value`, `profit_ratio` | 计算得出 | 价格更新时重新计算 |
-| `open_date`, `profit_triggered`, `highest_price`, `stop_loss_price` | 持久化字段 | 策略触发时更新并立即同步到SQLite |
+| `open_date`, `profit_triggered`, `highest_price`, `stop_loss_price` | 持久化字段 | 策略状态变化或成交回报确认后同步到SQLite |
 
 **关键字段说明**:
-- `profit_triggered`: 是否已触发首次止盈(卖出60%),影响后续动态止盈逻辑
+- `profit_triggered`: 是否已完成首次止盈(卖出60%)成交确认,影响后续动态止盈逻辑
 - `highest_price`: 持仓期间最高价,用于计算动态止盈位
 - `stop_loss_price`: 止损价格,低于此价格触发止损
 
@@ -687,7 +687,7 @@ thread_monitor.get_status()
 
 ## 测试框架架构
 
-测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 29 个测试组（含 `fast` 快速子集）、89 个模块引用、64 个唯一测试模块。
+测试代码位于 [test/](test/) 目录，使用标准 `unittest`。当前回归配置见 [test/integration_test_config.json](test/integration_test_config.json)，包含 29 个测试组（含 `fast` 快速子集）。
 
 ### 测试基础设施
 
@@ -729,7 +729,7 @@ thread_monitor.get_status()
 | `grid_simulation` | high | 价格模拟测试（30个用例） |
 | `fast` | critical | 快速验证子集（当前配置 23 个模块） |
 
-**测试统计（当前配置）**: 29组（含 `fast`）× 89个模块引用 × 64个唯一测试模块。最近一次 `--all` 实测为 28个非 fast 组、65个模块引用、961个用例，100% 通过；具体以本地运行报告为准。
+**测试统计（当前配置）**: 29组（含 `fast`）。最近一次使用 Anaconda `python39` 执行 `--all` 实测为 28个非 fast 组、70个模块、1039个用例，100% 通过；具体以本地运行报告为准。
 
 ### 编写新测试的规范
 

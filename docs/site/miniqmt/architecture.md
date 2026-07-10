@@ -88,7 +88,7 @@ xtquant_manager/       # XtQuantManager HTTP 网关（可选）
 - 按 5 分钟窗口计算 `healthy` / `degraded` / `unstable` / `down`
 - 快照通过 Flask `GET /api/market/health` 暴露
 - 不落库，系统重启后样本清空
-- 默认 `MARKET_HEALTH_OBSERVE_ONLY = True`，只观察不拦截交易；严格模式下由 `data_manager.is_quote_tradable()` 参与持仓监控信号检测
+- 默认 `MARKET_HEALTH_OBSERVE_ONLY = False`，由 `data_manager.is_quote_tradable()` 参与持仓监控信号检测；如需只观察不拦截，可显式改为 `True`
 
 ---
 

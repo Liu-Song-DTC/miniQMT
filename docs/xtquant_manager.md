@@ -101,7 +101,7 @@ server.start(blocking=False)
 
 manager = XtQuantManager.get_instance()
 manager.register_account(AccountConfig(
-    account_id="25105132",
+    account_id="TEST_ACC_1",
     qmt_path="C:/QMT/userdata_mini",
 ))
 ```
@@ -115,7 +115,7 @@ manager.register_account(AccountConfig(
   "api_token": "",
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/QMT/userdata_mini",
       "account_type": "STOCK"
     }
@@ -142,13 +142,13 @@ manager.register_account(AccountConfig(
   "reconnect_cooldown": 60.0,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/QMT/userdata_mini",
       "account_type": "STOCK",
       "call_timeout": 3.0
     },
     {
-      "account_id": "25105133",
+      "account_id": "TEST_ACC_2",
       "qmt_path": "C:/QMT1/userdata_mini",
       "account_type": "STOCK",
       "call_timeout": 3.0
@@ -161,7 +161,7 @@ manager.register_account(AccountConfig(
 
 ```bash
 curl http://127.0.0.1:8888/api/v1/accounts
-# {"success":true,"data":{"accounts":["25105132","25105133"]}}
+# {"success":true,"data":{"accounts":["TEST_ACC_1","TEST_ACC_2"]}}
 
 curl http://127.0.0.1:8888/api/v1/health
 # {"data":{"total":2,"healthy":2,...}}
@@ -186,7 +186,7 @@ curl http://127.0.0.1:8888/api/v1/health
   "ssl_keyfile": "certs/server.key",
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/QMT/userdata_mini"
     }
   ]
@@ -206,7 +206,7 @@ from xtquant_manager.client import XtQuantClient, ClientConfig
 
 client = XtQuantClient(config=ClientConfig(
     base_url="https://192.168.1.100:8888",
-    account_id="25105132",
+    account_id="TEST_ACC_1",
     api_token="your-secret-token-here",
     verify_ssl=False,       # 自签证书跳过验证
     # ca_cert="certs/ca.crt"  # 或指定 CA 验证
@@ -254,7 +254,7 @@ XTQUANT_MANAGER_TOKEN = ""           # 可选
   "heartbeat_interval": 1800.0,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/QMT/userdata_mini",
       "reconnect_base_wait": 60.0,
       "max_reconnect_attempts": 5
@@ -369,7 +369,7 @@ Content-Type: application/json
 X-API-Token: <token>
 
 {
-  "account_id": "25105132",
+  "account_id": "TEST_ACC_1",
   "qmt_path": "C:/QMT/userdata_mini",
   "account_type": "STOCK",
   "call_timeout": 3.0,
@@ -383,7 +383,7 @@ X-API-Token: <token>
 {
   "success": true,
   "data": {
-    "account_id": "25105132",
+    "account_id": "TEST_ACC_1",
     "connected": true,
     "message": "注册成功"
   }
@@ -406,7 +406,7 @@ GET /api/v1/accounts
 
 响应：
 ```json
-{"success": true, "data": {"accounts": ["25105132", "25105133"]}}
+{"success": true, "data": {"accounts": ["TEST_ACC_1", "TEST_ACC_2"]}}
 ```
 
 #### 账号状态
@@ -420,7 +420,7 @@ GET /api/v1/accounts/{account_id}/status
 {
   "success": true,
   "data": {
-    "account_id": "25105132",
+    "account_id": "TEST_ACC_1",
     "connected": true,
     "reconnecting": false,
     "reconnect_attempts": 0,
@@ -483,7 +483,7 @@ GET /api/v1/accounts/{account_id}/positions
   "data": {
     "positions": [
       {
-        "资金账号": "25105132",
+        "资金账号": "TEST_ACC_1",
         "证券代码": "300057",
         "股票余额": 7400,
         "可用余额": 0,
@@ -507,7 +507,7 @@ GET /api/v1/accounts/{account_id}/asset
 {
   "success": true,
   "data": {
-    "资金账户": "25105132",
+    "资金账户": "TEST_ACC_1",
     "可用金额": 0.0,
     "冻结金额": 0.0,
     "持仓市值": 49358.0,
@@ -535,7 +535,7 @@ GET /api/v1/accounts/{account_id}/trades
 #### 实时 Tick
 
 ```http
-GET /api/v1/market/tick?stock_codes=000001.SZ,600036.SH&account_id=25105132
+GET /api/v1/market/tick?stock_codes=000001.SZ,600036.SH&account_id=TEST_ACC_1
 ```
 
 响应：
@@ -560,7 +560,7 @@ GET /api/v1/market/tick?stock_codes=000001.SZ,600036.SH&account_id=25105132
 ```http
 GET /api/v1/market/history
   ?stock_code=000001.SZ
-  &account_id=25105132
+  &account_id=TEST_ACC_1
   &period=1d
   &start_time=20260101
   &end_time=20260411
@@ -579,7 +579,7 @@ POST /api/v1/market/download
 Content-Type: application/json
 
 {
-  "account_id": "25105132",
+  "account_id": "TEST_ACC_1",
   "stock_code": "000001.SZ",
   "period": "1d",
   "start_time": "20260101",
@@ -603,8 +603,8 @@ GET /api/v1/health
   "success": true,
   "data": {
     "accounts": {
-      "25105132": {"connected": true, "reconnecting": false, ...},
-      "25105133": {"connected": true, "reconnecting": false, ...}
+      "TEST_ACC_1": {"connected": true, "reconnecting": false, ...},
+      "TEST_ACC_2": {"connected": true, "reconnecting": false, ...}
     },
     "total": 2,
     "healthy": 2
@@ -629,7 +629,7 @@ GET /api/v1/metrics
 {
   "success": true,
   "data": {
-    "25105132": {
+    "TEST_ACC_1": {
       "total_calls": 42,
       "success_calls": 42,
       "error_calls": 0,
@@ -670,48 +670,48 @@ curl $BASE/health
 curl -X POST $BASE/accounts \
   -H "Content-Type: application/json" \
   -H "X-API-Token: $TOKEN" \
-  -d '{"account_id":"25105132","qmt_path":"C:/QMT/userdata_mini","account_type":"STOCK"}'
+  -d '{"account_id":"TEST_ACC_1","qmt_path":"C:/QMT/userdata_mini","account_type":"STOCK"}'
 
 # 列出账号
 curl -H "X-API-Token: $TOKEN" $BASE/accounts
 
 # 账号状态
-curl -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/status
+curl -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/status
 
 # 查询持仓
-curl -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/positions
+curl -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/positions
 
 # 查询资产
-curl -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/asset
+curl -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/asset
 
 # 当日委托
-curl -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/orders
+curl -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/orders
 
 # 当日成交
-curl -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/trades
+curl -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/trades
 
 # 下单（限价买入 000001.SZ 100 股，价格 10.50）
-curl -X POST $BASE/accounts/25105132/orders \
+curl -X POST $BASE/accounts/TEST_ACC_1/orders \
   -H "Content-Type: application/json" \
   -H "X-API-Token: $TOKEN" \
   -d '{"stock_code":"000001.SZ","order_type":23,"order_volume":100,"price_type":11,"price":10.50}'
 
 # 撤单
-curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/25105132/orders/2014314497
+curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1/orders/2014314497
 
 # 实时行情
-curl "$BASE/market/tick?stock_codes=000001.SZ,600036.SH&account_id=25105132" \
+curl "$BASE/market/tick?stock_codes=000001.SZ,600036.SH&account_id=TEST_ACC_1" \
   -H "X-API-Token: $TOKEN"
 
 # 历史行情
-curl "$BASE/market/history?stock_code=000001.SZ&account_id=25105132&period=1d&start_time=20260101" \
+curl "$BASE/market/history?stock_code=000001.SZ&account_id=TEST_ACC_1&period=1d&start_time=20260101" \
   -H "X-API-Token: $TOKEN"
 
 # 调用指标
-curl -H "X-API-Token: $TOKEN" $BASE/metrics/25105132
+curl -H "X-API-Token: $TOKEN" $BASE/metrics/TEST_ACC_1
 
 # 注销账号
-curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/25105132
+curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/TEST_ACC_1
 ```
 
 ---
@@ -720,7 +720,7 @@ curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/25105132
 
 ### 5.1 实例一：双账号独立交易
 
-**场景**：账号 A（25105132）做网格交易，账号 B（25105133）做止盈止损，互不干扰。
+**场景**：账号 A（TEST_ACC_1）做网格交易，账号 B（TEST_ACC_2）做止盈止损，互不干扰。
 
 **配置**（`xtquant_manager_config.json`）：
 
@@ -730,12 +730,12 @@ curl -X DELETE -H "X-API-Token: $TOKEN" $BASE/accounts/25105132
   "port": 8888,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/QMT/userdata_mini",
       "account_type": "STOCK"
     },
     {
-      "account_id": "25105133",
+      "account_id": "TEST_ACC_2",
       "qmt_path": "C:/QMT1/userdata_mini",
       "account_type": "STOCK"
     }
@@ -751,13 +751,13 @@ from xtquant_manager.client import XtQuantClient, ClientConfig
 # 账号 A
 client_a = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105132",
+    account_id="TEST_ACC_1",
 ))
 
 # 账号 B
 client_b = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105133",
+    account_id="TEST_ACC_2",
 ))
 
 pos_a = client_a.position()   # 账号 A 持仓
@@ -780,8 +780,8 @@ curl http://127.0.0.1:8888/api/v1/health
 {
   "data": {
     "accounts": {
-      "25105132": {"connected": true, "xtdata_available": true, "xttrader_available": true},
-      "25105133": {"connected": true, "xtdata_available": true, "xttrader_available": true}
+      "TEST_ACC_1": {"connected": true, "xtdata_available": true, "xttrader_available": true},
+      "TEST_ACC_2": {"connected": true, "xtdata_available": true, "xttrader_available": true}
     },
     "total": 2,
     "healthy": 2
@@ -798,21 +798,21 @@ curl http://127.0.0.1:8888/api/v1/health
 ```bash
 # 服务已运行，当前只有账号 A
 curl http://127.0.0.1:8888/api/v1/accounts
-# {"data":{"accounts":["25105132"]}}
+# {"data":{"accounts":["TEST_ACC_1"]}}
 
 # 动态注册账号 B
 curl -X POST http://127.0.0.1:8888/api/v1/accounts \
   -H "Content-Type: application/json" \
   -d '{
-    "account_id": "25105133",
+    "account_id": "TEST_ACC_2",
     "qmt_path": "C:/QMT1/userdata_mini",
     "account_type": "STOCK"
   }'
-# {"data":{"account_id":"25105133","connected":true,"message":"注册成功"}}
+# {"data":{"account_id":"TEST_ACC_2","connected":true,"message":"注册成功"}}
 
 # 确认两个账号
 curl http://127.0.0.1:8888/api/v1/accounts
-# {"data":{"accounts":["25105132","25105133"]}}
+# {"data":{"accounts":["TEST_ACC_1","TEST_ACC_2"]}}
 ```
 
 ---
@@ -874,8 +874,8 @@ def place_order(account_id, stock_code, order_type, volume, price):
 
 # 两账号同时买入同一只股票
 orders = [
-    ("25105132", "000001.SZ", 23, 100, 10.50),
-    ("25105133", "000001.SZ", 23, 200, 10.50),
+    ("TEST_ACC_1", "000001.SZ", 23, 100, 10.50),
+    ("TEST_ACC_2", "000001.SZ", 23, 200, 10.50),
 ]
 
 with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -924,7 +924,7 @@ while True:
 | QMT 路径必须不同 | 每个账号需要独立的 `userdata_mini` 目录 |
 | QMT 客户端独立登录 | 两个账号需要两个 QMT 进程分别登录 |
 | `session_id` 自动分配 | 无需手动指定，Manager 自动管理 |
-| 账号 ID 大小写敏感 | `25105132` 和 `25105132 `（有空格）视为不同账号 |
+| 账号 ID 大小写敏感 | `TEST_ACC_1` 和 `TEST_ACC_1 `（有空格）视为不同账号 |
 | 连接失败不阻止注册 | `connected: false` 时 HealthMonitor 会持续重试 |
 | 独立指标 | `GET /metrics/{id}` 每账号独立统计，互不干扰 |
 
@@ -939,7 +939,7 @@ from xtquant_manager.client import XtQuantClient, ClientConfig
 
 client = XtQuantClient(config=ClientConfig(
     base_url="http://127.0.0.1:8888",
-    account_id="25105132",
+    account_id="TEST_ACC_1",
     api_token="",          # 无 Token 时留空
     timeout=5.0,
     max_retries=2,

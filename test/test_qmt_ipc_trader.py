@@ -45,7 +45,7 @@ class _IpcTestBase(unittest.TestCase):
         ]
         for p in self._patchers:
             p.start()
-        self.trader = QmtIpcTrader(account="25105132", account_type="STOCK")
+        self.trader = QmtIpcTrader(account="TEST_ACC_1", account_type="STOCK")
         # 多账号隔离：trader 工作目录是 base_root/{account_id}/
         self.ipc_root = self.trader.ipc_root
         for d in ["orders/pending", "orders/processing", "orders/done", "cancel", "status"]:
@@ -136,14 +136,14 @@ class TestConnect(_IpcTestBase):
     def test_connect_writes_ipc_config(self):
         """connect() 自动把账号写入 config.json，供大QMT端 executor 读取。"""
         self._write_heartbeat()
-        t = QmtIpcTrader(account="25105132", path="C:/QMT/userdata_mini")
+        t = QmtIpcTrader(account="TEST_ACC_1", path="C:/QMT/userdata_mini")
         t.connect()
         t.stop()
         cfg_path = os.path.join(self.ipc_root, "config.json")
         self.assertTrue(os.path.exists(cfg_path))
         with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
-        self.assertEqual(cfg["account_id"], "25105132")
+        self.assertEqual(cfg["account_id"], "TEST_ACC_1")
         self.assertEqual(cfg["qmt_path"], "C:/QMT/userdata_mini")
 
     def test_ipc_config_does_not_overwrite_user_qmt_path(self):
@@ -152,13 +152,13 @@ class TestConnect(_IpcTestBase):
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump({"qmt_path": "D:/大QMT/userdata_mini"}, f)
         self._write_heartbeat()
-        t = QmtIpcTrader(account="25105132", path="C:/QMT/userdata_mini")
+        t = QmtIpcTrader(account="TEST_ACC_1", path="C:/QMT/userdata_mini")
         t.connect()
         t.stop()
         with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
         # 账号被更新，但 qmt_path 保留用户填的值
-        self.assertEqual(cfg["account_id"], "25105132")
+        self.assertEqual(cfg["account_id"], "TEST_ACC_1")
         self.assertEqual(cfg["qmt_path"], "D:/大QMT/userdata_mini")
 
 
@@ -174,7 +174,7 @@ class TestAttributeCompat(_IpcTestBase):
 
     def test_has_acc_attribute(self):
         self.assertIsInstance(self.trader.acc, _FakeAccount)
-        self.assertEqual(self.trader.acc.account_id, "25105132")
+        self.assertEqual(self.trader.acc.account_id, "TEST_ACC_1")
 
     def test_has_order_id_map(self):
         self.assertEqual(self.trader.order_id_map, {})
@@ -522,37 +522,37 @@ class TestMultiAccountIsolation(unittest.TestCase):
         shutil.rmtree(self.base_root, ignore_errors=True)
 
     def test_two_accounts_use_separate_dirs(self):
-        t1 = QmtIpcTrader(account="25105132")
-        t2 = QmtIpcTrader(account="25106531")
+        t1 = QmtIpcTrader(account="TEST_ACC_1")
+        t2 = QmtIpcTrader(account="TEST_ACC_2")
         self.assertNotEqual(t1.ipc_root, t2.ipc_root)
-        self.assertTrue(t1.ipc_root.endswith("25105132"))
-        self.assertTrue(t2.ipc_root.endswith("25106531"))
+        self.assertTrue(t1.ipc_root.endswith("TEST_ACC_1"))
+        self.assertTrue(t2.ipc_root.endswith("TEST_ACC_2"))
         # 共享同一 base_root
         self.assertEqual(t1.ipc_base_root, t2.ipc_base_root)
 
     def test_config_json_written_per_account(self):
-        for acc, path in [("25105132", "C:/QMT1/userdata_mini"),
-                          ("25106531", "C:/QMT2/userdata_mini")]:
+        for acc, path in [("TEST_ACC_1", "C:/QMT1/userdata_mini"),
+                          ("TEST_ACC_2", "C:/QMT2/userdata_mini")]:
             t = QmtIpcTrader(account=acc, path=path)
             os.makedirs(t._dir("status"), exist_ok=True)
             with open(t._dir("status", "heartbeat.json"), "w") as f:
                 json.dump({"ts": time.time()}, f)
             t.connect()
             t.stop()
-        cfg1_path = os.path.join(self.base_root, "25105132", "config.json")
-        cfg2_path = os.path.join(self.base_root, "25106531", "config.json")
+        cfg1_path = os.path.join(self.base_root, "TEST_ACC_1", "config.json")
+        cfg2_path = os.path.join(self.base_root, "TEST_ACC_2", "config.json")
         self.assertTrue(os.path.exists(cfg1_path))
         self.assertTrue(os.path.exists(cfg2_path))
         cfg1 = json.load(open(cfg1_path, encoding="utf-8"))
         cfg2 = json.load(open(cfg2_path, encoding="utf-8"))
-        self.assertEqual(cfg1["account_id"], "25105132")
-        self.assertEqual(cfg2["account_id"], "25106531")
+        self.assertEqual(cfg1["account_id"], "TEST_ACC_1")
+        self.assertEqual(cfg2["account_id"], "TEST_ACC_2")
         self.assertEqual(cfg1["qmt_path"], "C:/QMT1/userdata_mini")
         self.assertEqual(cfg2["qmt_path"], "C:/QMT2/userdata_mini")
 
     def test_order_written_to_own_account_dir(self):
-        t1 = QmtIpcTrader(account="25105132")
-        t2 = QmtIpcTrader(account="25106531")
+        t1 = QmtIpcTrader(account="TEST_ACC_1")
+        t2 = QmtIpcTrader(account="TEST_ACC_2")
         t1._ensure_dirs()
         t2._ensure_dirs()
 
@@ -576,8 +576,8 @@ class TestMultiAccountIsolation(unittest.TestCase):
         self.assertEqual([f for f in os.listdir(t2._dir("orders", "pending")) if f.endswith(".json")], [])
 
     def test_account_snapshot_isolation(self):
-        t1 = QmtIpcTrader(account="25105132")
-        t2 = QmtIpcTrader(account="25106531")
+        t1 = QmtIpcTrader(account="TEST_ACC_1")
+        t2 = QmtIpcTrader(account="TEST_ACC_2")
         t1._ensure_dirs()
         t2._ensure_dirs()
         # 只给 t1 写账户快照

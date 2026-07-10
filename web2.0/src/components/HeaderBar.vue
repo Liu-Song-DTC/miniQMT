@@ -212,7 +212,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       <div class="modal-content w-[420px] max-w-[96vw]">
         <div class="px-6 py-4 border-b border-slate-100"><h3 class="text-lg font-semibold text-slate-800">{{ system.accounts.some(a => a.id === editForm.id) ? '编辑账户' : '添加账户' }}</h3></div>
         <div class="p-6 space-y-4">
-          <div><label class="label-text">账户 ID <span class="text-red-400">*</span></label><input v-model="editForm.id" placeholder="如 25105132" class="input-field" :disabled="system.accounts.some(a => a.id === editForm.id)" /></div>
+          <div><label class="label-text">账户 ID <span class="text-red-400">*</span></label><input v-model="editForm.id" placeholder="如 TEST_ACC_1" class="input-field" :disabled="system.accounts.some(a => a.id === editForm.id)" /></div>
           <div><label class="label-text">显示名称 <span class="text-red-400">*</span></label><input v-model="editForm.label" placeholder="如 账户A" class="input-field" /></div>
           <div><label class="label-text">Flask 直连地址 <span class="text-slate-400 font-normal">(可选)</span></label><input v-model="editForm.flaskUrl" placeholder="http://127.0.0.1:5000" class="input-field" /><p class="text-[10px] text-slate-400 mt-1">使用 Flask 直连模式时单独指定地址</p></div>
         </div>

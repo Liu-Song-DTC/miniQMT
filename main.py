@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime
 
 # ── 账号专属配置预处理（必须在 import config 之前执行）──
-# 支持命令行: python main.py --account-id 25105132
+# 支持命令行: python main.py --account-id TEST_ACC_1
 _argv = sys.argv[1:]
 for _i, _arg in enumerate(_argv):
     if _arg in ('--account-id', '--account') and _i + 1 < len(_argv):

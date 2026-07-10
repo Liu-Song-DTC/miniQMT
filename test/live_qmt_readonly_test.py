@@ -1,7 +1,7 @@
 """
 XtQuantManager 真实 QMT 只读功能测试
 
-连接正在运行的 QMT 双账号（25105132 / 25106531），
+连接正在运行的 QMT 双账号（TEST_ACC_1 / TEST_ACC_2），
 仅执行 GET 只读端点，不下单，不修改任何持仓。
 
 验证：
@@ -26,8 +26,8 @@ from xtquant_manager.manager import XtQuantManager
 from xtquant_manager.account import AccountConfig
 from xtquant_manager.server_runner import XtQuantServer, XtQuantServerConfig
 
-ACC1 = "25105132"
-ACC2 = "25106531"
+ACC1 = "TEST_ACC_1"
+ACC2 = "TEST_ACC_2"
 BASE = "http://127.0.0.1:8800"
 
 _results = []

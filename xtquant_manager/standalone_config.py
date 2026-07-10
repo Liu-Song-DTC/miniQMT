@@ -23,7 +23,7 @@ StandaloneConfig — 独立运行模式配置加载器
   "watchdog_restart_cooldown": 30.0,
   "accounts": [
     {
-      "account_id": "25105132",
+      "account_id": "TEST_ACC_1",
       "qmt_path": "C:/path/to/userdata_mini",
       "account_type": "STOCK",
       "call_timeout": 3.0,

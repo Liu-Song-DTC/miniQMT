@@ -455,23 +455,23 @@ class TestEasyQmtTraderAccountGuard(unittest.TestCase):
     def test_position_filters_wrong_account(self):
         """query_stock_positions 返回了 A、B 两个账号的持仓时，position()
         只能返回 self.account 对应的那一个账号的条目。"""
-        t, _ = self._make_trader_stub("25106531")
+        t, _ = self._make_trader_stub("TEST_ACC_2")
         t.xt_trader.query_stock_positions.return_value = [
-            self._make_pos("25105132", "000001.SZ"),  # 错账号 - 应被丢弃
-            self._make_pos("25106531", "600519.SH"),  # 本账号 - 保留
-            self._make_pos("25105132", "600036.SH"),  # 错账号 - 应被丢弃
+            self._make_pos("TEST_ACC_1", "000001.SZ"),  # 错账号 - 应被丢弃
+            self._make_pos("TEST_ACC_2", "600519.SH"),  # 本账号 - 保留
+            self._make_pos("TEST_ACC_1", "600036.SH"),  # 错账号 - 应被丢弃
         ]
         df = t.position()
         self.assertEqual(len(df), 1, f"错账号持仓未被过滤: {df}")
-        self.assertEqual(df.iloc[0]['资金账号'], "25106531")
+        self.assertEqual(df.iloc[0]['资金账号'], "TEST_ACC_2")
         self.assertEqual(df.iloc[0]['证券代码'], "600519")
 
     def test_position_keeps_all_when_account_id_missing(self):
         """若 pos.account_id 为空（早期 QMT/兼容），不应误杀，全部保留。"""
-        t, _ = self._make_trader_stub("25106531")
+        t, _ = self._make_trader_stub("TEST_ACC_2")
         t.xt_trader.query_stock_positions.return_value = [
             self._make_pos("", "000001.SZ"),
-            self._make_pos("25106531", "600519.SH"),
+            self._make_pos("TEST_ACC_2", "600519.SH"),
         ]
         df = t.position()
         self.assertEqual(len(df), 2)
@@ -479,9 +479,9 @@ class TestEasyQmtTraderAccountGuard(unittest.TestCase):
     def test_balance_rejects_wrong_account(self):
         """query_stock_asset 返回了错账号资产时，balance() 必须返回空 DataFrame。"""
         from unittest.mock import MagicMock
-        t, _ = self._make_trader_stub("25106531")
+        t, _ = self._make_trader_stub("TEST_ACC_2")
         asset = MagicMock()
-        asset.account_id   = "25105132"     # 错账号
+        asset.account_id   = "TEST_ACC_1"     # 错账号
         asset.account_type = "STOCK"
         asset.cash         = 1000000
         asset.frozen_cash  = 0
@@ -494,9 +494,9 @@ class TestEasyQmtTraderAccountGuard(unittest.TestCase):
 
     def test_balance_accepts_matching_account(self):
         from unittest.mock import MagicMock
-        t, _ = self._make_trader_stub("25106531")
+        t, _ = self._make_trader_stub("TEST_ACC_2")
         asset = MagicMock()
-        asset.account_id   = "25106531"
+        asset.account_id   = "TEST_ACC_2"
         asset.account_type = "STOCK"
         asset.cash         = 1000000
         asset.frozen_cash  = 0
@@ -506,7 +506,7 @@ class TestEasyQmtTraderAccountGuard(unittest.TestCase):
 
         df = t.balance()
         self.assertEqual(len(df), 1)
-        self.assertEqual(df.iloc[0]['资金账户'], "25106531")
+        self.assertEqual(df.iloc[0]['资金账户'], "TEST_ACC_2")
 
 
 class TestSimulationAccountIdInWebStatus(unittest.TestCase):

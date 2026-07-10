@@ -175,6 +175,23 @@ DYNAMIC_TAKE_PROFIT = [
 ]
 ```
 
+### 卖出委托超时与重挂参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_PENDING_ORDER_AUTO_CANCEL` | `True` | 启用后，止盈止损卖出委托超时未成交时自动撤单 |
+| `PENDING_ORDER_TIMEOUT_MINUTES` | `5` | 普通止盈委托超时阈值（分钟） |
+| `STOP_LOSS_PENDING_ORDER_TIMEOUT_MINUTES` | `1.0` | 止损委托超时阈值（分钟），默认更快撤单重挂 |
+| `PENDING_ORDER_AUTO_REORDER` | `True` | 撤单成功后是否自动重新挂单 |
+| `PENDING_ORDER_REORDER_PRICE_MODE` | `"best"` | 重挂价格模式：`market`=最新价，`limit`=原信号价，`best`=对手价 |
+| `ALLOW_TAKE_PROFIT_FULL_WITH_PENDING` | `False` | 全仓止盈是否允许跳过活跃委托检查；生产建议保持 `False` |
+
+!!! note "首次止盈状态以成交为准"
+    实盘 `take_profit_half` 委托提交成功后不会立即标记 `profit_triggered=True`，只有成交回报确认后才写入内存与 SQLite。已有本地跟踪委托或 QMT 活跃委托时，同一股票新的动态止盈止损信号会被阻断，防止重复卖出。
+
+!!! tip "对手价重挂兜底"
+    `PENDING_ORDER_REORDER_PRICE_MODE="best"` 时，卖单优先使用买三价；若买三价为 `0` 或缺失，会按买一价、最新价、收盘价、原信号价逐级降级。`sell_stock(price=0)` 同样会自动改为获取有效买盘/最新价。
+
 ---
 
 ## 网格交易参数
@@ -277,16 +294,16 @@ DYNAMIC_TAKE_PROFIT = [
 !!! info "Tushare 权限说明"
     免费版（120 积分）仅能取非复权日线，实际不可用于生产；推荐 2000 积分（200 元/年）版本，可用复权日线 + 股票基础信息。Tushare 无 tick 级实时行情，**只用于历史数据和股票名称**，实时价格仍由 xtdata/Mootdx 提供。
 
-新版 baostock(0.9.x) 收紧了访问格式与行为，本项目已统一适配（见 [baostock_helper.py](../../../baostock_helper.py)）：登录前自动应用 `BAOSTOCK_API_KEY`（旧版 0.8.x 无 `set_API_key` 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 `'1'/'2'/'3'`，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖约束为 `baostock>=0.9.1`（仅在显式开启 baostock 功能时需要）。
+新版 baostock(0.9.x) 收紧了访问格式与行为，本项目已统一适配（见 [baostock_helper.py](https://github.com/weihong-su/miniQMT/blob/main/baostock_helper.py)）：登录前自动应用 `BAOSTOCK_API_KEY`（旧版 0.8.x 无 `set_API_key` 时自动跳过、匿名访问），复权类型归一化为 baostock 接受的 `'1'/'2'/'3'`，登录/查询错误码显式校验并对激活/权限类错误补充可读提示，且 baostock 失败时自动降级到 Mootdx，不阻塞主循环。依赖约束为 `baostock>=0.9.1`（仅在显式开启 baostock 功能时需要）。
 
 ### 行情源健康评分参数
 
-第一阶段为轻量内存版健康评分，不落库，系统重启后样本清空。默认处于观察模式，只记录评分与状态，不拦截交易信号。
+第一阶段为轻量内存版健康评分，不落库，系统重启后样本清空。当前默认启用严格门禁，持仓监控会按评分与数据源策略判断行情是否可参与交易信号检测。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `MARKET_HEALTH_ENABLED` | `True` | 启用行情源健康评分 |
-| `MARKET_HEALTH_OBSERVE_ONLY` | `True` | 观察模式：只记录评分，不影响交易信号检测 |
+| `MARKET_HEALTH_OBSERVE_ONLY` | `False` | `True`=只记录评分不拦截；`False`=按评分门禁交易信号检测 |
 | `MARKET_HEALTH_WINDOW_SECONDS` | `300` | 统计窗口（秒），默认最近 5 分钟 |
 | `MARKET_HEALTH_MAX_EVENTS` | `100` | 单个 source/purpose/stock 组合最多保留事件数 |
 | `MARKET_HEALTH_MIN_EVENTS` | `3` | 达到最少样本数后才输出有效评分，否则为 `unknown` |
@@ -296,7 +313,7 @@ DYNAMIC_TAKE_PROFIT = [
 | `MARKET_HEALTH_TRADING_MIN_SCORE` | `70` | 严格模式下允许参与交易信号检测的最低评分 |
 | `MARKET_HEALTH_ALLOW_MOOTDX_FOR_TRADING` | `False` | 严格模式下是否允许 Mootdx 兜底行情参与交易 |
 
-评分综合成功率、平均延迟、最近成功时间和数据质量。持仓监控会调用 `data_manager.is_quote_tradable()`；在默认观察模式下始终放行，只有将 `MARKET_HEALTH_OBSERVE_ONLY` 设为 `False` 后才按分数和数据源限制拦截。
+评分综合成功率、平均延迟、最近成功时间和数据质量。持仓监控会调用 `data_manager.is_quote_tradable()`；当前默认严格模式会按分数和数据源限制拦截，若希望只观察不影响交易，可显式设置 `MARKET_HEALTH_OBSERVE_ONLY = True`。
 
 健康快照接口见 [Web API · 行情源健康](web-api.md#market-health)。
 

@@ -6,8 +6,35 @@
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-07-10
+
+> 本版本聚焦**实盘委托生命周期与无人值守生产安全**：首次止盈状态改为成交回报确认后落地，动态止盈止损信号在已有在途委托时阻断，撤单重挂价格增加多级兜底；同时发布大QMT文件IPC交易通道、xtdata tick 推送缓存和行情健康严格门禁。
+
+### Added
+- **大QMT文件IPC交易通道**：新增 `qmt-trader/qmt_ipc_trader.py`、`qmt_trade_client.py`、`qmt_trade_executor.py` 和部署手册，支持在 miniQMT xttrader 直连受限时，通过大QMT内置 Python 脚本执行下单/撤单/成交回报轮询；多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/`。
+- **控制台配置入口**：`miniqmt.bat` / `scripts/_launcher.py` 增加 Tushare Pro 与大QMT IPC Trader 快捷配置、连通性检查和心跳检查。
+
+### Changed
+- **首次止盈实盘确认语义**：`take_profit_half` 实盘委托提交成功后不再立即标记 `profit_triggered=True`，改为成交回报确认后更新内存与 SQLite，避免委托未成交时误进入动态止盈阶段。
+- **在途委托防重保护**：动态止盈止损入队和最终信号校验都会检查本地 `pending_orders` 与 QMT 活跃委托；同一股票已有在途卖单时阻断新止盈/止损信号，防止重复卖出。
+- **撤单重挂价格兜底**：`PENDING_ORDER_REORDER_PRICE_MODE="best"` 下买三价为 `0` 或缺失时，按买一价、最新价、收盘价、原信号价逐级降级；`sell_stock(price=0)` 也会自动改为获取有效买盘/最新价。
+- **行情源健康门禁默认启用**：`MARKET_HEALTH_OBSERVE_ONLY` 默认改为 `False`，持仓监控会按健康评分和数据源策略判断行情是否可参与交易信号检测。
+- **xtdata tick 推送缓存**：优化实时行情读取路径，减少重复 tick 请求并提升持仓监控循环稳定性。
+- **动态止盈止损信号门控**：监控线程仅在 `ENABLE_DYNAMIC_STOP_PROFIT` 与 `ENABLE_AUTO_TRADING` 同时开启时才检测并写入动态止盈止损信号，关闭自动止盈时清理残留动态信号，避免日志刷屏。
+
 ### Fixed
-- **动态止盈止损信号日志刷屏**：监控线程的动态止盈止损检测原先只受总开关 `ENABLE_AUTO_OPERATION` 门控（网格需其常开），未受执行开关 `ENABLE_AUTO_TRADING` 门控。当"允许自动止盈"关闭而持仓持续满足止盈条件时，会形成"检测→策略因自动交易关闭而清除→再检测"的每 3 秒死循环（曾出现单账户 `take_profit_full` 一天刷屏近 2 万行）。现抽取 `_detect_and_enqueue_dynamic_signal()`，仅在 `ENABLE_DYNAMIC_STOP_PROFIT` 且 `ENABLE_AUTO_TRADING` 同时开启时才检测并入队；关闭时清理残留动态信号（保留网格信号）。网格检测走独立分支不受影响。
+- **撤单后重挂跟踪丢失**：修复旧委托撤销成功后先重挂再清理，导致新委托跟踪记录被误删的问题。
+- **自动止盈关闭后的日志刷屏**：修复持仓持续满足止盈条件时，监控线程每 3 秒反复入队、策略线程反复清理的循环。
+
+### Security
+- **账号信息脱敏**：将 IPC、XtQuantManager 示例文档、测试样例和 Web 占位提示中的真实资金账号统一替换为 `TEST_ACC_1` / `TEST_ACC_2`，避免发布包泄露生产证券账号。
+
+### Tests
+- 使用 `C:\Users\PC\Anaconda3\envs\python39\python.exe test/run_integration_regression_tests.py --all` 完成全量集成回归：28 组、70 模块、1039 用例，1039 通过，0 失败，0 错误，成功率 100%。
+- 新增/扩展 `test_trader_callback` 与 `test_order_rejection`，覆盖成交后标记首次止盈、在途委托阻断、撤单重挂跟踪保留、买三价为 0 时价格降级、卖出价为 0 时自动兜底。
+
+### Docs
+- 更新配置参考、止盈止损策略、Web 前端/Web API、测试框架、README 与开发指南，说明 v3.6.0 的委托确认语义、行情健康默认门禁和最新回归统计。
 
 ## [3.5.0] - 2026-07-09
 
@@ -32,8 +59,6 @@
 
 ### Docs
 - 更新 `docs/site/miniqmt/grid-trading.md` 部分成交聚合与买卖量统一文档
-
-## [Unreleased]
 
 ## [3.4.0] - 2026-07-04
 
@@ -213,7 +238,9 @@
 - 模拟交易模式（无需 QMT 即可验证策略）
 - 回归测试框架基础设施
 
-[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.4.0...HEAD
+[Unreleased]: https://github.com/weihong-su/miniQMT/compare/v3.6.0...HEAD
+[3.6.0]: https://github.com/weihong-su/miniQMT/compare/v3.5.0...v3.6.0
+[3.5.0]: https://github.com/weihong-su/miniQMT/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/weihong-su/miniQMT/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/weihong-su/miniQMT/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/weihong-su/miniQMT/compare/v3.1.0...v3.2.0

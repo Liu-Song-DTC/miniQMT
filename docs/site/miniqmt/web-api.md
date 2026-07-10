@@ -33,7 +33,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 ## 行情源健康 {#market-health}
 
-`GET /api/market/health` 返回内存中的行情源健康快照，不触发行情请求、不落库，重启后样本清空。默认 `MARKET_HEALTH_OBSERVE_ONLY = True`，仅用于观测，不影响交易信号检测。
+`GET /api/market/health` 返回内存中的行情源健康快照，不触发行情请求、不落库，重启后样本清空。当前默认 `MARKET_HEALTH_OBSERVE_ONLY = False`，持仓监控会按健康评分与数据源策略判断行情是否可参与交易信号检测；如需只观察不拦截，可显式改为 `True`。
 
 典型返回：
 
@@ -42,7 +42,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
   "status": "success",
   "data": {
     "enabled": true,
-    "observe_only": true,
+    "observe_only": false,
     "overall": {
       "score": 92,
       "status": "healthy"
@@ -81,6 +81,7 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 
 !!! note "交易记录口径"
     实盘网格在 `GRID_CONFIRM_LIVE_ORDER_BY_DEAL = True` 时，`/api/trade-records` 只返回真实成交确认后的 `trade_records`。已报未成交的网格委托只体现在 `grid_orders` / 网格会话状态中，不会以 `ORDER_xxx` 形式伪装成成交。
+    动态止盈止损的实盘卖出委托也遵循成交确认语义：首次止盈半仓提交成功不等于 `profit_triggered=True`，成交回报到达后才更新持仓状态与持久化字段。
 
 ---
 

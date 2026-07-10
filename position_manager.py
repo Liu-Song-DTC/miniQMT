@@ -2547,6 +2547,14 @@ class PositionManager:
             )
 
             if not allow_skip_pending_check:
+                if self._has_tracked_pending_order(stock_code):
+                    logger.warning(f"[待委托拦截] {stock_code} 本地存在跟踪中的委托单，跳过本次信号执行")
+                    return _result(False, "blocked", "pending_order")
+
+                if self._has_pending_orders(stock_code):
+                    logger.warning(f"[待委托拦截] {stock_code} QMT存在活跃委托单，跳过本次信号执行")
+                    return _result(False, "blocked", "pending_order")
+
                 # 检查是否有未成交委托单 (全仓止盈也纳入，除非显式允许跳过)
                 position = self.get_position(stock_code)
                 if position:
@@ -3763,6 +3771,12 @@ class PositionManager:
         返回入队的 signal_type（未入队时返回 None），便于单元测试断言。
         """
         if config.ENABLE_DYNAMIC_STOP_PROFIT and config.ENABLE_AUTO_TRADING:
+            if self._has_tracked_pending_order(stock_code):
+                with self.signal_lock:
+                    self.latest_signals.pop(stock_code, None)
+                logger.debug(f"{stock_code} 存在跟踪中的委托单，跳过动态止盈止损信号入队")
+                return None
+
             signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
             with self.signal_lock:
                 if signal_type:
@@ -4098,13 +4112,16 @@ class PositionManager:
                                 f"立即移除跟踪(信号={signal_type})")
                     del self.pending_orders[matched_key]
 
-                    # P1修复: take_profit_half成交后立即同步profit_triggered到SQLite
+                    # take_profit_half 只有成交后才确认首次止盈状态，避免委托未成交时误进入动态止盈阶段。
                     if signal_type == 'take_profit_half':
-                        threading.Thread(
-                            target=self._sync_profit_triggered_to_sqlite,
-                            args=(stock_code_short,),
-                            daemon=True
-                        ).start()
+                        if self.mark_profit_triggered(stock_code_short):
+                            threading.Thread(
+                                target=self._sync_profit_triggered_to_sqlite,
+                                args=(stock_code_short,),
+                                daemon=True
+                            ).start()
+                        else:
+                            logger.error(f"{stock_code_short} 成交后标记profit_triggered失败")
 
             self._request_immediate_position_refresh(stock_code_short, "成交回报")
 
@@ -4171,6 +4188,22 @@ class PositionManager:
                 logger.info(f"📋 开始跟踪委托单: {stock_code} {signal_type} order_id={order_id}")
         except Exception as e:
             logger.error(f"跟踪委托单失败: {str(e)}")
+
+    def _has_tracked_pending_order(self, stock_code):
+        """检查本地 pending_orders 是否已有同一股票的在途委托。"""
+        try:
+            stock_code_base = str(stock_code).split('.')[0]
+            with self.pending_orders_lock:
+                for key, info in self.pending_orders.items():
+                    tracked_code = info.get('stock_code') if isinstance(info, dict) else key
+                    tracked_base = str(tracked_code).split('.')[0]
+                    key_base = str(key).split('.')[0]
+                    if stock_code_base in (tracked_base, key_base):
+                        return True
+            return False
+        except Exception as e:
+            logger.warning(f"检查本地跟踪委托失败，保守视为存在委托: {e}")
+            return True
 
     def _get_pending_order_timeout_minutes(self, signal_type):
         """按信号类型获取委托超时阈值，止损单使用更短等待时间。"""
@@ -4278,6 +4311,13 @@ class PositionManager:
                 if cancel_result:
                     logger.info(f"✅ {stock_code} 委托单撤销成功: {order_id}")
 
+                    # 先移除旧委托，再重挂；否则新委托跟踪会被下面的 pop 误删。
+                    with self.pending_orders_lock:
+                        current_order = self.pending_orders.get(stock_code)
+                        if (not current_order or
+                                str(current_order.get('order_id')) == str(order_id)):
+                            self.pending_orders.pop(stock_code, None)
+
                     # 如果配置了自动重新挂单
                     if config.PENDING_ORDER_AUTO_REORDER:
                         logger.info(f"🔄 [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=True，将以最新价重新挂单 (价格模式: {config.PENDING_ORDER_REORDER_PRICE_MODE})...")
@@ -4285,10 +4325,6 @@ class PositionManager:
                     else:
                         logger.warning(f"⚠️ [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=False，撤单后不自动重挂，"
                                        f"请人工确认是否需要手动补单 (信号类型={signal_type}，委托号={order_id})")
-
-                    # 从跟踪列表移除
-                    with self.pending_orders_lock:
-                        self.pending_orders.pop(stock_code, None)
                 else:
                     logger.error(f"❌ [E_ORDER_TIMEOUT_003] {stock_code} 自动撤单失败: order_id={order_id}，"
                                  f"请人工介入处理：登录QMT客户端手动撤销该委托，并确认持仓状态后视情况补单")
@@ -4403,13 +4439,24 @@ class PositionManager:
         signal_info (dict): 原信号信息
         """
         try:
+            def _positive_price(value):
+                try:
+                    price_value = float(value)
+                except (TypeError, ValueError):
+                    return None
+                return price_value if price_value > 0 else None
+
             # 获取最新价格
             latest_quote = self.data_manager.get_latest_data(stock_code)
             if not latest_quote:
                 logger.error(f"{stock_code} 无法获取最新价格，放弃重新挂单")
                 return
 
-            current_price = latest_quote.get('close', 0)
+            current_price = (
+                _positive_price(latest_quote.get('lastPrice')) or
+                _positive_price(latest_quote.get('close')) or
+                _positive_price(signal_info.get('current_price'))
+            )
 
             # 根据配置的价格模式确定新挂单价格
             price_mode = config.PENDING_ORDER_REORDER_PRICE_MODE
@@ -4417,18 +4464,58 @@ class PositionManager:
             if price_mode == "market":
                 # 市价模式：使用当前价
                 new_price = current_price
+                if new_price is None:
+                    logger.error(f"{stock_code} 市价模式无法获取有效价格，放弃重新挂单")
+                    return
                 logger.info(f"📌 使用市价模式: {new_price:.2f}")
 
             elif price_mode == "best":
                 # 对手价模式：卖单用买三价，买单用卖三价
                 # 对于卖出信号，使用买三价
-                bid3 = latest_quote.get('bid3', latest_quote.get('bid1', current_price))
-                new_price = bid3
-                logger.info(f"📌 使用对手价模式(买三价): {new_price:.2f}")
+                bid_prices = latest_quote.get('bidPrice')
+                bid3_from_list = None
+                bid1_from_list = None
+                if isinstance(bid_prices, (list, tuple)):
+                    if len(bid_prices) >= 3:
+                        bid3_from_list = bid_prices[2]
+                    if len(bid_prices) >= 1:
+                        bid1_from_list = bid_prices[0]
+
+                price_candidates = [
+                    ("买三价", latest_quote.get('bid3')),
+                    ("买三价", latest_quote.get('bidPrice3')),
+                    ("买三价", bid3_from_list),
+                    ("买一价", latest_quote.get('bid1')),
+                    ("买一价", latest_quote.get('bidPrice1')),
+                    ("买一价", bid1_from_list),
+                    ("最新价", latest_quote.get('lastPrice')),
+                    ("收盘价", latest_quote.get('close')),
+                    ("原信号价", signal_info.get('current_price')),
+                ]
+
+                new_price = None
+                price_source = None
+                for source, candidate in price_candidates:
+                    candidate_price = _positive_price(candidate)
+                    if candidate_price is not None:
+                        new_price = candidate_price
+                        price_source = source
+                        break
+
+                if new_price is None:
+                    logger.error(f"{stock_code} 对手价模式无法获取有效价格，放弃重新挂单")
+                    return
+
+                if price_source != "买三价":
+                    logger.warning(f"{stock_code} 买三价无效，重挂价格降级使用{price_source}: {new_price:.2f}")
+                logger.info(f"📌 使用对手价模式({price_source}): {new_price:.2f}")
 
             else:  # "limit"
                 # 限价模式：使用原价格
-                new_price = signal_info.get('current_price', current_price)
+                new_price = _positive_price(signal_info.get('current_price')) or current_price
+                if new_price is None:
+                    logger.error(f"{stock_code} 限价模式无法获取有效价格，放弃重新挂单")
+                    return
                 logger.info(f"📌 使用限价模式(原价格): {new_price:.2f}")
 
             # 获取卖出数量

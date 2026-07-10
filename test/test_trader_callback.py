@@ -268,6 +268,26 @@ class TestTraderCallback(TestBase):
         conn.commit()
         conn.close()
 
+    def test_c1b_take_profit_half_trade_marks_memory_profit_triggered(self):
+        """take_profit_half 成交后，内存持仓也应标记 profit_triggered"""
+        stock_code = self._insert_position(
+            stock_code="301560",
+            volume=1100,
+            available=500,
+            cost_price=42.12,
+            current_price=44.09,
+            profit_triggered=0,
+        )
+        order_id = 940572674
+
+        self.pm.track_order(stock_code, order_id, "take_profit_half", {"volume": 600})
+        trade = _FakeTrade(order_id=order_id, stock_code=f"{stock_code}.SZ")
+        self.pm._on_trade_callback(trade)
+
+        position = self.pm.get_position(stock_code)
+        self.assertTrue(position.get("profit_triggered"),
+                        "成交回报后内存 profit_triggered 应为 True")
+
     def test_c2_take_profit_full_trade_does_not_sync_profit_triggered(self):
         """take_profit_full 成交不应触发 profit_triggered 同步（只有 half 才触发）"""
         stock_code = "301560"
@@ -427,6 +447,65 @@ class TestTraderCallback(TestBase):
 
         self.assertNotIn(stock_code, self.pm.pending_orders)
 
+    def test_d5b_handle_timeout_reorder_keeps_new_tracking(self):
+        """撤单后重挂成功时，新委托不应被旧委托清理逻辑误删"""
+        stock_code = "301560"
+        old_order_id = 940572673
+        new_order_id = 940572700
+        self.pm.track_order(stock_code, old_order_id, "take_profit_half", {"volume": 600})
+
+        order_info = {
+            "stock_code": stock_code,
+            "order_id": old_order_id,
+            "signal_type": "take_profit_half",
+            "signal_info": {"volume": 600, "current_price": 44.08},
+            "submit_time": datetime.now() - timedelta(minutes=10),
+        }
+        self.pm.data_manager = MagicMock()
+        self.pm.data_manager.get_latest_data.return_value = {
+            "lastPrice": 44.02,
+            "bid3": 43.95,
+        }
+
+        mock_executor = MagicMock()
+        mock_executor.sell_stock.return_value = new_order_id
+
+        old_reorder = config.PENDING_ORDER_AUTO_REORDER
+        try:
+            config.PENDING_ORDER_AUTO_REORDER = True
+            with patch.object(self.pm, "_query_order_status", return_value=55), \
+                 patch.object(self.pm, "_cancel_order", return_value=True), \
+                 patch("trading_executor.get_trading_executor", return_value=mock_executor):
+                self.pm._handle_timeout_order(order_info)
+        finally:
+            config.PENDING_ORDER_AUTO_REORDER = old_reorder
+
+        self.assertIn(stock_code, self.pm.pending_orders)
+        self.assertEqual(self.pm.pending_orders[stock_code]["order_id"], new_order_id)
+
+    def test_d5c_validate_blocks_when_local_pending_order_exists(self):
+        """已有本地跟踪委托时，即使可卖数量大于0也应阻断新止盈信号"""
+        stock_code = self._insert_position(
+            stock_code="301560",
+            volume=1100,
+            available=500,
+            cost_price=42.12,
+            current_price=44.09,
+            profit_triggered=0,
+        )
+        self.pm.track_order(stock_code, 940572675, "take_profit_half", {"volume": 600})
+
+        ok, status, reason = self.pm.validate_trading_signal(
+            stock_code,
+            "take_profit_half",
+            {"current_price": 44.09, "cost_price": 42.12},
+            return_reason=True
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "blocked")
+        self.assertEqual(reason, "pending_order")
+
     def test_d6_handle_timeout_order_no_reorder_when_disabled(self):
         """PENDING_ORDER_AUTO_REORDER=False 时，撤单后不重新挂单"""
         stock_code = "301560"
@@ -477,6 +556,55 @@ class TestTraderCallback(TestBase):
         self.assertNotIn("sell_price", kwargs, "不应使用 sell_price 参数名")
         self.assertIn("volume", kwargs, "应使用 volume 参数名")
         self.assertIn("price", kwargs, "应使用 price 参数名")
+
+    def test_e1b_reorder_best_falls_back_when_bid3_zero(self):
+        """对手价模式下买三价为0时，应降级使用有效行情价"""
+        stock_code = "603466"
+        signal_info = {"volume": 3100, "current_price": 11.93}
+
+        mock_quote = {"bid3": 0, "lastPrice": 11.93, "close": 11.92}
+        self.pm.data_manager = MagicMock()
+        self.pm.data_manager.get_latest_data.return_value = mock_quote
+
+        mock_executor = MagicMock()
+        mock_executor.sell_stock.return_value = {"order_id": 999}
+
+        old_mode = config.PENDING_ORDER_REORDER_PRICE_MODE
+        try:
+            config.PENDING_ORDER_REORDER_PRICE_MODE = "best"
+            with patch("trading_executor.get_trading_executor", return_value=mock_executor):
+                self.pm._reorder_after_cancel(stock_code, "take_profit_half", signal_info)
+        finally:
+            config.PENDING_ORDER_REORDER_PRICE_MODE = old_mode
+
+        kwargs = mock_executor.sell_stock.call_args.kwargs
+        self.assertEqual(kwargs["price"], 11.93)
+
+    def test_e1c_live_take_profit_half_does_not_mark_before_deal(self):
+        """实盘首次止盈委托提交成功后，不应在成交前标记 profit_triggered"""
+        from strategy import TradingStrategy
+
+        strategy = TradingStrategy.__new__(TradingStrategy)
+        strategy.position_manager = MagicMock()
+        strategy.trading_executor = MagicMock()
+        strategy.trading_executor.sell_stock.return_value = 672137218
+
+        old_sim = config.ENABLE_SIMULATION_MODE
+        try:
+            config.ENABLE_SIMULATION_MODE = False
+            success = strategy._execute_take_profit_half_signal("603466", {
+                "volume": 5200,
+                "current_price": 11.93,
+                "cost_price": 11.39,
+                "sell_ratio": 0.6,
+                "breakout_highest_price": 12.03,
+                "pullback_ratio": 0.0083,
+            })
+        finally:
+            config.ENABLE_SIMULATION_MODE = old_sim
+
+        self.assertTrue(success)
+        strategy.position_manager.mark_profit_triggered.assert_not_called()
 
     def test_e2_reorder_aborts_when_volume_zero(self):
         """signal_info 中 volume=0 时，_reorder_after_cancel 应放弃挂单"""
