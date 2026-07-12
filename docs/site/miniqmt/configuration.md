@@ -127,7 +127,7 @@ flowchart TD
 
 ### 大QMT文件IPC Fallback 参数
 
-启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（`qmt_trade_executor.py`）读取执行。多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/` 子目录。部署见 [qmt-trader/部署手册.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md)。
+启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（`qmt_trade_executor.py`）读取执行。多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/` 子目录。部署见 [qmt-trader/部署手册.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md)，调试经验见 [大QMT文件 IPC Fallback](qmt-ipc-fallback.md)。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|

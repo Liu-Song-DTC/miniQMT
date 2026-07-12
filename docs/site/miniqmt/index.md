@@ -69,6 +69,7 @@ python main.py
 - [止盈止损](stop-profit-loss.md) — 动态止盈止损策略
 - [网格交易](grid-trading.md) — 网格交易功能使用指南
 - [自动买入](autobuy.md) — 候选池筛选、指数门禁、防重买入、调度与复盘
+- [大QMT文件 IPC](qmt-ipc-fallback.md) — xttrader 失效时的大QMT降级交易通道
 - [Web 前端](web-frontend.md) — web1.0 / web2.0 双模式架构、连接设置、远程部署
 - [Web API](web-api.md) — RESTful API 接口文档
 - [无人值守运行](unattended.md) — 长期运行和自动恢复

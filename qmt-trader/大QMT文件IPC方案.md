@@ -129,6 +129,8 @@ C:\QuantIPC\
 }
 ```
 
+当前 executor 写快照时会做最小清洗：过滤 `volume<=0` 的伪持仓；休盘时若 `market_price=0` 且 `market_value>0`，按 `market_value / volume` 反推参考价；若 `total_asset<=0` 但有持仓市值，则以 `available + market_value` 兜底，避免策略端和 Web 误判资产清零。
+
 ## 四、QMT侧代码
 
 这段代码跑在**大QMT内置Python环境**里。在QMT策略编辑器中设置：**定时运行模式，周期 1000ms**。
@@ -447,8 +449,23 @@ if __name__ == "__main__":
 
 ## 八、关键注意事项
 
-1. **QMT脚本重启后状态不丢**：每次重新扫 `pending/` 目录，`processing/` 里残留的文件手动移回 `pending/` 即可恢复
-2. **文件写半截保护**：策略端用 `.tmp → rename` 原子写入，QMT永远不会读到不完整的 JSON
+### 8.1 大QMT能力探索结论
+
+截至 2026-07-12 实机调试，模型交易模式下：
+
+- `get_trade_detail_data`、`passorder`、`cancel` 注入在 `globals()`，不在 `ContextInfo`。
+- `ContextInfo` 主要是行情、订阅、画图、回测上下文能力；未发现 `query_stock_asset`、`order_stock`、`cancel_order` 等交易方法。
+- 只读快照和下单优先走 `xttrader + StockAccount`；VBA 读取作为 fallback。
+- 市价单不能把 `LATEST_PRICE` 作为额外参数传入，应使用 `price_type=LATEST_PRICE, price=0`。
+
+### 8.2 长期运行注意事项
+
+1. **QMT脚本重启后状态不丢**：每次重新扫 `pending/` 目录，`processing/` 里残留的文件由 `recover_stale_processing()` 自动回收（超过 `QMT_IPC_PROCESSING_STALE_SEC` 默认120秒写 `error` 回执并清理，**绝不重发防重复下单**），策略端不再空等
+2. **文件写半截保护（双向）**：策略端 `.tmp → rename` 原子写 `pending/`；大QMT端 `done/`、`status/account.json`、`status/heartbeat.json` 也统一走 `_atomic_write_json()`（`.tmp → os.replace`），杜绝任一方向读到不完整 JSON（此前 account.json 半截读会被解析为空 → 策略端误判持仓清零）
 3. **QMT执行超时**：QMT的定时运行每次约30秒限制，代码里限制每轮最多5个订单
-4. **QMT崩溃检测**：策略端用 `is_qmt_alive()` 检查心跳，离线时发通知/报警
+4. **QMT崩溃检测**：策略端 `is_qmt_alive()` / `QmtIpcTrader.ping_xttrader()` 检查心跳，离线时发通知/报警；**下单前也做心跳门禁**，大QMT离线时 `buy/sell` 立即失败不阻塞 `QMT_IPC_ORDER_TIMEOUT` 秒
 5. **权限问题**：策略程序如果跑在不同用户下，给 `C:\QuantIPC\` 目录 Everyone Read/Write 权限
+6. **盘中撤单**：委托存活期间策略端写 `cancel/cancel_{id}.json`，executor 轮询时检测到即向柜台请求撤单
+7. **done 目录膨胀**：`archive_old_done()` 把超过 `QMT_IPC_DONE_RETENTION_SEC`（默认1天）的回执移入 `orders/done_archive/`
+8. **配置注入**：executor 侧 `IPC_ROOT` / `QMT_IPC_ACCOUNT_FILTER` / `QMT_IPC_PROCESSING_STALE_SEC` / `QMT_IPC_DONE_RETENTION_SEC` 均可用环境变量覆盖，免改脚本
+9. **同步/异步兼容**：`QmtIpcTrader` 下单同步返回真实 `order_id`，并把 `order_id` 自映射写入 `order_id_map`，因此无论 `config.USE_SYNC_ORDER_API` 取 True/False 都能正常配对（不必手改该开关）

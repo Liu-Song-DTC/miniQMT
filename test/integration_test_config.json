@@ -267,6 +267,15 @@
       ],
       "priority": "high"
     },
+    "qmt_ipc_fallback": {
+      "name": "大QMT文件IPC降级通道测试",
+      "description": "验证 xttrader 降级替代方案两侧：客户端 QmtIpcTrader（连接/心跳快速失败/order_id自映射兼容异步模式/下单撤单/持仓资产/成交回报轮询/多账号隔离/健康诊断）与大QMT侧 qmt_trade_executor（原子写防半截、孤儿processing自愈、盘中撤单、done归档、多账号发现）",
+      "modules": [
+        "test.test_qmt_ipc_trader",
+        "test.test_qmt_ipc_executor"
+      ],
+      "priority": "high"
+    },
     "fast": {
       "name": "快速验证测试",
       "description": "关键功能快速验证（5分钟内完成）",
@@ -300,7 +309,9 @@
         "test.test_grid_true_pnl",
         "test.test_multi_account_isolation",
         "test.test_launcher_deployment",
-        "test.test_tushare_adapter"
+        "test.test_tushare_adapter",
+        "test.test_qmt_ipc_trader",
+        "test.test_qmt_ipc_executor"
       ],
       "priority": "critical"
     }

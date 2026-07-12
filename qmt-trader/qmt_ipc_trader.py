@@ -173,7 +173,12 @@ class QmtIpcTrader:
         # 兼容 easy_qmt_trader 的属性（position_manager 直接访问）
         self.xt_trader = _FakeXtTrader(self)
         self.acc = _FakeAccount(self.account, account_type)
-        self.order_id_map = {}  # IPC 同步返回 order_id，无需 seq 映射，但属性必须存在
+        # IPC 同步返回真实 order_id，本无需 seq→order_id 映射。但 position_manager
+        # ._get_real_order_id() 在异步模式(USE_SYNC_ORDER_API=False，config 默认值)下会
+        # 去 order_id_map 里查 returned_id，查不到就等 2 秒后返回 None → 下单被判失败。
+        # 因此每次下单把 order_id 自映射(id→id)写入本表，兼容 config 两种模式，避免
+        # 用户忘记把 USE_SYNC_ORDER_API 改成 True 时所有委托静默失败。
+        self.order_id_map = {}
 
         # 回调列表
         self._trade_callbacks = []
@@ -255,6 +260,38 @@ class QmtIpcTrader:
     def ping_xttrader(self):
         """探测大QMT是否在线（供 position_manager 心跳检查）。"""
         return self._is_qmt_alive()
+
+    def _register_order_id(self, order_id):
+        """order_id 自映射(id→id)写入 order_id_map，兼容 position_manager 同步/异步两种模式。
+
+        长时间运行时限制表容量，避免内存无限增长（IPC 每次下单新增一条）。
+        """
+        self.order_id_map[order_id] = order_id
+        if len(self.order_id_map) > 4096:
+            for k in list(self.order_id_map)[:2048]:
+                self.order_id_map.pop(k, None)
+
+    def get_ipc_health(self):
+        """返回 IPC 通道健康诊断快照，供控制台/日志排障（参考 xtquant_big_convert metrics）。"""
+        def _count(dirpath):
+            try:
+                return sum(1 for f in os.listdir(dirpath) if f.endswith('.json'))
+            except OSError:
+                return 0
+        hb = self._dir('status', 'heartbeat.json')
+        hb_age = round(time.time() - os.path.getmtime(hb), 2) if os.path.exists(hb) else None
+        return {
+            'account': self.account,
+            'ipc_root': self.ipc_root,
+            'connected': self._connected,
+            'qmt_alive': self._is_qmt_alive(),
+            'heartbeat_age': hb_age,
+            'heartbeat_max_age': self.heartbeat_max_age,
+            'pending_count': _count(self._dir('orders', 'pending')),
+            'processing_count': _count(self._dir('orders', 'processing')),
+            'done_count': _count(self._dir('orders', 'done')),
+            'poller_alive': bool(self._poller_thread and self._poller_thread.is_alive()),
+        }
 
     def reconnect_xttrader(self):
         """重连：重新检查心跳并重启轮询线程。"""
@@ -378,11 +415,18 @@ class QmtIpcTrader:
         if volume is None or volume <= 0:
             logger.error(f'IPC下单参数错误: volume={volume}')
             return None
+        # 快速失败：大QMT离线时不再空等 order_timeout(默认30秒)阻塞策略线程，
+        # 立即返回并给出明确错误（断连感知，参考 xtquant_big_convert 的连接健康门禁）。
+        if not self._is_qmt_alive():
+            logger.error(f'IPC下单中止: 大QMT心跳缺失/过期(>{self.heartbeat_max_age}秒)，判定离线，'
+                         f'快速失败不阻塞. {action} {stock_code} {volume}股')
+            return None
         try:
             self._ensure_dirs()
             stock_code = self.adjust_stock(stock_code)
             price = self.select_slippage(stock_code, price or 0, action)
             order_id = _next_order_id()
+            self._register_order_id(order_id)
             order = {
                 'version': '1.0',
                 'order_id': order_id,

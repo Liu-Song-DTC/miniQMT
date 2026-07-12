@@ -555,6 +555,9 @@ class TestMultiAccountIsolation(unittest.TestCase):
         t2 = QmtIpcTrader(account="TEST_ACC_2")
         t1._ensure_dirs()
         t2._ensure_dirs()
+        # 心跳（下单前快速失败门禁要求 QMT 在线）
+        with open(t1._dir("status", "heartbeat.json"), "w") as f:
+            json.dump({"ts": time.time()}, f)
 
         # 后台模拟 QMT 端只在 t1 目录消费并回执
         def qmt_side():
@@ -622,6 +625,113 @@ class TestInterfaceContract(unittest.TestCase):
         """IPC status → QMT 状态码映射覆盖所有终态。"""
         for status in ['filled', 'partial', 'rejected', 'cancelled', 'pending']:
             self.assertIn(status, _IPC_STATUS_TO_QMT)
+
+
+# ── order_id 自映射（兼容 position_manager 异步模式）──
+
+class TestOrderIdMapping(_IpcTestBase):
+    """验证下单后 order_id 自映射写入 order_id_map。
+
+    position_manager._get_real_order_id() 在 USE_SYNC_ORDER_API=False(config 默认)时
+    从 order_id_map 取真实 order_id；若不自映射，IPC 返回的真实 order_id 查不到 → 下单被判失败。
+    """
+
+    def _order_and_capture(self, status="filled"):
+        self._write_heartbeat()
+
+        def qmt_side():
+            time.sleep(0.2)
+            pending_dir = os.path.join(self.ipc_root, "orders", "pending")
+            for f in os.listdir(pending_dir):
+                if f.startswith("ord_"):
+                    oid = int(f.replace("ord_", "").replace(".json", ""))
+                    self._write_done(oid, status=status)
+        threading.Thread(target=qmt_side, daemon=True).start()
+        return self.trader.buy("000001.SZ", amount=1000, price=10.5)
+
+    def test_buy_registers_self_mapping(self):
+        oid = self._order_and_capture()
+        self.assertIsNotNone(oid)
+        # 自映射：order_id_map[oid] == oid
+        self.assertIn(oid, self.trader.order_id_map)
+        self.assertEqual(self.trader.order_id_map[oid], oid)
+
+    def test_rejected_order_still_registered(self):
+        """即便被拒(返回 None)，order_id 也已在提交时登记（幂等，无害）。"""
+        before = len(self.trader.order_id_map)
+        self._order_and_capture(status="rejected")
+        self.assertGreater(len(self.trader.order_id_map), before)
+
+    def test_order_id_map_capacity_bounded(self):
+        """order_id_map 超过上限时自动裁剪，防止长时间运行内存膨胀。"""
+        for i in range(1, 4101):
+            self.trader._register_order_id(i)
+        self.assertLessEqual(len(self.trader.order_id_map), 4096)
+
+
+# ── 心跳快速失败门禁 ──
+
+class TestHeartbeatFastFail(_IpcTestBase):
+    """大QMT离线时下单立即返回 None，不阻塞 order_timeout 秒。"""
+
+    def test_buy_fast_fail_when_no_heartbeat(self):
+        # order_timeout 被 patch 为 2 秒；快速失败应远小于该值
+        start = time.time()
+        oid = self.trader.buy("000001.SZ", amount=1000, price=10.5)
+        elapsed = time.time() - start
+        self.assertIsNone(oid)
+        self.assertLess(elapsed, 1.0, "无心跳时下单应快速失败，不应阻塞等待回执")
+
+    def test_sell_fast_fail_when_no_heartbeat(self):
+        start = time.time()
+        oid = self.trader.sell("000001.SZ", amount=1000, price=10.5)
+        elapsed = time.time() - start
+        self.assertIsNone(oid)
+        self.assertLess(elapsed, 1.0)
+
+    def test_fast_fail_when_heartbeat_stale(self):
+        self._write_heartbeat()
+        path = os.path.join(self.ipc_root, "status", "heartbeat.json")
+        old = time.time() - 100  # 超过 heartbeat_max_age
+        os.utime(path, (old, old))
+        start = time.time()
+        oid = self.trader.buy("000001.SZ", amount=1000, price=10.5)
+        self.assertIsNone(oid)
+        self.assertLess(time.time() - start, 1.0)
+
+    def test_no_pending_file_written_on_fast_fail(self):
+        """快速失败时不应残留 pending 下单文件。"""
+        self.trader.buy("000001.SZ", amount=1000, price=10.5)
+        pending_dir = os.path.join(self.ipc_root, "orders", "pending")
+        remaining = [f for f in os.listdir(pending_dir) if f.endswith(".json")]
+        self.assertEqual(remaining, [])
+
+
+# ── IPC 健康诊断 ──
+
+class TestIpcHealth(_IpcTestBase):
+
+    def test_health_keys(self):
+        h = self.trader.get_ipc_health()
+        for k in ['account', 'ipc_root', 'connected', 'qmt_alive',
+                  'heartbeat_age', 'heartbeat_max_age', 'pending_count',
+                  'processing_count', 'done_count', 'poller_alive']:
+            self.assertIn(k, h)
+
+    def test_health_reflects_alive_and_counts(self):
+        self._write_heartbeat()
+        self._write_done(111, status="filled")
+        self._write_done(222, status="pending")
+        h = self.trader.get_ipc_health()
+        self.assertTrue(h['qmt_alive'])
+        self.assertIsNotNone(h['heartbeat_age'])
+        self.assertEqual(h['done_count'], 2)
+        self.assertEqual(h['account'], "TEST_ACC_1")
+
+    def test_health_when_offline(self):
+        h = self.trader.get_ipc_health()
+        self.assertFalse(h['qmt_alive'])
+        self.assertIsNone(h['heartbeat_age'])
 
 
 if __name__ == '__main__':
