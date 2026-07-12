@@ -6,7 +6,7 @@
 
 | 项目 | 结论 |
 |------|------|
-| 推荐入口 | 模型交易 `init(ContextInfo)` / `handlebar(ContextInfo)` |
+| 推荐入口 | 模型交易 `init(ContextInfo)` 前台阻塞轮询；`handlebar(ContextInfo)` 作为 fallback；top-level 只用于本地/定时运行兜底 |
 | 可用内置交易符号 | `get_trade_detail_data`、`passorder`、`cancel` 位于 `globals()` |
 | `ContextInfo` 能力 | 主要是行情、画图、订阅、回测上下文；未发现 `query_stock_asset`、`order_stock`、`cancel_order` 等交易方法 |
 | 只读快照首选 | `xttrader + StockAccount` |
@@ -73,8 +73,40 @@ QMT symbol order_stock callable: globals=False builtins=False ContextInfo=False
 7. **策略端要先看心跳再下单**  
    大QMT离线时，`QmtIpcTrader` 应快速失败，不应等待完整 `QMT_IPC_ORDER_TIMEOUT`。
 
+8. **不要把“策略状态=运行中”误认为脚本会持续 tick**
+   光大金阳光 QMT 的模型交易页面中，策略表格可以显示“运行中”，但在非交易日或无新 bar 时，实测可能只执行一次 `init()` / `handlebar()`。典型日志是每次手动运行只出现一次 `tick ok ... ticks=1`，随后 `heartbeat.json` 不再刷新。
+
+9. **不要依赖后台线程在模型交易容器里保活**
+   实测大QMT策略回调返回后可能回收脚本创建的后台线程，即使线程设置为 `daemon=False` 也不可靠。最终口径是：在检测到 `get_trade_detail_data` / `passorder` / `cancel` 等 QMT 注入符号后，`init()` 进入前台阻塞 `_foreground_loop()`，由这个前台循环持续刷新心跳、扫描订单和触发快照。top-level worker 只给本地导入、定时运行模式或特殊调试场景兜底。
+
+10. **避免 top-level worker 与前台循环重复运行**
+    曾出现 `worker start requested by top-level` 与 `foreground loop started by init` 同时存在，导致多个循环抢写 `heartbeat.json` 和重复触发快照。正式版应在 QMT 注入环境中默认关闭 top-level worker；正常日志应看到 `foreground loop started by init ...`，不应再新增 `worker start requested by top-level`。
+
+11. **Windows 文件替换会遇到瞬时锁**
+    多个旧实例或多线程同时写同一个 `heartbeat.json` 时，Windows 可能报 `WinError 32` / `Permission denied`。原子写临时文件名必须包含 `pid + thread_id + timestamp`，且 `os.replace()` 需要短重试。若日志仍出现旧格式 `heartbeat.json.<pid>.tmp`，说明大QMT里还有旧脚本实例残留，需彻底停止策略或重启大QMT客户端。
+
+12. **优先用文件心跳判断 executor 是否真的活着**
+   大QMT界面上的“运行中”只能说明策略已加载/启动，不能证明 IPC 轮询仍在工作。排障时以 `C:\QuantIPC\{account}\status\heartbeat.json` 修改时间为准；若心跳年龄超过 `QMT_IPC_HEARTBEAT_MAX_AGE`，策略端应视为离线。
+
+## 最新验证口径（2026-07-12）
+
+成功运行时应同时满足：
+
+```text
+foreground loop started by init pid=... interval=1.000s root=C:\QuantIPC
+tick ok accounts=2 ticks=持续递增
+[account] snapshot xttrader: total=... positions=...
+```
+
+文件状态应表现为：
+
+- `C:\QuantIPC\{account}\status\heartbeat.json` 持续刷新到当前秒级。
+- `C:\QuantIPC\{account}\status\account.json` 至少每 30 秒左右尝试更新一次；休盘时个别字段可能为 0，但持仓市值可用于兜底。
+- 日志不应继续新增 `worker start requested by top-level`；如果仍出现，通常是旧实例未清理干净。
+
 ## 后续调试建议
 
 1. 先做只读验证：心跳、两个账号 `account.json`、`source=xttrader`、持仓字段是否可信。
-2. 再做低风险下单验证：优先选择不会成交的限价单，确认 `pending -> processing -> done` 与撤单链路。
-3. 最后才做实盘有效价格验证，并保持单账号、单订单、最小数量。
+2. 若看到旧临时文件名或重复 `tick ok` 计数交错，先停止策略并重启大QMT，确认只剩一个前台循环。
+3. 再做低风险下单验证：优先选择不会成交的限价单，确认 `pending -> processing -> done` 与撤单链路。
+4. 最后才做实盘有效价格验证，并保持单账号、单订单、最小数量。

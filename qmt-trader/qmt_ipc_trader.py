@@ -192,7 +192,7 @@ class QmtIpcTrader:
         self._seen_orders = set()  # 已触发过 order_callback 的 (order_id, status)
 
         self._connected = False
-        logger.info('操作提示: QmtIpcTrader 已创建，请确保大QMT端 qmt_trade_executor.py 定时运行中')
+        logger.info('操作提示: QmtIpcTrader 已创建，请确保大QMT端 qmt_trade_executor.py 已运行且心跳持续刷新')
 
     # ------------------------------------------------------------------
     # 目录工具

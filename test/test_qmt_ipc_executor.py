@@ -40,6 +40,8 @@ class _ExecBase(unittest.TestCase):
         self.acc_dir = os.path.join(self.tmp, "TEST_ACC_1")
         self.acc = {"account_id":"TEST_ACC_1","qmt_path":"C:/QMT/userdata_mini",
                     "dir":self.acc_dir,"dirs":ex._account_dirs(self.acc_dir)}
+        ex._SNAPSHOT_STATE.clear()
+        ex._LAST_SNAPSHOT_ATTEMPT.clear()
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
     def _write_pending(self, oid, action="buy", stock="000001.SZ",
@@ -63,6 +65,20 @@ class TestAtomicWrite(_ExecBase):
         p = os.path.join(self.tmp, "x.json")
         ex._atomic_write_json(p, {"v":1}); ex._atomic_write_json(p, {"v":2})
         self.assertEqual(json.load(open(p, encoding="utf-8"))["v"], 2)
+
+    def test_concurrent_writes_do_not_share_tmp_name(self):
+        p = os.path.join(self.tmp, "x.json")
+        errors = []
+        def write(i):
+            try:
+                ex._atomic_write_json(p, {"v": i})
+            except Exception as e:
+                errors.append(e)
+        threads = [threading.Thread(target=write, args=(i,)) for i in range(20)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual([f for f in os.listdir(self.tmp) if f.endswith(".tmp")], [])
 
 # ---- write_done ----
 class TestWriteDone(_ExecBase):
@@ -212,6 +228,129 @@ class TestHandleAccountHeartbeat(_ExecBase):
         self.assertTrue(os.path.exists(hb))
         self.assertEqual(json.load(open(hb, encoding="utf-8"))["account_id"], "TEST_ACC_1")
         self.assertEqual([f for f in os.listdir(self.acc["dirs"]["status"]) if f.endswith(".tmp")], [])
+
+    def test_slow_snapshot_does_not_block_heartbeat(self):
+        started = threading.Event()
+        _orig_write_snapshot = ex.write_snapshot
+        _orig_archive_old = ex.archive_old
+        def slow_snapshot(acc):
+            started.set()
+            time.sleep(1.2)
+            return False
+        ex.write_snapshot = slow_snapshot
+        ex.archive_old = lambda acc: None
+        try:
+            t0 = time.time()
+            ex.handle_account(self.acc)
+            elapsed = time.time() - t0
+        finally:
+            ex.write_snapshot = _orig_write_snapshot
+            ex.archive_old = _orig_archive_old
+        hb = os.path.join(self.acc["dirs"]["status"], "heartbeat.json")
+        self.assertTrue(os.path.exists(hb))
+        self.assertTrue(started.wait(0.5))
+        self.assertLess(elapsed, 0.5)
+
+class TestWorkerDaemonPolicy(unittest.TestCase):
+    def test_local_top_level_worker_is_daemon(self):
+        old = os.environ.pop("QMT_IPC_WORKER_DAEMON", None)
+        try:
+            self.assertTrue(ex._worker_daemon_for("top-level"))
+        finally:
+            if old is not None:
+                os.environ["QMT_IPC_WORKER_DAEMON"] = old
+
+    def test_qmt_callback_worker_is_not_daemon(self):
+        old = os.environ.pop("QMT_IPC_WORKER_DAEMON", None)
+        try:
+            self.assertFalse(ex._worker_daemon_for("init"))
+            self.assertFalse(ex._worker_daemon_for("handlebar"))
+        finally:
+            if old is not None:
+                os.environ["QMT_IPC_WORKER_DAEMON"] = old
+
+    def test_env_override(self):
+        old = os.environ.get("QMT_IPC_WORKER_DAEMON")
+        try:
+            os.environ["QMT_IPC_WORKER_DAEMON"] = "0"
+            self.assertFalse(ex._worker_daemon_for("top-level"))
+            os.environ["QMT_IPC_WORKER_DAEMON"] = "1"
+            self.assertTrue(ex._worker_daemon_for("init"))
+        finally:
+            if old is None:
+                os.environ.pop("QMT_IPC_WORKER_DAEMON", None)
+            else:
+                os.environ["QMT_IPC_WORKER_DAEMON"] = old
+
+    def test_top_level_worker_stays_daemon_even_with_qmt_symbols(self):
+        old = os.environ.pop("QMT_IPC_WORKER_DAEMON", None)
+        old_symbol = getattr(ex, "passorder", None)
+        ex.passorder = lambda *args: None
+        try:
+            self.assertTrue(ex._worker_daemon_for("top-level"))
+        finally:
+            if old_symbol is None:
+                delattr(ex, "passorder")
+            else:
+                ex.passorder = old_symbol
+            if old is not None:
+                os.environ["QMT_IPC_WORKER_DAEMON"] = old
+
+    def test_foreground_loop_only_for_qmt_callbacks_by_default(self):
+        old = os.environ.pop("QMT_IPC_FOREGROUND_LOOP", None)
+        old_symbol = getattr(ex, "passorder", None)
+        try:
+            if old_symbol is not None:
+                delattr(ex, "passorder")
+            self.assertFalse(ex._foreground_loop_enabled("init"))
+            ex.passorder = lambda *args: None
+            self.assertTrue(ex._foreground_loop_enabled("init"))
+            self.assertFalse(ex._foreground_loop_enabled("top-level"))
+        finally:
+            if old_symbol is None:
+                if hasattr(ex, "passorder"):
+                    delattr(ex, "passorder")
+            else:
+                ex.passorder = old_symbol
+            if old is not None:
+                os.environ["QMT_IPC_FOREGROUND_LOOP"] = old
+
+    def test_top_level_worker_disabled_in_qmt_runtime(self):
+        old = os.environ.pop("QMT_IPC_TOP_LEVEL_WORKER", None)
+        old_symbol = getattr(ex, "passorder", None)
+        try:
+            if old_symbol is not None:
+                delattr(ex, "passorder")
+            self.assertTrue(ex._top_level_worker_enabled())
+            ex.passorder = lambda *args: None
+            self.assertFalse(ex._top_level_worker_enabled())
+        finally:
+            if old_symbol is None:
+                if hasattr(ex, "passorder"):
+                    delattr(ex, "passorder")
+            else:
+                ex.passorder = old_symbol
+            if old is not None:
+                os.environ["QMT_IPC_TOP_LEVEL_WORKER"] = old
+
+    def test_top_level_worker_env_override(self):
+        old = os.environ.get("QMT_IPC_TOP_LEVEL_WORKER")
+        old_symbol = getattr(ex, "passorder", None)
+        ex.passorder = lambda *args: None
+        try:
+            os.environ["QMT_IPC_TOP_LEVEL_WORKER"] = "1"
+            self.assertTrue(ex._top_level_worker_enabled())
+            os.environ["QMT_IPC_TOP_LEVEL_WORKER"] = "0"
+            self.assertFalse(ex._top_level_worker_enabled())
+        finally:
+            if old_symbol is None:
+                delattr(ex, "passorder")
+            else:
+                ex.passorder = old_symbol
+            if old is None:
+                os.environ.pop("QMT_IPC_TOP_LEVEL_WORKER", None)
+            else:
+                os.environ["QMT_IPC_TOP_LEVEL_WORKER"] = old
 
 if __name__ == "__main__":
     unittest.main()

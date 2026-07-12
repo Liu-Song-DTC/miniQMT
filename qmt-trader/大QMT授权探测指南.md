@@ -11,7 +11,7 @@
 
 | 脚本 | 运行位置 | 作用 |
 |------|---------|------|
-| [probe_qmt_authorization.py](probe_qmt_authorization.py) | **QMT 策略编辑器内**（定时运行/模型交易） | 在 QMT 策略引擎命名空间里同时探测 `passorder`(VBA) 与 `xttrader` 两条通道 |
+| [probe_qmt_authorization.py](probe_qmt_authorization.py) | **QMT 策略编辑器内**（模型交易/定时运行） | 在 QMT 策略引擎命名空间里同时探测 `passorder`(VBA) 与 `xttrader` 两条通道 |
 | [probe_qmt_xttrader.py](probe_qmt_xttrader.py) | 大QMT机器的**普通 Python(Anaconda)** | 独立验证 `xttrader` 连通性（现有 executor 走的通道） |
 
 > ⚠️ 安全：两脚本**只做检测和只读查询**。`passorder` 仅检测「是否可调用」，**绝不实际调用**；
@@ -29,14 +29,14 @@ QMT_USERDATA_MINI = r"C:\光大证券金阳光QMT实盘\userdata_mini"  # xttrad
 
 ### 2.2 放进 QMT 运行（二选一）
 
-- **定时运行模式（推荐，与 executor 部署方式一致，最贴近实战）**
+- **模型交易模式（推荐，与当前 executor 部署方式一致）**
+  1. QMT → 策略交易 → 新建 **模型交易**，加载本脚本
+  2. 点运行，等 `init/handlebar` 触发一次
+
+- **定时运行模式（若你的 QMT 版本提供该入口）**
   1. QMT → 策略交易 → Python策略 → 新建 **定时运行**
   2. 脚本路径选 `probe_qmt_authorization.py`，周期填 `5000ms`，运行
   3. 跑一轮即可（脚本内有防重，多跑不会重复输出）
-
-- **模型交易模式（passorder 需 ContextInfo 时最准）**
-  1. QMT → 策略交易 → 新建 **模型交易**，加载本脚本
-  2. 点运行，等 `init/handlebar` 触发一次
 
 ### 2.3 看结果
 - QMT 的「日志/运行输出」窗口会打印逐项结论

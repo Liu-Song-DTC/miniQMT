@@ -13,7 +13,7 @@
 └─────────────────────┘                      └──────────────────────┘
     写订单指令 → pending/               pending/ → 读指令
     读成交回执 ← done/                  下单 → 写回执 → done/
-    QMT心跳检测 ← status/heartbeat      定时写账户快照 → status/account
+    QMT心跳检测 ← status/heartbeat      周期写账户快照 → status/account
 ```
 
 **核心逻辑**：大QMT本身自带 xttrader 授权，不开 miniQMT 也能用。只需要让大QMT内置 Python 定时跑脚本，从文件目录读你的指令来下单。
@@ -133,7 +133,7 @@ C:\QuantIPC\
 
 ## 四、QMT侧代码
 
-这段代码跑在**大QMT内置Python环境**里。在QMT策略编辑器中设置：**定时运行模式，周期 1000ms**。
+这段代码跑在**大QMT内置Python环境**里。早期方案要求在QMT策略编辑器中设置“定时运行模式，周期 1000ms”；光大金阳光 QMT 实测界面可能只提供“模型交易”入口。当前正式版 `qmt_trade_executor.py` 在模型交易 `init(ContextInfo)` 中进入前台循环，使用“模型交易/实盘/运行”也能自行按秒轮询 IPC，不再强依赖界面里的“定时运行”菜单。
 
 ```python
 # qmt_trade_executor.py — 放在 QMT 的 Python 脚本目录，设为定时运行（1000ms）
@@ -299,7 +299,7 @@ def update_account_status():
         pass
 
 def main():
-    """QMT定时运行入口"""
+    """QMT periodic entry."""
     # 心跳
     with open(os.path.join(DIR_STATUS, "heartbeat.json"), "w") as f:
         json.dump({"ts": datetime.now().isoformat()}, f)
@@ -421,12 +421,13 @@ if __name__ == "__main__":
 ### QMT端
 
 1. **放脚本**：把 `qmt_trade_executor.py` 放到QMT策略编辑器能访问到的目录（如 `user_define/`）
-2. **设置定时运行**：
-   - 打开 QMT → 策略交易 → Python策略
-   - 新建 "定时运行" 策略
+2. **设置运行方式**：
+   - 打开 QMT → 模型交易/模型研究 → 新建 Python “模型交易”
    - 脚本路径选 `qmt_trade_executor.py`
-   - 周期设 **1000ms**
-   - 勾选 "自动运行"
+   - 运行模式选“实盘”，刷新间隔可保持 1 秒
+   - 不要勾选“启动本地 python”
+   - 编译、保存、运行后，日志应出现 `foreground loop started by init` 和持续递增的 `tick ok accounts=...`
+   - 若你的 QMT 版本确实有“定时运行/定时任务”，也可以使用，周期设 **1000ms**
 3. **改路径**：脚本中 `mini_qmt_path` 改成你的QMT实际安装目录（大QMT的bin目录）
 4. **改账号**：`ACCOUNT_ID` 改成你的资金账号
 
@@ -469,3 +470,6 @@ if __name__ == "__main__":
 7. **done 目录膨胀**：`archive_old_done()` 把超过 `QMT_IPC_DONE_RETENTION_SEC`（默认1天）的回执移入 `orders/done_archive/`
 8. **配置注入**：executor 侧 `IPC_ROOT` / `QMT_IPC_ACCOUNT_FILTER` / `QMT_IPC_PROCESSING_STALE_SEC` / `QMT_IPC_DONE_RETENTION_SEC` 均可用环境变量覆盖，免改脚本
 9. **同步/异步兼容**：`QmtIpcTrader` 下单同步返回真实 `order_id`，并把 `order_id` 自映射写入 `order_id_map`，因此无论 `config.USE_SYNC_ORDER_API` 取 True/False 都能正常配对（不必手改该开关）
+10. **模型交易非交易日可能只触发一次**：如果日志只有一次 `tick ok ... ticks=1`，不是交易 API 卡住，而是旧版仍依赖 QMT 继续调用 `handlebar()` 或依赖后台线程。正式版 executor 在 `init()` 中进入前台阻塞循环；排障时优先看 `heartbeat.json` 修改时间和日志里的 `foreground loop started by init`。
+11. **不要把后台线程当作主保活方案**：实测大QMT策略容器可能在回调返回后清理脚本后台线程，即使 `daemon=False` 也不可靠。top-level worker 仅保留给本地导入、定时运行或特殊调试兜底；模型交易模式应只保留 `init()` 前台循环。
+12. **旧实例会造成文件锁和重复快照**：如果日志继续出现 `worker start requested by top-level`、旧格式 `heartbeat.json.<pid>.tmp`、`WinError 32` 或同一账号短时间多次 `snapshot xttrader`，通常是旧策略实例未停止干净。先停止策略，必要时重启大QMT客户端，再运行最新版脚本。

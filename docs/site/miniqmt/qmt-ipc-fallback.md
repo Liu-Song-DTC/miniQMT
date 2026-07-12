@@ -19,6 +19,8 @@
 - `ContextInfo` 主要提供行情和上下文能力，没有发现 `order_stock`、`query_stock_asset`、`cancel_order` 等交易方法。
 - `xttrader + StockAccount` 可用于只读快照，并作为下单首选参数形式。
 - 休盘时资产字段可能为 0，但持仓仍可返回，需要快照层做数据清洗。
+- 光大金阳光 QMT 的“模型交易”入口在非交易日可能只触发一次策略回调；当前 executor 在 `init()` 中进入前台循环，持续轮询 IPC。
+- 大QMT 策略容器可能在回调返回后回收后台线程，因此不能把后台 worker 当作主要保活方案。
 
 ## 目录约定
 
@@ -81,14 +83,26 @@ C:\QuantIPC\
 
 ## 运行与日志
 
-推荐在大QMT中使用模型交易入口部署 `qmt_trade_executor.py`。正常日志应类似：
+推荐在大QMT中使用模型交易入口部署 `qmt_trade_executor.py`。若界面里没有“定时运行”选项，直接使用“模型交易/实盘/运行”，不要勾选“启动本地 python”。正常日志应类似：
 
 ```text
+[11:56:39.900] foreground loop started by init pid=12345 interval=1.000s root=C:\QuantIPC
 [11:56:40.467] [TEST_ACC_2] snapshot xttrader: total=13356 positions=1 via asset=StockAccount pos=StockAccount
-[11:56:40.482] tick ok accounts=2 ticks=1
+[11:56:40.482] tick ok accounts=2 ticks=1 worker=False
 ```
 
 如果看到连续高频 `tick start/tick done`，说明运行的仍是旧脚本，应重新粘贴最新版本。
+
+如果每次手动运行只看到一次 `tick ok accounts=... ticks=1`，之后 `heartbeat.json` 不再刷新，通常不是交易 API 卡死，而是旧版仍在依赖后台线程。请确认已更新到带 `foreground loop started by init` 的新版脚本，并重新编译、保存、运行。
+
+如果日志里继续新增 `worker start requested by top-level` 或旧格式临时文件 `heartbeat.json.<pid>.tmp`，通常说明大QMT里仍有旧实例残留。应先停止策略，必要时重启大QMT客户端，再运行最新版脚本。
+
+验证通过的文件状态：
+
+- `C:\QuantIPC\{account_id}\status\heartbeat.json` 修改时间持续贴近当前时间。
+- `C:\QuantIPC\{account_id}\status\account.json` 周期更新；休盘时资产字段可能为 0，但持仓市值应能正常返回或兜底。
+- `tick ok accounts=... ticks=...` 中的 `ticks` 持续递增。
+- 在模型交易前台循环形态下，`worker=False` 是正常状态；它表示没有额外后台 worker 参与保活。
 
 ## 风险控制
 
@@ -96,6 +110,7 @@ C:\QuantIPC\
 - 大QMT端处理 `processing/` 超龄文件时写 `error` 回执并清理，不重发订单。
 - `done/` 目录按保留时间归档到 `done_archive/`，避免长期运行膨胀。
 - 外部交易 API 调用都有超时保护，避免 QMT API 偶发卡死拖住主循环。
+- 大QMT端写 `done/`、`status/account.json`、`status/heartbeat.json` 时使用唯一临时文件名和短重试，降低 Windows 文件锁导致的 `WinError 32` 风险。
 
 ## 调试顺序
 

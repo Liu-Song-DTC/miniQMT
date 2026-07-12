@@ -34,6 +34,7 @@ ACCOUNT_FILTER = os.environ.get("QMT_IPC_ACCOUNT_FILTER", "").strip()
 PROCESSING_STALE_SEC = int(os.environ.get("QMT_IPC_PROCESSING_STALE_SEC", "120"))
 DONE_RETENTION_SEC = int(os.environ.get("QMT_IPC_DONE_RETENTION_SEC", "86400"))
 SNAPSHOT_INTERVAL_SEC = 30
+SNAPSHOT_TASK_STALE_SEC = int(os.environ.get("QMT_IPC_SNAPSHOT_TASK_STALE_SEC", "60"))
 XT_CONNECT_TIMEOUT_SEC = int(os.environ.get("QMT_IPC_XT_CONNECT_TIMEOUT_SEC", "8"))
 XT_QUERY_TIMEOUT_SEC = int(os.environ.get("QMT_IPC_XT_QUERY_TIMEOUT_SEC", "5"))
 MAIN_INTERVAL_SEC = float(os.environ.get("QMT_IPC_MAIN_INTERVAL_SEC", "1.0"))
@@ -53,6 +54,11 @@ _LAST_SNAPSHOT_ATTEMPT = {}
 _CONTEXT_INFO = {"obj": None}
 _DIAG_DONE = {"ctx": False}
 _MAIN_STATE = {"last_run": 0.0, "last_log": 0.0, "ticks": 0}
+_MAIN_LOCK = threading.Lock()
+_WORKER_STATE = {"thread": None, "started_at": 0.0}
+_WORKER_LOCK = threading.Lock()
+_SNAPSHOT_STATE = {}
+_SNAPSHOT_LOCK = threading.Lock()
 
 
 def log(msg):
@@ -120,10 +126,22 @@ def _make_position(stock, vol, available, cost, market_price, market_value):
 
 
 def _atomic_write_json(path, data):
-    tmp = "%s.%s.tmp" % (path, os.getpid())
+    tmp = "%s.%s.%s.%s.tmp" % (
+        path, os.getpid(), threading.get_ident(), int(time.time() * 1000000))
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    for attempt in range(8):
+        try:
+            os.replace(tmp, path)
+            return
+        except OSError:
+            if attempt >= 7:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def _account_dirs(acc_dir):
@@ -438,15 +456,11 @@ def write_done(dirs, processing_path, order, status, msg,
 
 def _try_connect_xttrader(qmt_path):
     """Import + connect XtQuantTrader. Returns trader or None."""
-    try:
-        _xt = __import__("xtquant.xttrader", fromlist=["XtQuantTrader"])
-        XtQuantTrader = _xt.XtQuantTrader
-    except Exception as e:
-        log("xttrader import failed: %s" % str(e)[:120])
-        return None
     box = {"t": None, "rc": None, "err": None}
     def _c():
         try:
+            _xt = __import__("xtquant.xttrader", fromlist=["XtQuantTrader"])
+            XtQuantTrader = _xt.XtQuantTrader
             t = XtQuantTrader(qmt_path, int(time.time() * 1000) % 1000000)
             if hasattr(t, "start"):
                 t.start()
@@ -456,10 +470,10 @@ def _try_connect_xttrader(qmt_path):
             box["err"] = e
     th = threading.Thread(target=_c, daemon=True); th.start(); th.join(XT_CONNECT_TIMEOUT_SEC)
     if th.is_alive():
-        log("xttrader connect timeout (%ss) for %s" % (XT_CONNECT_TIMEOUT_SEC, qmt_path))
+        log("xttrader import/connect timeout (%ss) for %s" % (XT_CONNECT_TIMEOUT_SEC, qmt_path))
         return None
     if box["err"] is not None:
-        log("xttrader connect error for %s: %s" % (qmt_path, str(box["err"])[:120]))
+        log("xttrader import/connect error for %s: %s" % (qmt_path, str(box["err"])[:120]))
         return None
     if box["rc"] not in (0, None):
         log("xttrader connect rc=%s for %s" % (box["rc"], qmt_path))
@@ -643,6 +657,47 @@ def _snapshot_due(acc):
     return True
 
 
+def _snapshot_worker(acc):
+    account_id = acc["account_id"]
+    try:
+        write_snapshot(acc)
+        archive_old(acc)
+    except Exception as e:
+        log("[%s] snapshot worker error: %s" % (account_id, str(e)[:120]))
+    finally:
+        with _SNAPSHOT_LOCK:
+            state = _SNAPSHOT_STATE.get(account_id)
+            if state and state.get("thread") is threading.current_thread():
+                state["finished_at"] = time.time()
+
+
+def _start_snapshot_task(acc):
+    account_id = acc["account_id"]
+    now = time.time()
+    with _SNAPSHOT_LOCK:
+        state = _SNAPSHOT_STATE.get(account_id) or {}
+        th = state.get("thread")
+        if th is not None and th.is_alive():
+            started_at = state.get("started_at", now)
+            last_log = state.get("last_log", 0)
+            if now - started_at >= SNAPSHOT_TASK_STALE_SEC and now - last_log >= MAIN_LOG_INTERVAL_SEC:
+                state["last_log"] = now
+                _SNAPSHOT_STATE[account_id] = state
+                log("[%s] snapshot task still running %.0fs, skip new snapshot" % (
+                    account_id, now - started_at))
+            return False
+        th = threading.Thread(target=_snapshot_worker, args=(acc,),
+                              name="QmtIpcSnapshot-%s" % account_id)
+        th.daemon = True
+        _SNAPSHOT_STATE[account_id] = {
+            "thread": th,
+            "started_at": now,
+            "last_log": 0,
+        }
+        th.start()
+        return True
+
+
 def _remember_context(ContextInfo):
     if ContextInfo is not None:
         _CONTEXT_INFO["obj"] = ContextInfo
@@ -699,44 +754,141 @@ def handle_account(acc):
         fp = os.path.join(pending_dir, fn)
         if os.path.exists(fp): process_one_order(acc, fp)
     if _snapshot_due(acc):
-        write_snapshot(acc)
-        archive_old(acc)
+        _start_snapshot_task(acc)
+
+
+def _worker_daemon_for(reason):
+    forced = os.environ.get("QMT_IPC_WORKER_DAEMON")
+    if forced is not None:
+        return forced.strip().lower() not in ("0", "false", "no", "off")
+    if reason in ("init", "handlebar"):
+        return False
+    return True
+
+
+def _in_qmt_runtime():
+    for name in ("get_trade_detail_data", "passorder", "cancel"):
+        if callable(globals().get(name)):
+            return True
+    return False
+
+
+def _foreground_loop_enabled(reason):
+    forced = os.environ.get("QMT_IPC_FOREGROUND_LOOP")
+    if forced is not None:
+        return forced.strip().lower() not in ("0", "false", "no", "off")
+    return reason in ("init", "handlebar") and _in_qmt_runtime()
+
+
+def _top_level_worker_enabled():
+    forced = os.environ.get("QMT_IPC_TOP_LEVEL_WORKER")
+    if forced is not None:
+        return forced.strip().lower() not in ("0", "false", "no", "off")
+    return not _in_qmt_runtime()
+
+
+def _worker_loop():
+    log("worker loop started pid=%s daemon=%s interval=%.3fs root=%s" % (
+        os.getpid(), threading.current_thread().daemon, MAIN_INTERVAL_SEC, IPC_ROOT))
+    sleep_sec = MAIN_INTERVAL_SEC
+    if sleep_sec <= 0:
+        sleep_sec = 1.0
+    if sleep_sec < 0.2:
+        sleep_sec = 0.2
+    while True:
+        try:
+            main()
+        except Exception as e:
+            log("worker loop error: %s\n%s" % (e, traceback.format_exc()))
+        time.sleep(sleep_sec)
+
+
+def _start_worker(reason):
+    daemon = _worker_daemon_for(reason)
+    with _WORKER_LOCK:
+        th = _WORKER_STATE.get("thread")
+        if th is not None and th.is_alive():
+            if not th.daemon or daemon:
+                return
+            log("worker promote requested by %s (old daemon still alive)" % reason)
+        th = threading.Thread(target=_worker_loop, name="QmtIpcExecutorWorker")
+        th.daemon = daemon
+        th.start()
+        _WORKER_STATE["thread"] = th
+        _WORKER_STATE["started_at"] = time.time()
+        _WORKER_STATE["daemon"] = daemon
+        log("worker start requested by %s daemon=%s" % (reason, daemon))
+
+
+def _foreground_loop(reason):
+    log("foreground loop started by %s pid=%s interval=%.3fs root=%s" % (
+        reason, os.getpid(), MAIN_INTERVAL_SEC, IPC_ROOT))
+    sleep_sec = MAIN_INTERVAL_SEC
+    if sleep_sec <= 0:
+        sleep_sec = 1.0
+    if sleep_sec < 0.2:
+        sleep_sec = 0.2
+    while True:
+        try:
+            main()
+        except Exception as e:
+            log("foreground loop error: %s\n%s" % (e, traceback.format_exc()))
+        time.sleep(sleep_sec)
 
 
 def main():
-    now = time.time()
-    if now - _MAIN_STATE["last_run"] < MAIN_INTERVAL_SEC:
+    if not _MAIN_LOCK.acquire(False):
         return
-    _MAIN_STATE["last_run"] = now
-    _MAIN_STATE["ticks"] += 1
-    accounts = discover_accounts()
-    if not accounts:
+    try:
+        now = time.time()
+        if now - _MAIN_STATE["last_run"] < MAIN_INTERVAL_SEC:
+            return
+        _MAIN_STATE["last_run"] = now
+        _MAIN_STATE["ticks"] += 1
+        accounts = discover_accounts()
+        if not accounts:
+            if now - _MAIN_STATE["last_log"] >= MAIN_LOG_INTERVAL_SEC:
+                _MAIN_STATE["last_log"] = now
+                log("no account dirs found (waiting for config.json)")
+            return
+        for acc in accounts:
+            try: handle_account(acc)
+            except Exception as e: log("[%s] handle_account error: %s" % (acc.get("account_id", "?"), e))
         if now - _MAIN_STATE["last_log"] >= MAIN_LOG_INTERVAL_SEC:
             _MAIN_STATE["last_log"] = now
-            log("no account dirs found (waiting for config.json)")
-        return
-    for acc in accounts:
-        try: handle_account(acc)
-        except Exception as e: log("[%s] handle_account error: %s" % (acc.get("account_id", "?"), e))
-    if now - _MAIN_STATE["last_log"] >= MAIN_LOG_INTERVAL_SEC:
-        _MAIN_STATE["last_log"] = now
-        log("tick ok accounts=%d ticks=%d" % (len(accounts), _MAIN_STATE["ticks"]))
+            th = _WORKER_STATE.get("thread")
+            worker_alive = th is not None and th.is_alive()
+            log("tick ok accounts=%d ticks=%d worker=%s" % (
+                len(accounts), _MAIN_STATE["ticks"], worker_alive))
+    finally:
+        _MAIN_LOCK.release()
 
 
 def init(ContextInfo):
     _remember_context(ContextInfo)
     _dump_context_info(ContextInfo)
+    if _foreground_loop_enabled("init"):
+        _foreground_loop("init")
+        return
+    _start_worker("init")
     try: main()
     except Exception as e: log("init error: %s" % e)
 
 
 def handlebar(ContextInfo):
     _remember_context(ContextInfo)
+    if _foreground_loop_enabled("handlebar"):
+        _foreground_loop("handlebar")
+        return
+    _start_worker("handlebar")
     try: main()
     except Exception as e: log("handlebar error: %s" % e)
 
 
-try: main()
+try:
+    if _top_level_worker_enabled():
+        _start_worker("top-level")
+    main()
 except Exception as _e:
     import traceback as _tb; _tb.print_exc()
     try: log("top-level fault: %s" % _e)
