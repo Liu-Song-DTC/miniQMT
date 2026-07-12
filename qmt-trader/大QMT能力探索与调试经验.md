@@ -88,6 +88,12 @@ QMT symbol order_stock callable: globals=False builtins=False ContextInfo=False
 12. **优先用文件心跳判断 executor 是否真的活着**
    大QMT界面上的“运行中”只能说明策略已加载/启动，不能证明 IPC 轮询仍在工作。排障时以 `C:\QuantIPC\{account}\status\heartbeat.json` 修改时间为准；若心跳年龄超过 `QMT_IPC_HEARTBEAT_MAX_AGE`，策略端应视为离线。
 
+13. **兼容 PowerShell 写出的 UTF-8 BOM**
+   Windows PowerShell 的 `Set-Content -Encoding UTF8` 可能写入 BOM。旧版 executor 用 `encoding="utf-8"` 读取订单时会报 `Unexpected UTF-8 BOM`，导致文件先卡在 `processing/`，再由 120 秒孤儿恢复写 `done/error`。正式版读 IPC JSON 应使用 `utf-8-sig`，且坏 JSON 应立即写 `done/error`，不要等孤儿恢复。
+
+14. **QMT 拒单不一定进入委托查询**
+   空仓卖出实测 `order_stock` 直接返回 `-1`，executor 应立即写 `done/rejected`。若返回正 `seq` 后再在 `query_all_orders()` 中看到废单状态，应把 `order_status=57` 映射为 `rejected`，避免误判为 `cancelled_timeout`。
+
 ## 最新验证口径（2026-07-12）
 
 成功运行时应同时满足：
@@ -104,9 +110,16 @@ tick ok accounts=2 ticks=持续递增
 - `C:\QuantIPC\{account}\status\account.json` 至少每 30 秒左右尝试更新一次；休盘时个别字段可能为 0，但持仓市值可用于兜底。
 - 日志不应继续新增 `worker start requested by top-level`；如果仍出现，通常是旧实例未清理干净。
 
+低风险订单链路已验证：
+
+- 预取消链路：先写 `cancel/cancel_<order_id>.json`，再写 `orders/pending/ord_<order_id>.json`，executor 在连接交易 API 前写 `done/cancelled`，`pending/processing/cancel` 均清空，日志无 `order seq=`。
+- BOM 订单文件：PowerShell BOM 文件会被新版 `_load_json(... utf-8-sig)` 正常解析；坏 JSON 会立即写 `done/error`。
+- 空仓卖出拒单：账号 `25105132` 空仓卖出 `000001.SZ` 100 股，真实调用 `order_stock` 后返回 `-1`，executor 写 `done/rejected`，`filled_volume=0`。
+
 ## 后续调试建议
 
 1. 先做只读验证：心跳、两个账号 `account.json`、`source=xttrader`、持仓字段是否可信。
 2. 若看到旧临时文件名或重复 `tick ok` 计数交错，先停止策略并重启大QMT，确认只剩一个前台循环。
 3. 再做低风险下单验证：优先选择不会成交的限价单，确认 `pending -> processing -> done` 与撤单链路。
-4. 最后才做实盘有效价格验证，并保持单账号、单订单、最小数量。
+4. 有效委托号 + 撤单链路建议等交易时段再测：使用极低成交概率限价单，拿到正 `seq` 后立即写 cancel 文件，确认 `inflight cancel` 和最终回执。
+5. 最后才做实盘有效价格验证，并保持单账号、单订单、最小数量。

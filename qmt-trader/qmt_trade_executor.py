@@ -49,6 +49,7 @@ ORDER_ALL_TRADED = 56
 ORDER_PART_TRADED = 55
 ORDER_PART_TRADED_CANCELED = 53
 ORDER_CANCELED = 54
+ORDER_REJECTED = 57
 
 _LAST_SNAPSHOT_ATTEMPT = {}
 _CONTEXT_INFO = {"obj": None}
@@ -72,7 +73,7 @@ def log(msg):
 
 def _load_json(path):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
         return None
@@ -512,8 +513,13 @@ def process_one_order(acc, filepath):
         shutil.move(filepath, processing_path)
         try: os.utime(processing_path, None)
         except OSError: pass
-        with open(processing_path, "r", encoding="utf-8") as f:
-            order = json.load(f)
+        order = _load_json(processing_path)
+        if not order:
+            order = {"order_id": os.path.splitext(filename)[0].replace("ord_", ""),
+                     "volume": 0}
+            log("[%s] invalid order json %s, write error" % (account_id, filename))
+            write_done(dirs, processing_path, order, "error", "invalid order json")
+            return
         oid = order["order_id"]
         log("[%s] handle %s: %s %s %s" % (account_id, oid, order["action"],
                                            order["stock_code"], order["volume"]))
@@ -585,6 +591,8 @@ def process_one_order(acc, filepath):
                         result = {"status": "partial", "price": traded_price, "vol": traded_vol}
                     elif status == ORDER_CANCELED:
                         result = {"status": "cancelled", "price": 0, "vol": 0}
+                    elif status == ORDER_REJECTED:
+                        result = {"status": "rejected", "price": traded_price, "vol": traded_vol}
                     break
             if result: break
         if result is None:

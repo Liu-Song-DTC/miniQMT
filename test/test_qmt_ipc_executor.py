@@ -61,6 +61,11 @@ class TestAtomicWrite(_ExecBase):
         ex._atomic_write_json(p, {"a":1,"b":"hello"})
         self.assertEqual(json.load(open(p, encoding="utf-8")), {"a":1,"b":"hello"})
         self.assertEqual([f for f in os.listdir(self.tmp) if f.endswith(".tmp")], [])
+    def test_load_json_accepts_utf8_bom(self):
+        p = os.path.join(self.tmp, "bom.json")
+        with open(p, "w", encoding="utf-8-sig") as f:
+            json.dump({"v": 1}, f)
+        self.assertEqual(ex._load_json(p), {"v": 1})
     def test_overwrite(self):
         p = os.path.join(self.tmp, "x.json")
         ex._atomic_write_json(p, {"v":1}); ex._atomic_write_json(p, {"v":2})
@@ -192,6 +197,16 @@ class TestProcessOrderFlow(_ExecBase):
         self.assertEqual(rec["status"], "cancelled_timeout")
         self.assertIn(9001, fake.cancel_called)
 
+    def test_rejected_order_status_writes_rejected(self):
+        path = self._write_pending(304, action="sell", timeout_sec=1)
+        fake = FakeTrader(fill_status=57, seq=9400)
+        _o = ex._try_connect_xttrader; ex._try_connect_xttrader = lambda qp: fake
+        try: ex.process_one_order(self.acc, path)
+        finally: ex._try_connect_xttrader = _o
+        rec = json.load(open(os.path.join(self.acc["dirs"]["done"],"ord_304.json"), encoding="utf-8"))
+        self.assertEqual(rec["status"], "rejected")
+        self.assertEqual(fake.cancel_called, [])
+
     def test_midflight_cancel(self):
         path = self._write_pending(302, action="buy", timeout_sec=3)
         cp = os.path.join(self.acc["dirs"]["cancel"], "cancel_302.json")
@@ -219,6 +234,37 @@ class TestProcessOrderFlow(_ExecBase):
         rec = json.load(open(os.path.join(self.acc["dirs"]["done"],"ord_303.json"), encoding="utf-8"))
         self.assertEqual(rec["status"], "cancelled")
         self.assertEqual(fake.orders_placed, [])
+
+    def test_cancel_before_submit_accepts_utf8_bom_order(self):
+        oid = "bom_pre_cancel"
+        path = os.path.join(self.acc["dirs"]["pending"], "ord_%s.json" % oid)
+        order = dict(version="1.0", order_id=oid, timestamp="2026-07-12 10:00:00.000",
+                     action="sell", stock_code="000001.SZ", price_type="limit",
+                     price=999.99, volume=100, strategy="test", timeout_sec=1, remark="")
+        with open(path, "w", encoding="utf-8-sig") as f:
+            json.dump(order, f)
+        cp = os.path.join(self.acc["dirs"]["cancel"], "cancel_%s.json" % oid)
+        with open(cp, "w", encoding="utf-8") as f:
+            json.dump({"order_id": oid}, f)
+        fake = FakeTrader(fill_status=56, seq=9300)
+        _o = ex._try_connect_xttrader; ex._try_connect_xttrader = lambda qp: fake
+        try: ex.process_one_order(self.acc, path)
+        finally: ex._try_connect_xttrader = _o
+        rec = json.load(open(os.path.join(self.acc["dirs"]["done"], "ord_%s.json" % oid), encoding="utf-8"))
+        self.assertEqual(rec["status"], "cancelled")
+        self.assertEqual(fake.orders_placed, [])
+        self.assertFalse(os.path.exists(cp))
+
+    def test_invalid_order_json_writes_error_done(self):
+        path = os.path.join(self.acc["dirs"]["pending"], "ord_bad_json.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{bad json")
+        ex.process_one_order(self.acc, path)
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(os.path.exists(os.path.join(self.acc["dirs"]["processing"], "ord_bad_json.json")))
+        rec = json.load(open(os.path.join(self.acc["dirs"]["done"], "ord_bad_json.json"), encoding="utf-8"))
+        self.assertEqual(rec["status"], "error")
+        self.assertEqual(rec["error"], "invalid order json")
 
 # ---- handle_account heartbeat ----
 class TestHandleAccountHeartbeat(_ExecBase):

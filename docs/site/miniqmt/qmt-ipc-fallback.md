@@ -21,6 +21,8 @@
 - 休盘时资产字段可能为 0，但持仓仍可返回，需要快照层做数据清洗。
 - 光大金阳光 QMT 的“模型交易”入口在非交易日可能只触发一次策略回调；当前 executor 在 `init()` 中进入前台循环，持续轮询 IPC。
 - 大QMT 策略容器可能在回调返回后回收后台线程，因此不能把后台 worker 当作主要保活方案。
+- PowerShell 写出的 UTF-8 BOM 订单文件可正常解析；坏 JSON 会立即写 `done/error`，不再等待孤儿恢复。
+- 空仓卖出等柜台拒单场景已验证：`order_stock` 直接返回无效委托号时写 `done/rejected`；委托查询返回 `order_status=57` 时也映射为 `rejected`。
 
 ## 目录约定
 
@@ -81,6 +83,16 @@ C:\QuantIPC\
 }
 ```
 
+## 订单回执口径
+
+大QMT端处理订单时采用“先文件状态、后交易 API”的顺序，尽量把不确定性收敛在 `done/` 回执里：
+
+- `cancel/cancel_<order_id>.json` 如果在下单前已存在，executor 直接写 `done/cancelled`，不会连接交易 API。
+- `orders/pending/` 中的 JSON 使用 `utf-8-sig` 读取，兼容 PowerShell `Set-Content -Encoding UTF8` 产生的 BOM。
+- 订单 JSON 无法解析时立即写 `done/error`，并清理 `processing/`，不再等默认 120 秒的残留恢复。
+- `order_stock` 返回空值、负数或 0 时写 `done/rejected`。
+- `query_all_orders()` 返回 QMT 废单状态 `57` 时写 `done/rejected`，避免误判为超时撤单。
+
 ## 运行与日志
 
 推荐在大QMT中使用模型交易入口部署 `qmt_trade_executor.py`。若界面里没有“定时运行”选项，直接使用“模型交易/实盘/运行”，不要勾选“启动本地 python”。正常日志应类似：
@@ -117,5 +129,7 @@ C:\QuantIPC\
 1. 确认 `heartbeat.json` 持续更新。
 2. 确认两个账号都生成 `account.json`，且 `source=xttrader`。
 3. 确认持仓字段可信：无零股伪持仓，休盘参考价可反推。
-4. 用不会成交的低风险限价单验证 `pending -> processing -> done`。
-5. 再做最小数量、有效价格的真实下单验证。
+4. 先验证预取消链路：先写 `cancel/cancel_<order_id>.json`，再写 `pending/ord_<order_id>.json`，确认 `done/cancelled` 且日志没有 `order seq=`。
+5. 验证拒单链路：用空仓账号小数量卖出不可成交标的或明显会被柜台拒绝的场景，确认 `done/rejected`、`filled_volume=0`。
+6. 有效委托号 + 撤单链路建议等交易时段再测：用极低成交概率限价单拿到正 `seq` 后立即写 cancel 文件，确认 `inflight cancel` 和最终回执。
+7. 最后才做最小数量、有效价格的真实下单验证。
