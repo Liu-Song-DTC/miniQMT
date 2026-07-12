@@ -1,6 +1,6 @@
 # 大QMT文件 IPC Fallback
 
-大QMT文件 IPC 是 `easy_qmt_trader` 直连失效时的交易降级通道：miniQMT 策略端把订单写入 `C:\QuantIPC\{account_id}\orders\pending`，大QMT 内置 Python 脚本 `qmt_trade_executor.py` 读取后用大QMT授权执行下单，并把账户快照和成交回执写回共享目录。
+大QMT文件 IPC 是 `easy_qmt_trader` 直连失效时的交易降级通道：miniQMT 策略端把订单写入 `C:\QuantIPC\{account_id}\orders\pending`，大QMT 内置 Python 脚本 `QMT_trade_executor.py` 读取后用大QMT授权执行下单，并把账户快照和成交回执写回共享目录。
 
 ## 适用场景
 
@@ -95,7 +95,7 @@ C:\QuantIPC\
 
 ## 运行与日志
 
-推荐在大QMT中使用模型交易入口部署 `qmt_trade_executor.py`。若界面里没有“定时运行”选项，直接使用“模型交易/实盘/运行”，不要勾选“启动本地 python”。正常日志应类似：
+推荐在大QMT中使用模型交易入口部署 `QMT_trade_executor.py`。若界面里没有“定时运行”选项，直接使用“模型交易/实盘/运行”，不要勾选“启动本地 python”。正常日志应类似：
 
 ```text
 [11:56:39.900] foreground loop started by init pid=12345 interval=1.000s root=C:\QuantIPC
@@ -123,6 +123,7 @@ C:\QuantIPC\
 - `done/` 目录按保留时间归档到 `done_archive/`，避免长期运行膨胀。
 - 外部交易 API 调用都有超时保护，避免 QMT API 偶发卡死拖住主循环。
 - 大QMT端写 `done/`、`status/account.json`、`status/heartbeat.json` 时使用唯一临时文件名和短重试，降低 Windows 文件锁导致的 `WinError 32` 风险。
+- 大QMT端日志按日期写入，同时受 `QMT_IPC_LOG_MAX_BYTES` 和 `QMT_IPC_LOG_BACKUP_COUNT` 限制，避免长期运行写满存储介质。
 
 ## 调试顺序
 

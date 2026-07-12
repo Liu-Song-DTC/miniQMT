@@ -133,10 +133,10 @@ C:\QuantIPC\
 
 ## 四、QMT侧代码
 
-这段代码跑在**大QMT内置Python环境**里。早期方案要求在QMT策略编辑器中设置“定时运行模式，周期 1000ms”；光大金阳光 QMT 实测界面可能只提供“模型交易”入口。当前正式版 `qmt_trade_executor.py` 在模型交易 `init(ContextInfo)` 中进入前台循环，使用“模型交易/实盘/运行”也能自行按秒轮询 IPC，不再强依赖界面里的“定时运行”菜单。
+这段代码跑在**大QMT内置Python环境**里。早期方案要求在QMT策略编辑器中设置“定时运行模式，周期 1000ms”；光大金阳光 QMT 实测界面可能只提供“模型交易”入口。当前正式版 `QMT_trade_executor.py` 在模型交易 `init(ContextInfo)` 中进入前台循环，使用“模型交易/实盘/运行”也能自行按秒轮询 IPC，不再强依赖界面里的“定时运行”菜单。
 
 ```python
-# qmt_trade_executor.py — 放在 QMT 的 Python 脚本目录，设为定时运行（1000ms）
+# QMT_trade_executor.py — 放在 QMT 的 Python 脚本目录，设为定时运行（1000ms）
 import os
 import json
 import time
@@ -420,10 +420,10 @@ if __name__ == "__main__":
 
 ### QMT端
 
-1. **放脚本**：把 `qmt_trade_executor.py` 放到QMT策略编辑器能访问到的目录（如 `user_define/`）
+1. **放脚本**：把 `QMT_trade_executor.py` 放到QMT策略编辑器能访问到的目录（如 `user_define/`）
 2. **设置运行方式**：
    - 打开 QMT → 模型交易/模型研究 → 新建 Python “模型交易”
-   - 脚本路径选 `qmt_trade_executor.py`
+   - 脚本路径选 `QMT_trade_executor.py`
    - 运行模式选“实盘”，刷新间隔可保持 1 秒
    - 不要勾选“启动本地 python”
    - 编译、保存、运行后，日志应出现 `foreground loop started by init` 和持续递增的 `tick ok accounts=...`

@@ -1,5 +1,5 @@
 """
-qmt_trade_executor.py tests -- compact rewrite aligned with current module.
+QMT_trade_executor.py tests -- compact rewrite aligned with current module.
 """
 import os, sys, json, time, types, shutil, tempfile, unittest, threading
 from contextlib import contextmanager
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(_ROOT, "qmt-trader"))
 _MODULE_TMP = tempfile.mkdtemp(prefix="ipc_exec_module_")
 os.environ["QMT_IPC_ROOT"] = _MODULE_TMP
 
-import qmt_trade_executor as ex
+import QMT_trade_executor as ex
 ex.DIR_LOG = os.path.join(_MODULE_TMP, "qmt_log")
 os.makedirs(ex.DIR_LOG, exist_ok=True)
 
@@ -296,6 +296,50 @@ class TestHandleAccountHeartbeat(_ExecBase):
         self.assertTrue(os.path.exists(hb))
         self.assertTrue(started.wait(0.5))
         self.assertLess(elapsed, 0.5)
+
+class TestLogRotation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ipc_log_")
+        self.old_dir = ex.DIR_LOG
+        self.old_max = ex.LOG_MAX_BYTES
+        self.old_count = ex.LOG_BACKUP_COUNT
+        ex.DIR_LOG = self.tmp
+        ex.LOG_MAX_BYTES = 64
+        ex.LOG_BACKUP_COUNT = 2
+
+    def tearDown(self):
+        ex.DIR_LOG = self.old_dir
+        ex.LOG_MAX_BYTES = self.old_max
+        ex.LOG_BACKUP_COUNT = self.old_count
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _log_path(self):
+        return os.path.join(self.tmp, "log_%s.txt" % time.strftime("%Y%m%d"))
+
+    def test_log_rotates_when_size_limit_reached(self):
+        path = self._log_path()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("x" * 80)
+        ex.log("after rotate")
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(path + ".1"))
+        self.assertLess(os.path.getsize(path), os.path.getsize(path + ".1"))
+        with open(path, "r", encoding="utf-8") as f:
+            self.assertIn("after rotate", f.read())
+
+    def test_log_keeps_limited_backups(self):
+        path = self._log_path()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("current" * 20)
+        with open(path + ".1", "w", encoding="utf-8") as f:
+            f.write("old1")
+        with open(path + ".2", "w", encoding="utf-8") as f:
+            f.write("old2")
+        ex.log("new current")
+        with open(path + ".1", "r", encoding="utf-8") as f:
+            self.assertIn("current", f.read())
+        with open(path + ".2", "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "old1")
 
 class TestWorkerDaemonPolicy(unittest.TestCase):
     def test_local_top_level_worker_is_daemon(self):

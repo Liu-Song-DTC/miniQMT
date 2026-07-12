@@ -13,7 +13,7 @@
 # file pure ASCII so it compiles/runs in the QMT editor regardless of encoding.
 #
 # HOW TO RUN (both modes supported, auto-adapted):
-#   A. Timed-run mode (same as qmt_trade_executor.py deployment, most realistic):
+#   A. Timed-run mode (same as QMT_trade_executor.py deployment, most realistic):
 #      QMT -> Strategy -> Python strategy -> new "timed run", pick this file,
 #      period e.g. 5000ms, run once. See QMT log + C:\QuantIPC\probe_result.txt
 #   B. Model-trading mode (init/handlebar, best when passorder needs ContextInfo):
@@ -219,10 +219,10 @@ def _final_verdict(vba, xtt):
     out("===================== FINAL VERDICT =====================")
     v, x = vba["usable"], xtt["usable"]
     if v and x:
-        out("Both channels usable: current qmt_trade_executor.py (xttrader) deployable;")
+        out("Both channels usable: current QMT_trade_executor.py (xttrader) deployable;")
         out("passorder also available as future backup if xttrader gets restricted.")
     elif x and not v:
-        out("Only xttrader usable: current qmt_trade_executor.py (xttrader) deployable,")
+        out("Only xttrader usable: current QMT_trade_executor.py (xttrader) deployable,")
         out("no passorder rework needed.")
     elif v and not x:
         out("Only passorder(VBA) usable: current xttrader-based executor is NOT usable;")

@@ -127,7 +127,7 @@ flowchart TD
 
 ### 大QMT文件IPC Fallback 参数
 
-启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（`qmt_trade_executor.py`）读取执行。多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/` 子目录。部署见 [qmt-trader/部署手册.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md)，调试经验见 [大QMT文件 IPC Fallback](qmt-ipc-fallback.md)。
+启用后所有交易操作写成 JSON 文件，由大QMT内置 Python 脚本（`QMT_trade_executor.py`）读取执行。多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/` 子目录。部署见 [qmt-trader/部署手册.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/部署手册.md)，调试经验见 [大QMT文件 IPC Fallback](qmt-ipc-fallback.md)。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -137,6 +137,8 @@ flowchart TD
 | `QMT_IPC_HEARTBEAT_MAX_AGE` | `10` | 心跳超过此秒数判定大QMT离线 |
 | `QMT_IPC_DEAL_POLL_INTERVAL` | `1.0` | 成交回报轮询间隔（秒） |
 | `QMT_IPC_DONE_LOOKBACK_SECONDS` | `86400` | done/ 目录委托查询回溯窗口（秒） |
+| `QMT_IPC_LOG_MAX_BYTES` | `5242880` | 大QMT端单个日志文件大小上限；设为 `0` 表示关闭大小轮转 |
+| `QMT_IPC_LOG_BACKUP_COUNT` | `5` | 大QMT端每日日志轮转备份数量 |
 
 !!! tip "控制台快捷配置"
     `miniqmt.bat` 菜单 `[n] Tushare Pro 数据源配置` / `[o] 大QMT IPC Trader 配置` 可直接开关、改 Token/目录、测连通性、查心跳，改动写入 `.env`，重启后生效。

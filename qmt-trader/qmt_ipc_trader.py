@@ -2,7 +2,7 @@
 # 大QMT文件IPC方案 —— xttrader 降级替代客户端
 #
 # 提供一个接口完全兼容 easy_qmt_trader 的交易客户端，底层通过文件系统 IPC
-# 与大QMT内置Python脚本(qmt_trade_executor.py)通信来执行交易。
+# 与大QMT内置Python脚本(QMT_trade_executor.py)通信来执行交易。
 #
 # 设计目标：当券商收紧 miniQMT 权限或 xttrader 连接失效时，把 QmtIpcTrader
 # 作为 easy_qmt_trader 的直接替换插入 position_manager._create_qmt_trader()，
@@ -142,7 +142,7 @@ class QmtIpcTrader:
     """
     大QMT文件IPC交易客户端，接口兼容 easy_qmt_trader。
 
-    通过文件系统 IPC 与大QMT内置脚本(qmt_trade_executor.py)通信，实现
+    通过文件系统 IPC 与大QMT内置脚本(QMT_trade_executor.py)通信，实现
     下单/撤单/查持仓/查成交。延迟约 1-2 秒，适用于中低频策略作为 xttrader
     失效时的降级方案。
     """
@@ -192,7 +192,7 @@ class QmtIpcTrader:
         self._seen_orders = set()  # 已触发过 order_callback 的 (order_id, status)
 
         self._connected = False
-        logger.info('操作提示: QmtIpcTrader 已创建，请确保大QMT端 qmt_trade_executor.py 已运行且心跳持续刷新')
+        logger.info('操作提示: QmtIpcTrader 已创建，请确保大QMT端 QMT_trade_executor.py 已运行且心跳持续刷新')
 
     # ------------------------------------------------------------------
     # 目录工具
@@ -210,7 +210,7 @@ class QmtIpcTrader:
         """把账号信息写入 IPC 共享配置 config.json，供大QMT端 executor 自动读取。
 
         免去在 QMT 端脚本里手改 ACCOUNT_ID：策略端每次连接时把当前账号写入，
-        大QMT端 qmt_trade_executor.py 启动时从同一文件读取。
+        大QMT端 QMT_trade_executor.py 启动时从同一文件读取。
         qmt_path 只在用户尚未填写时给出建议默认值，不覆盖用户手填的大QMT路径。
         """
         cfg_path = self._dir('config.json')

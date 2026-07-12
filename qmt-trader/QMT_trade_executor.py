@@ -1,4 +1,4 @@
-# qmt_trade_executor.py
+# QMT_trade_executor.py
 # Big-QMT file-IPC solution -- QMT-side executor (multi-account).
 #
 # ASCII-ONLY: QMT strategy editor stores files as GBK. Non-ASCII bytes break
@@ -39,6 +39,8 @@ XT_CONNECT_TIMEOUT_SEC = int(os.environ.get("QMT_IPC_XT_CONNECT_TIMEOUT_SEC", "8
 XT_QUERY_TIMEOUT_SEC = int(os.environ.get("QMT_IPC_XT_QUERY_TIMEOUT_SEC", "5"))
 MAIN_INTERVAL_SEC = float(os.environ.get("QMT_IPC_MAIN_INTERVAL_SEC", "1.0"))
 MAIN_LOG_INTERVAL_SEC = int(os.environ.get("QMT_IPC_MAIN_LOG_INTERVAL_SEC", "30"))
+LOG_MAX_BYTES = int(os.environ.get("QMT_IPC_LOG_MAX_BYTES", "5242880"))
+LOG_BACKUP_COUNT = int(os.environ.get("QMT_IPC_LOG_BACKUP_COUNT", "5"))
 
 os.makedirs(DIR_LOG, exist_ok=True)
 
@@ -60,13 +62,38 @@ _WORKER_STATE = {"thread": None, "started_at": 0.0}
 _WORKER_LOCK = threading.Lock()
 _SNAPSHOT_STATE = {}
 _SNAPSHOT_LOCK = threading.Lock()
+_LOG_LOCK = threading.Lock()
+
+
+def _rotate_log(path):
+    if LOG_MAX_BYTES <= 0:
+        return
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < LOG_MAX_BYTES:
+            return
+        if LOG_BACKUP_COUNT <= 0:
+            os.remove(path)
+            return
+        oldest = "%s.%d" % (path, LOG_BACKUP_COUNT)
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        for i in range(LOG_BACKUP_COUNT - 1, 0, -1):
+            src = "%s.%d" % (path, i)
+            dst = "%s.%d" % (path, i + 1)
+            if os.path.exists(src):
+                os.replace(src, dst)
+        os.replace(path, "%s.1" % path)
+    except Exception:
+        pass
 
 
 def log(msg):
     path = os.path.join(DIR_LOG, "log_%s.txt" % datetime.now().strftime("%Y%m%d"))
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("[%s] %s\n" % (datetime.now().strftime("%H:%M:%S.%f")[:12], msg))
+        with _LOG_LOCK:
+            _rotate_log(path)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("[%s] %s\n" % (datetime.now().strftime("%H:%M:%S.%f")[:12], msg))
     except Exception:
         pass
 

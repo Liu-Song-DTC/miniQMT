@@ -11,7 +11,7 @@
 > 本版本聚焦**实盘委托生命周期与无人值守生产安全**：首次止盈状态改为成交回报确认后落地，动态止盈止损信号在已有在途委托时阻断，撤单重挂价格增加多级兜底；同时发布大QMT文件IPC交易通道、xtdata tick 推送缓存和行情健康严格门禁。
 
 ### Added
-- **大QMT文件IPC交易通道**：新增 `qmt-trader/qmt_ipc_trader.py`、`qmt_trade_client.py`、`qmt_trade_executor.py` 和部署手册，支持在 miniQMT xttrader 直连受限时，通过大QMT内置 Python 脚本执行下单/撤单/成交回报轮询；多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/`。
+- **大QMT文件IPC交易通道**：新增 `qmt-trader/qmt_ipc_trader.py`、`qmt_trade_client.py`、`QMT_trade_executor.py` 和部署手册，支持在 miniQMT xttrader 直连受限时，通过大QMT内置 Python 脚本执行下单/撤单/成交回报轮询；多账号自动隔离到 `{QMT_IPC_ROOT}/{account_id}/`。
 - **控制台配置入口**：`miniqmt.bat` / `scripts/_launcher.py` 增加 Tushare Pro 与大QMT IPC Trader 快捷配置、连通性检查和心跳检查。
 
 ### Changed
