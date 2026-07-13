@@ -6,6 +6,53 @@
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-07-13
+
+> 本版本聚焦**大QMT RPC 交易通道 P5 下单联调闭环与配置体验优化**：price_type 调用方可控透传、.env fallback 生产可用、控制台 XtTrader 通道总控菜单（三通道一键切换）。
+
+### Added
+- **miniqmt.bat XtTrader 通道总控菜单 `[p]`**：三通道（miniQMT 直连 / 大QMT 文件IPC / 大QMT RPC）可视状态显示与一键切换，支持 RPC Redis 连接配置（host/port/db/password）、下单安全开关切换，同时自动处理通道互斥。
+- **.env fallback 机制**：`config.py` 顶部新增 `_load_dotenv_fallback()`，import 时把项目根 `.env` 补进未设置的环境变量。优先级：Windows 用户级/系统环境变量 > .env。零新依赖，自写解析器（KEY=value / # 注释 / 剥引号 / utf-8-sig）。
+- **`.env.example` 全面改写**：对齐完整 `.env` 结构（QMT路径/Web API Token/Tushare/IPC/RPC/数据源），所有敏感值替换为占位符，添加分组注释与配置优先级说明。
+- **测试隔离开关 `MINIQMT_DISABLE_DOTENV`**：`test/conftest.py` + `test/run_integration_regression_tests.py` 顶部设开关，防止本地 `.env`（含真实 token）污染回归测试基线。
+- **大QMT RPC Redis 部署文档** `docs/site/miniqmt/qmt-rpc-redis-setup.md`：Memurai 安装、密码配置、L1/L2 连通性验证、跨机补充，已挂 mkdocs 导航。
+
+### Changed
+- **`QmtRpcTrader._send()` price_type 透传**：`_send()` / `buy()` / `sell()` / `order_stock()` 接受调用方显式指定 `price_type` 并透传到 vendored → passorder；不指定时按价格自动推断（price=0 → LATEST_PRICE，否则 → FIX_PRICE）。
+- **`_launcher.py` 菜单重构**：原 `[o]` IPC 配置保持不变，新增 `[p]` XtTrader 通道总控（含 `cmd_xttrader_config` + 状态辅助函数），主菜单底部实时打印当前通道简述与 RPC 详情。选择范围从 `a-o` 扩展到 `a-p`。
+- **联调 checklist 更新**：`qmt-trader/大QMT-RPC联调checklist.md` 下单闭环全部勾选，新增 strategy_name 匹配和 price_type 透传排障条目。
+
+### Fixed
+- 首次启用 .env fallback 后全量回归 54 个 failure（本地 `.env` 含真实 token 导致 web_api 401 + 数据源路由漂移）→ `MINIQMT_DISABLE_DOTENV` 修复，1912/1912 全绿。
+- `QmtRpcTrader._send()` 原忽略 `price_type` 参数自行推断 → 改为透传（调用方指定时生效）。
+
+### Tests
+- `test/test_qmt_rpc_trader.py`：13 → 67 用例。新增连接生命周期、断连回调、Redis 推送事件模拟、卖单路径、资金校验（check_stock_is_av_buy/sell）、健康诊断、order_id_map 截断、市价 vs 限价 price_type、空持仓、空 available 字段降级。
+- `test/test_config_env_overrides.py`：新增 `TestDotenvFallback` 5 用例（补缺/优先级/引用剥离/注释跳过/缺失文件 no-op）。
+- 全量集成回归 `--all-with-fast`：31 组、1912 用例、1912 通过、0 失败、0 错误，成功率 100%。
+- P5 真实联调验证（Redis Memurai + 大QMT BIGQMT_REDIS_DRYRUN，账号 25105132）：L0 redis 库 → L1 Redis 直连 → L2 RPC ping/rpc_alive → 资产/持仓查询返回真实数据（可用46.6万/持仓300105一只）→ 下单闭环（strategy_name 匹配后查到委托、sysid 回填、撤单成功）。非交易时段废单 status=57（预期），完整链路 passorder→sysid→查询→撤单已验证。联调脚本：`test/live_qmt_rpc_readonly_check.py` / `test/live_qmt_rpc_strategy_check.py`。
+
+### Docs
+- 更新 CLAUDE.md：v3.7.0+ 配置开关、三通道概述、.env fallback 机制、QmtRpcTrader 模块职责、qmt-trader/ 子模块说明。
+- 更新 `docs/site/miniqmt/configuration.md`：mermaid 图新增 RPC 通道、四通道表格、RPC 参数完整列表（12 项）。
+- 更新 `docs/site/miniqmt/index.md`：核心特性新增 xttrader 降级通道和 .env fallback，下一步链接新增 RPC Redis 部署文档。
+- 更新 `docs/site/miniqmt/architecture.md`：模块职责新增 qmt-trader/ 子模块说明。
+- 更新 `release_version.json` → v3.8.0。
+
+## [3.7.0] - 2026-07-13
+
+> 本版本聚焦**大QMT RPC 交易后端（QmtRpcTrader）P5 只读联调与 price_type 透传修复**。
+
+### Added
+- **大QMT RPC 交易后端 `QmtRpcTrader`**：第四种交易通道，基于 vendored xtquant_big_convert，通过 Redis/ZMQ RPC 驱动大QMT策略进程执行交易。`_create_qmt_trader()` 四选一工厂，`ENABLE_QMT_RPC_FALLBACK` / `QMT_RPC_TRANSPORT` / `QMT_RPC_REDIS_*` / `QMT_RPC_ALLOW_ORDER` 等配置项。（v3.6.0 引入代码，v3.7.0 完成 P5 只读联调验证）
+- **RPC 只读联调验证**：L0(redis库)/L1(Redis直连)/L2(RPC链路) 三阶自检，ping → query_stock_asset/position/orders/trades 返回真实数据，联调脚本留存 `test/live_qmt_rpc_readonly_check.py`。
+
+### Fixed
+- **`_send()` price_type 参数忽略**：`buy/sell/order_stock` 接口接受 `price_type` 参数但 `_send()` 不转发 → 修复为调用方指定时透传，不指定时按价格自动推断（price=0→LATEST_PRICE，否则→FIX_PRICE）。
+
+### Docs
+- `qmt-trader/大QMT-RPC联调checklist.md`：新增 strategy_name 匹配排障、price_type 透传说明。
+
 ## [3.6.0] - 2026-07-10
 
 > 本版本聚焦**实盘委托生命周期与无人值守生产安全**：首次止盈状态改为成交回报确认后落地，动态止盈止损信号在已有在途委托时阻断，撤单重挂价格增加多级兜底；同时发布大QMT文件IPC交易通道、xtdata tick 推送缓存和行情健康严格门禁。

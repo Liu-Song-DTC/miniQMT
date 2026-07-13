@@ -67,7 +67,13 @@ position_manager.py    # 持仓管理核心（内存 + SQLite 双层）
 trading_executor.py    # 交易执行器（xttrader 接口）
 strategy.py            # 交易策略逻辑
 web_server.py          # RESTful API 服务（Flask）
-easy_qmt_trader.py     # QMT 交易 API 封装
+easy_qmt_trader.py     # QMT 交易 API 封装（xttrader 直连）
+qmt-trader/            # 大QMT 降级交易通道  [v3.7.0+]
+  _qmt_trader_base.py  #   IPC/RPC 共享件（列名、Fake对象、纯逻辑）
+  qmt_rpc_trader.py    #   大QMT RPC 适配器（Redis/ZMQ RPC 驱动大QMT）
+  qmt_ipc_trader.py    #   大QMT 文件IPC 适配器（JSON文件驱动大QMT）
+  qmt_trade_executor.py #   大QMT 模型交易策略入口脚本（GBK编码）
+  qmt_trade_client.py  #   策略端客户端库
 premarket_sync.py      # 盘前同步与初始化
 config_manager.py      # 配置持久化管理
 sell_monitor.py        # 卖出委托单超时监控与撤单

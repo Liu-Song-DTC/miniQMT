@@ -7,6 +7,8 @@
 - **无人值守运行** — 线程健康监控与自动重启，7x24 小时稳定运行
 - **双层存储架构** — 内存数据库 + SQLite 持久化，高性能与数据安全兼顾
 - **信号检测与执行分离** — 监控线程始终运行，`ENABLE_AUTO_OPERATION` 作为总闸，分策略开关控制是否执行
+- **三种 xttrader 降级通道** — 文件 IPC / Redis RPC / miniQMT 直连，控制台一键切换
+- **.env fallback 配置** — Windows 环境变量 > `.env`，零依赖自加载，开箱即用
 - **动态止盈止损** — 浮盈越高止盈位越高，最大化收益同时控制风险
 - **智能网格交易** — 自动低吸高抛，支持回调触发、多档位、风险分级
 - **自动买入模块** — 独立进程从候选池筛选标的，复用 Web 买入 API 下单
@@ -70,6 +72,7 @@ python main.py
 - [网格交易](grid-trading.md) — 网格交易功能使用指南
 - [自动买入](autobuy.md) — 候选池筛选、指数门禁、防重买入、调度与复盘
 - [大QMT文件 IPC](qmt-ipc-fallback.md) — xttrader 失效时的大QMT降级交易通道
+- [大QMT RPC Redis 部署](qmt-rpc-redis-setup.md) — RPC 交易通道的 Redis 安装与配置
 - [Web 前端](web-frontend.md) — web1.0 / web2.0 双模式架构、连接设置、远程部署
 - [Web API](web-api.md) — RESTful API 接口文档
 - [无人值守运行](unattended.md) — 长期运行和自动恢复
