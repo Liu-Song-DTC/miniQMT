@@ -1176,6 +1176,169 @@ def cmd_qmt_ipc_config(_args) -> int:
             time.sleep(1)
 
 
+def _read_xttrader_status():
+    """读取当前 xttrader 通道状态：miniQMT/IPC/RPC 三选一。"""
+    ipc_enabled = _read_env_key("ENABLE_QMT_IPC_FALLBACK").lower() in ("true", "1", "yes", "on")
+    rpc_enabled = _read_env_key("ENABLE_QMT_RPC_FALLBACK").lower() in ("true", "1", "yes", "on")
+    if rpc_enabled:
+        return "rpc"
+    if ipc_enabled:
+        return "ipc"
+    return "miniqmt"
+
+
+def _get_rpc_display_info():
+    """获取 RPC 通道的只读显示信息（不下单、不ping）。"""
+    transport = _read_env_key("QMT_RPC_TRANSPORT") or "redis"
+    host = _read_env_key("QMT_RPC_REDIS_HOST") or "127.0.0.1"
+    port = _read_env_key("QMT_RPC_REDIS_PORT") or "6379"
+    db = _read_env_key("QMT_RPC_REDIS_DB") or "5"
+    pwd = _read_env_key("QMT_RPC_REDIS_PASSWORD")
+    allow_order = _read_env_key("QMT_RPC_ALLOW_ORDER").lower() in ("true", "1", "yes", "on")
+    return transport, host, port, db, pwd, allow_order
+
+
+def _print_xttrader_status():
+    """在主菜单底部打印当前 xttrader 通道简述。"""
+    mode = _read_xttrader_status()
+    label = {"miniqmt": "✓ miniQMT (xttrader 直连)", "ipc": "✓ 大QMT 文件IPC", "rpc": "✓ 大QMT RPC"}[mode]
+    print(f"  XtTrader 通道: {label}")
+    if mode == "rpc":
+        transport, host, port, db, pwd, allow_order = _get_rpc_display_info()
+        masked_pwd = ("<%d字符>" % len(pwd)) if pwd else "<空>"
+        order_tag = "+下单" if allow_order else "只读"
+        print(f"    RPC: {transport}://{host}:{port}/db{db}  密码={masked_pwd}  {order_tag}")
+    elif mode == "ipc":
+        ipc_root = _read_env_key("QMT_IPC_ROOT") or "C:\\QuantIPC"
+        print(f"    IPC: {ipc_root}")
+
+
+def cmd_xttrader_config(_args) -> int:
+    """XtTrader 通道总控子菜单：miniQMT / IPC-Trader / RPC-Trader 三选一统一管理。"""
+    import webbrowser
+
+    def _status():
+        mode = _read_xttrader_status()
+        print("\n" + "=" * 56)
+        print("  XtTrader 交易通道 — 当前配置")
+        print("=" * 56)
+        for key, desc, mode_key in [
+            ("miniqmt", "miniQMT xttrader 直连（默认）", "miniqmt"),
+            ("ipc", "大QMT 文件 IPC Trader", "ipc"),
+            ("rpc", "大QMT RPC Trader（Redis/ZMQ）", "rpc"),
+        ]:
+            tag = " <<< 当前使用" if mode == mode_key else ""
+            print(f"  {'✓' if mode == mode_key else ' '} {desc}{tag}")
+        print("-" * 56)
+        if mode == "rpc":
+            transport, host, port, db, pwd, allow_order = _get_rpc_display_info()
+            masked_pwd = ("<%d字符>" % len(pwd)) if pwd else "<空>"
+            order_tag = "+下单" if allow_order else "只读"
+            print(f"  RPC 详情: {transport}://{host}:{port}/db{db}")
+            print(f"    密码: {masked_pwd}  |  下单: {order_tag}")
+            print(f"    部署文档: docs/site/miniqmt/qmt-rpc-redis-setup.md")
+        elif mode == "ipc":
+            ipc_root = _read_env_key("QMT_IPC_ROOT") or "C:\\QuantIPC"
+            print(f"  IPC 目录: {ipc_root}")
+            print(f"    部署手册: qmt-trader/部署手册.md")
+        else:
+            print(f"  miniQMT xttrader 直连 (在 xtquant 可用时无需额外配置)")
+        print("-" * 56)
+
+    while True:
+        _status()
+        print("  [1] 切换到 miniQMT xttrader 直连（关闭 IPC 和 RPC）")
+        print("  [2] 切换到大QMT 文件 IPC Trader")
+        print("  [3] 切换到大QMT RPC Trader")
+        print("  [4] RPC 连接配置 (host/port/db/password)")
+        print("  [5] RPC 下单开关 (当前只读安全模式, 联调完成后再开)")
+        print("  [6] 打开 RPC Redis 部署文档")
+        print("  [0] 返回主菜单")
+        print()
+        c = input("请选择 [0-6]: ").strip()
+
+        if c == "0":
+            return 0
+
+        elif c == "1":
+            _write_env_key("ENABLE_QMT_IPC_FALLBACK", "false")
+            _write_env_key("ENABLE_QMT_RPC_FALLBACK", "false")
+            print("\n  ✓ 已切换到 miniQMT xttrader 直连")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+
+        elif c == "2":
+            # 先关掉 RPC（互斥）
+            _write_env_key("ENABLE_QMT_RPC_FALLBACK", "false")
+            _write_env_key("ENABLE_QMT_IPC_FALLBACK", "true")
+            print("\n  ✓ 已切换到大QMT 文件 IPC Trader")
+            print("  ℹ 订单将通过文件 IPC 路由到大QMT executor 执行")
+            ipc_root = _read_env_key("QMT_IPC_ROOT") or "C:\\QuantIPC"
+            print(f"  ℹ IPC 目录: {ipc_root}")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+
+        elif c == "3":
+            # 先关掉 IPC（互斥）
+            _write_env_key("ENABLE_QMT_IPC_FALLBACK", "false")
+            _write_env_key("ENABLE_QMT_RPC_FALLBACK", "true")
+            print("\n  ✓ 已切换到大QMT RPC Trader")
+            print("  ℹ 订单将通过 Redis RPC 路由到大QMT执行")
+            print("  ℹ 默认连接: redis://127.0.0.1:6379/db5")
+            print("  ℹ 下单默认关闭 (只读安全), 用菜单 [5] 可开启")
+            print("  ⚠ 重启 miniQMT 后生效；无需 xtquant 连接")
+            input("\n按回车键继续...")
+
+        elif c == "4":
+            print("\n—— RPC Redis 连接配置 ——\n")
+            for key, label, default in [
+                ("QMT_RPC_REDIS_HOST", "Redis 主机地址", "127.0.0.1"),
+                ("QMT_RPC_REDIS_PORT", "Redis 端口", "6379"),
+                ("QMT_RPC_REDIS_DB", "Redis 库号", "5"),
+            ]:
+                current = _read_env_key(key) or default
+                val = input(f"  {label} (当前={current}, 留空=不变): ").strip()
+                if val:
+                    _write_env_key(key, val)
+            print("\n  —— Redis 密码 ——")
+            current_pwd = _read_env_key("QMT_RPC_REDIS_PASSWORD")
+            print(f"  当前密码: {'<空>' if not current_pwd else ('<' + str(len(current_pwd)) + '字符>')}")
+            val = input("  新密码 (留空=不变, 输入 - 清空): ").strip()
+            if val == "-":
+                _write_env_key("QMT_RPC_REDIS_PASSWORD", "")
+            elif val:
+                _write_env_key("QMT_RPC_REDIS_PASSWORD", val)
+            print("\n  ✓ Redis 连接配置已更新")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+
+        elif c == "5":
+            current = _read_env_key("QMT_RPC_ALLOW_ORDER").lower() in ("true", "1", "yes", "on")
+            new_state = not current
+            _write_env_key("QMT_RPC_ALLOW_ORDER", "true" if new_state else "false")
+            print(f"\n  ✓ QMT_RPC_ALLOW_ORDER → {'true (允许下单)' if new_state else 'false (只读安全)'}")
+            if new_state:
+                print("  ⚠ 安全提醒:")
+                print("     - 确保大QMT端 bigqmt_signal_trader_local_config.py 的")
+                print("       rpc_allow_order_methods 也已同步改为 True")
+                print("     - 建议先用模拟盘小额验证下单闭环再投入实盘")
+            print("  ⚠ 重启 miniQMT 后生效")
+            input("\n按回车键继续...")
+
+        elif c == "6":
+            doc_path = PROJECT_ROOT / "docs" / "site" / "miniqmt" / "qmt-rpc-redis-setup.md"
+            if doc_path.exists():
+                webbrowser.open(str(doc_path))
+                print("\n  已打开 RPC Redis 部署文档...")
+            else:
+                print("\n  ✗ 文档未找到")
+            time.sleep(1)
+
+        else:
+            print(f"\n  无效选择: {c!r}")
+            time.sleep(1)
+
+
 # ---------------------------------------------------------------------------
 # 主菜单
 # ---------------------------------------------------------------------------
@@ -1293,11 +1456,14 @@ def cmd_menu(_args) -> int:
         print("  [数据源 & 交易通道配置]")
         print("   [n] Tushare Pro 数据源配置")
         print("   [o] 大QMT IPC Trader 配置")
+        print("   [p] XtTrader 通道总控 (miniQMT \ IPC-Trader \ RPC-Trader)")
+        print()
+        _print_xttrader_status()
         print(DASH)
         print("   [0] 退出")
         print(SEPARATOR)
 
-        choice = ask("请选择 [0-9, a-o]: ").lower()
+        choice = ask("请选择 [0-9, a-p]: ").lower()
 
         if choice == "0":
             print("\n再见!")
@@ -1460,6 +1626,11 @@ def cmd_menu(_args) -> int:
         elif choice == "o":
             print()
             cmd_qmt_ipc_config(None)
+            pause_return()
+
+        elif choice == "p":
+            print()
+            cmd_xttrader_config(None)
             pause_return()
 
         else:

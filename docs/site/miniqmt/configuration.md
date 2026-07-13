@@ -67,7 +67,7 @@ flowchart TD
 
 ### 图 2 · 数据源与交易通道切换
 
-交易通道由工厂函数 `_create_qmt_trader()` 三选一；行情/历史/名称三条数据链各有独立的降级顺序和开关门控。
+交易通道由工厂函数 `_create_qmt_trader()` 四选一（三开关互斥）；行情/历史/名称三条数据链各有独立的降级顺序和开关门控。
 
 ```mermaid
 flowchart TD
@@ -77,6 +77,7 @@ flowchart TD
         F -->|默认| EASY["easy_qmt_trader<br/>xttrader 直连"]
         F -->|ENABLE_XTQUANT_MANAGER| XQM["XtQuantClient<br/>HTTP 网关 :8888"]
         F -->|ENABLE_QMT_IPC_FALLBACK| IPC["QmtIpcTrader<br/>大QMT 文件 IPC"]
+        F -->|ENABLE_QMT_RPC_FALLBACK| RPC["QmtRpcTrader<br/>大QMT RPC Redis/ZMQ"]
     end
 
     subgraph RT["实时行情 get_latest_data"]
@@ -108,13 +109,14 @@ flowchart TD
 
 ## 交易通道配置
 
-交易接口（下单/撤单/查持仓/查资产）由 `position_manager._create_qmt_trader()` 工厂三选一，两个开关互斥、`ENABLE_XTQUANT_MANAGER` 优先级更高：
+交易接口（下单/撤单/查持仓/查资产）由 `position_manager._create_qmt_trader()` 工厂四选一，三个开关互斥：
 
 | 开关组合 | 交易通道 | 适用场景 |
 |---------|---------|---------|
 | 都为 `False`（默认） | `easy_qmt_trader`（xttrader 直连） | 单机直连 QMT，最低延迟 |
 | `ENABLE_XTQUANT_MANAGER=True` | `XtQuantClient`（HTTP 网关 :8888） | 多账号统一入口、远程 API |
-| `ENABLE_QMT_IPC_FALLBACK=True` | `QmtIpcTrader`（大QMT 文件 IPC） | xttrader 失效时的降级：券商收紧 miniQMT 权限后，用大QMT自带授权下单 |
+| `ENABLE_QMT_IPC_FALLBACK=True` | `QmtIpcTrader`（大QMT 文件 IPC） | xttrader 失效时的降级：用大QMT自带授权，文件系统 IPC |
+| `ENABLE_QMT_RPC_FALLBACK=True` | `QmtRpcTrader`（大QMT RPC） | xttrader 失效时的降级：Redis/ZMQ RPC 驱动大QMT，毫秒级延迟 |
 
 ### XtQuantManager 网关参数
 
@@ -141,7 +143,24 @@ flowchart TD
 | `QMT_IPC_LOG_BACKUP_COUNT` | `5` | 大QMT端每日日志轮转备份数量 |
 
 !!! tip "控制台快捷配置"
-    `miniqmt.bat` 菜单 `[n] Tushare Pro 数据源配置` / `[o] 大QMT IPC Trader 配置` 可直接开关、改 Token/目录、测连通性、查心跳，改动写入 `.env`，重启后生效。
+    `miniqmt.bat` 菜单 `[n] Tushare Pro 数据源配置` / `[o] 大QMT IPC Trader 配置` / `[p] XtTrader 通道总控` 可直接切换通道、改 RPC/Redis/目录等配置。
+
+### 大QMT RPC (Redis/ZMQ) Fallback 参数  [v3.7.0]
+
+启用后通过 Redis（或 ZMQ）RPC 驱动大QMT策略进程执行交易，延迟毫秒级，可跨机部署。部署前提：安装 Redis 服务（推荐 Memurai），大QMT 端运行 `BIGQMT_REDIS_DRYRUN.py`。详见 [大QMT RPC Redis 部署](qmt-rpc-redis-setup.md) 和 [qmt-trader/大QMT-RPC方案.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC方案.md)。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_QMT_RPC_FALLBACK` | `False`（环境变量 `ENABLE_QMT_RPC_FALLBACK`） | 大QMT RPC 交易通道总开关；与前两个开关互斥 |
+| `QMT_RPC_TRANSPORT` | `"redis"`（环境变量 `QMT_RPC_TRANSPORT`） | 传输方式：`redis`(生产)、`zmq`(低延迟)、`mysql`(兜底) |
+| `QMT_RPC_REDIS_HOST` | `"127.0.0.1"` | Redis 主机地址（两端一致） |
+| `QMT_RPC_REDIS_PORT` | `6379` | Redis 端口 |
+| `QMT_RPC_REDIS_DB` | `5` | Redis 库号（两端一致） |
+| `QMT_RPC_REDIS_PASSWORD` | `""` | Redis 密码（⚠️ 切勿硬编码） |
+| `QMT_RPC_TIMEOUT_SECONDS` | `6.0` | RPC 请求超时（秒） |
+| `QMT_RPC_ORDER_TIMEOUT` | `30` | 下单后等待成交回执最大秒数 |
+| `QMT_RPC_DEAL_POLL_INTERVAL` | `1.0` | 成交/委托回报轮询兜底间隔（秒） |
+| `QMT_RPC_ALLOW_ORDER` | `False`（环境变量 `QMT_RPC_ALLOW_ORDER`） | 下单二次确认开关：`False` 时即使 `ENABLE_QMT_RPC_FALLBACK=True` 也拒绝真实下单（只读安全），联调无误后再改为 `True` |
 
 ---
 

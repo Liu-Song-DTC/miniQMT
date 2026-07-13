@@ -15,24 +15,27 @@ miniQMT 是一个基于迅投QMT API的**无人值守量化交易系统**,实现
 - 🌐 Web前端实时监控界面（Flask web1.0 + Vue3 web2.0 双版本）
 - 🚪 XtQuantManager HTTP 网关（多账号统一管理、远程 API、PWA 支持）
 - 🛡️ 无人值守运行(线程监控、超时保护、优雅关闭)
-- 📡 **大QMT文件IPC Fallback**（xttrader 降级替代方案，含 QmtIpcTrader 适配客户端 + executor 脚本 + 多账号隔离 + 部署手册）
+- 🔀 **三种 xttrader 降级通道**：大QMT 文件 IPC / 大QMT RPC(Redis/ZMQ) / miniQMT 直连，控制台菜单一键切换
 - 📊 **Tushare Pro 数据源**（历史K线优先 + 股票名称补充查询，标准模式 Tushare → Mootdx 降级链）
+- 🔧 **.env fallback 配置**（Windows 用户级环境变量 > `.env`，零依赖自解析，测试隔离保护）
 
-**新增配置开关**:
-- `ENABLE_TUSHARE_DATA_SOURCE` — Tushare 数据源总开关（.env 可覆写）
-- `TUSHARE_TOKEN` — Tushare Pro Token（仅环境变量，切勿硬编码）
-- `ENABLE_QMT_IPC_FALLBACK` — 大QMT文件IPC交易通道开关（.env 可覆写，与 `ENABLE_XTQUANT_MANAGER` 互斥）
-- `QMT_IPC_ROOT` — IPC 文件目录（默认 `C:\QuantIPC`）
-- 控制台 `miniqmt.bat` 菜单 `[n]` Tushare 配置 / `[o]` 大QMT IPC 配置 可直接开关
+**v3.7.0 新增配置开关**:
+- `ENABLE_QMT_RPC_FALLBACK` — 大QMT RPC 交易通道开关（Redis/ZMQ RPC，默认 false）
+- `QMT_RPC_TRANSPORT` — RPC 传输方式：redis(默认) / zmq(低延迟) / mysql(兜底)
+- `QMT_RPC_REDIS_HOST` / `PORT` / `DB` / `PASSWORD` — Redis 连接参数
+- `QMT_RPC_ALLOW_ORDER` — RPC 下单二次确认开关（默认 false，只读安全）
+- `ENABLE_QMT_IPC_FALLBACK` — 大QMT文件IPC交易通道开关（已有，默认 false）
+- `QMT_IPC_ROOT` — IPC 文件目录（已有，默认 `C:\QuantIPC`）
+- `.env` 文件现由 `config.py` 自动加载（`_load_dotenv_fallback`），优先级：Windows 环境变量 > .env
+- 控制台 `miniqmt.bat` 菜单 `[n]` Tushare / `[o]` IPC / `[p]` XtTrader 通道总控 可直接切换
+- **三通道互斥**：`ENABLE_XTQUANT_MANAGER` / `ENABLE_QMT_IPC_FALLBACK` / `ENABLE_QMT_RPC_FALLBACK` 同时最多开一个
 - 详细配置参考 [docs/site/miniqmt/configuration.md](docs/site/miniqmt/configuration.md) 配置全景图
-- 📡 **大QMT文件IPC Fallback**（xttrader 降级替代：大QMT自带 xttrader 授权，文件系统 IPC，多账号自动隔离）
-- 📊 **Tushare Pro 数据源**（历史K线优先 + 股票名称补充查询，免费/付费版按需切换）
-- 🎛️ **总控制台配置菜单**（`miniqmt.bat`  [n] Tushare 配置 / [o] 大QMT IPC 配置，无需手动编辑 .env）
 
 **隐私安全提醒**:
 - ⚠️ **绝不硬编码任何 Token/密码/账号ID** — 一律使用环境变量或配置文件
 - `account_config.json` 已在 `.gitignore` 中排除
 - Pushplus Token 使用 `PUSHPLUS_TOKEN` 环境变量
+- Redis 密码使用 `QMT_RPC_REDIS_PASSWORD` 环境变量（`.env.example` 为占位值）
 
 **环境要求**:
 - Python 3.8+ (推荐 3.9)，例如用户目录下的Anaconda3/envs/python39
@@ -77,7 +80,8 @@ python utils/check_dependencies.py
 ```
 
 ### 配置文件
-创建 `account_config.json` 和 `stock_pool.json` (参见文档末尾)
+创建 `account_config.json` 和 `stock_pool.json` (参见文档末尾)。
+配置项可通过 `.env` 文件或 Windows 环境变量覆写，优先级：**环境变量 > .env**。复制 `.env.example` 为 `.env` 并修改即可。
 
 ### 启动系统
 ```bash
@@ -255,7 +259,13 @@ position_manager.py    # 持仓管理核心(内存+SQLite双层)⭐
 trading_executor.py    # 交易执行器(xttrader接口)
 strategy.py            # 交易策略逻辑⭐
 web_server.py          # RESTful API服务(Flask)
-easy_qmt_trader.py     # QMT交易API封装
+easy_qmt_trader.py     # QMT交易API封装 (xttrader 直连)
+qmt-trader/            # 大QMT 降级交易通道
+  _qmt_trader_base.py  #   IPC/RPC 共享件 (列名/Fake对象/纯逻辑)
+  qmt_rpc_trader.py    #   大QMT RPC 适配器 (Redis/ZMQ RPC 驱动大QMT)  [v3.7.0]
+  qmt_ipc_trader.py    #   大QMT 文件IPC 适配器 (JSON文件驱动大QMT)
+  qmt_trade_executor.py #   大QMT executor 脚本 (模型交易策略入口)
+  qmt_trade_client.py  #   策略端客户端库
 premarket_sync.py      # 盘前同步与初始化(每天9:25重新初始化xtquant)
 config_manager.py      # 配置持久化管理
 sell_monitor.py        # 卖出委托单超时监控与撤单⭐
