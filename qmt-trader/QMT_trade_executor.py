@@ -530,6 +530,14 @@ def _cancel_xt_order(trader, account_obj, account_id, order_id):
     return False, None, last_err
 
 
+def _write_heartbeat(acc):
+    """Refresh this account's heartbeat. Called at each main tick and, crucially,
+    during the order-wait loop so a slow order does not starve the heartbeat and
+    make the strategy side falsely detect a disconnect."""
+    _atomic_write_json(os.path.join(acc["dirs"]["status"], "heartbeat.json"),
+                       {"ts": datetime.now().isoformat(), "account_id": acc["account_id"]})
+
+
 def process_one_order(acc, filepath):
     dirs, account_id = acc["dirs"], acc["account_id"]
     filename = os.path.basename(filepath)
@@ -593,6 +601,7 @@ def process_one_order(acc, filepath):
         result = None
         while time.time() < deadline:
             time.sleep(0.5)
+            _write_heartbeat(acc)  # keep heartbeat fresh during blocking order wait
             if os.path.exists(cancel_path):
                 ok, ret, via = _cancel_xt_order(trader, account_obj, account_id, seq)
                 if ok:
@@ -602,9 +611,9 @@ def process_one_order(acc, filepath):
                 try: os.remove(cancel_path)
                 except Exception: pass
             ok_orders, orders, orders_via = _call_account_method(
-                trader, "query_all_orders", account_obj, account_id)
+                trader, "query_stock_orders", account_obj, account_id)
             if not ok_orders:
-                log("[%s] query_all_orders failed during wait: %s" % (account_id, orders_via))
+                log("[%s] query_stock_orders failed during wait: %s" % (account_id, orders_via))
                 continue
             for o in (orders or []):
                 oid2 = _first_attr(o, ["order_id", "order_sysid"], "")
@@ -779,8 +788,7 @@ def _dump_context_info(ContextInfo):
 def handle_account(acc):
     """Heartbeat, leftovers, pending orders, account snapshot."""
     dirs = acc["dirs"]
-    _atomic_write_json(os.path.join(dirs["status"], "heartbeat.json"),
-                       {"ts": datetime.now().isoformat(), "account_id": acc["account_id"]})
+    _write_heartbeat(acc)
     recover_leftovers(acc)
     pending_dir = dirs["pending"]
     pending = sorted([f for f in os.listdir(pending_dir)

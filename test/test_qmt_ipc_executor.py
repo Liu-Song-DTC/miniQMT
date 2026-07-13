@@ -30,7 +30,7 @@ class FakeTrader:
     def connect(self): pass
     def order_stock(self, aid, sc, act, vol, pt, price, *ex):
         self.orders_placed.append((aid, sc, act, vol, price)); return self.seq
-    def query_all_orders(self, aid):
+    def query_stock_orders(self, aid, cancelable_only=False):
         return [FakeOrder(self.seq, self.fill_status)]
     def cancel_order(self, aid, seq): self.cancel_called.append(seq)
 
