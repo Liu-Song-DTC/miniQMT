@@ -140,6 +140,21 @@ miniQMT 提供 RESTful API。Flask 直连模式暴露完整 web1.0 API；xtquant
 !!! tip "统一盈亏快照"
     Flask 直连下，`/api/grid/session/<...>`、`/api/grid/sessions`、`/api/grid/status/<stock_code>` 返回的会话数据含 `pnl_snapshot` 字段：基于 FIFO 账本计算的真实盈亏（`realized_pnl` / `unrealized_pnl` / `total_pnl` / `profit_ratio`），账本不可用时自动降级并以 `is_degraded` 标记。`/api/grid/ledger/<session_id>` 进一步返回 `summary`、`lots`、`matches`、`trades` 和分页信息，供前端账本详情面板展示。详见[网格交易 · 真实盈亏账本](grid-trading.md)。
 
+### `/api/grid/session/<stock_code>` tooltip 字段
+
+web1.0 网格悬停卡片直接使用该接口。为避免前端重复换算，所有比例字段均返回**小数格式**，例如 `-0.00925` 表示 `-0.925%`。
+
+| 字段 | 说明 |
+|------|------|
+| `stats.profit_ratio` | 与 `stats.pnl_snapshot.profit_ratio` 同源，真实网格盈亏率，小数格式 |
+| `stats.grid_profit` | 与 `stats.pnl_snapshot.total_pnl` 同源，真实网格盈亏金额 |
+| `stats.current_investment` / `stats.max_investment` | 资金使用分子/分母 |
+| `stats.deviation_ratio` | 网格中心漂移偏离，等同 `GridSession.get_deviation_ratio()`，即 `abs(current_center_price - center_price) / center_price` |
+| `stats.center_deviation_ratio` | 带方向的中心漂移偏离，`(current_center_price - center_price) / center_price`；前端用它显示“上移/下移” |
+| `stats.market_deviation_ratio` | 当前市价相对当前网格中心价的偏离，`abs(current_price - current_center_price) / current_center_price` |
+| `stats.effective_deviation_ratio` | 后端风控退出使用的有效偏离，`max(deviation_ratio, market_deviation_ratio)` |
+| `stats.market_price` | 本次快照使用的标记价，优先当前持仓市价，取不到时退回当前网格中心价 |
+
 ---
 
 ## 配置管理

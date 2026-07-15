@@ -1,6 +1,6 @@
 # 大QMT RPC — Redis 服务安装与配置
 
-大QMT RPC 交易后端（`QmtRpcTrader`）依赖一个 **Redis 服务**作为 miniQMT 客户端与大QMT 策略进程之间的消息中转 broker。本文档讲**如何在 Windows 上安装并配置 Redis**；服务端/客户端的完整联调步骤见 [大QMT-RPC联调checklist.md](../../../qmt-trader/大QMT-RPC联调checklist.md)。
+大QMT RPC 交易后端（`QmtRpcTrader`）依赖一个 **Redis 服务**作为 miniQMT 客户端与大QMT 策略进程之间的消息中转 broker。本文档讲**如何在 Windows 上安装并配置 Redis**；服务端/客户端的完整联调步骤见 [大QMT-RPC联调checklist.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC联调checklist.md)。
 
 ## Redis 在方案中的角色
 
@@ -87,7 +87,7 @@ Restart-Service Memurai
 
 ## 第 4 步：配置 miniQMT 客户端环境变量
 
-miniQMT 读取配置的优先级为 **Windows 环境变量 > 项目根 `.env`**（[config.py](../../../config.py) 的 `_load_dotenv_fallback` 在 import 时把 `.env` 补充进未设置的键，已存在的环境变量不覆盖）。因此两种方式都可用：
+miniQMT 读取配置的优先级为 **Windows 环境变量 > 项目根 `.env`**（[config.py](https://github.com/weihong-su/miniQMT/blob/main/config.py) 的 `_load_dotenv_fallback` 在 import 时把 `.env` 补充进未设置的键，已存在的环境变量不覆盖）。因此两种方式都可用：
 
 **方式 A：`setx` 用户级环境变量（推荐，最高优先级）**
 
@@ -124,7 +124,7 @@ QMT_RPC_ALLOW_ORDER=false
 - `ENABLE_QMT_RPC_FALLBACK=true` 与 `ENABLE_XTQUANT_MANAGER` / `ENABLE_QMT_IPC_FALLBACK` **三者互斥**（同开会抛 `ValueError`），确认另两个为 `false`。
 - 联调初期保持 `QMT_RPC_ALLOW_ORDER=false`（只读安全），确认查询链路无误后再放开下单。
 
-配置项与 [config.py](../../../config.py) 的对应关系：
+配置项与 [config.py](https://github.com/weihong-su/miniQMT/blob/main/config.py) 的对应关系：
 
 | 环境变量 | config 字段 | 默认值 |
 |---------|-------------|--------|
@@ -157,7 +157,7 @@ BIGQMT_REDIS_CONFIG = {
 }
 ```
 
-完整的脚本拷贝、策略编辑器入口、启动标志见 [大QMT-RPC联调checklist.md](../../../qmt-trader/大QMT-RPC联调checklist.md) 第一节。
+完整的脚本拷贝、策略编辑器入口、启动标志见 [大QMT-RPC联调checklist.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC联调checklist.md) 第一节。
 
 ## 第 6 步：端到端验证（L2 RPC 链路）
 
@@ -210,7 +210,7 @@ New-NetFirewallRule -DisplayName "Redis 6379 LAN" -Direction Inbound `
 
 ## 关联文档
 
-- [大QMT-RPC联调checklist.md](../../../qmt-trader/大QMT-RPC联调checklist.md) — 完整 P5 联调步骤（服务端部署/下单闭环/回滚）
-- [大QMT-RPC方案.md](../../../qmt-trader/大QMT-RPC方案.md) — 方案设计与架构
+- [大QMT-RPC联调checklist.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC联调checklist.md) — 完整 P5 联调步骤（服务端部署/下单闭环/回滚）
+- [大QMT-RPC方案.md](https://github.com/weihong-su/miniQMT/blob/main/qmt-trader/大QMT-RPC方案.md) — 方案设计与架构
 - [configuration.md](configuration.md) — miniQMT 配置全景图
 - [qmt-ipc-fallback.md](qmt-ipc-fallback.md) — 另一种降级通道（文件 IPC）

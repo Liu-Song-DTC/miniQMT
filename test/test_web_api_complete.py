@@ -1105,6 +1105,77 @@ class TestGridTrading(WebAPITestBase):
         )
         mock_pm.grid_manager = None
 
+    def test_02a_get_grid_session_tooltip_fields_use_raw_ratios(self):
+        """GET /api/grid/session/<stock_code> tooltip 字段应使用小数比例和完整会话信息。"""
+        from datetime import timedelta
+
+        mock_session = _make_grid_session_mock(session_id=8, stock_code='000001.SZ')
+        mock_session.center_price = 10.0
+        mock_session.current_center_price = 9.0
+        mock_session.current_investment = 16469.0
+        mock_session.max_investment = 20000.0
+        mock_session.trade_count = 5
+        mock_session.buy_count = 5
+        mock_session.sell_count = 0
+        mock_session.start_time = datetime.now() - timedelta(hours=3)
+        mock_session.get_deviation_ratio.return_value = 0.10
+
+        snapshot = {
+            'profit_ratio': -0.00925,
+            'total_pnl_ratio': -0.00925,
+            'total_pnl': -185.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': -185.0,
+            'cash_flow_profit': 0.0,
+            'cash_flow_ratio': 0.0,
+            'method': 'ledger_true_pnl',
+            'method_detail': 'ledger(open=0, realized=0.00, unrealized=-185.00)',
+            'has_ledger': True,
+            'is_degraded': False,
+            'denominator': 20000.0,
+        }
+        mock_gm = _make_grid_manager_mock(sessions={'000001': mock_session})
+        mock_gm.get_pnl_snapshot.return_value = snapshot
+        mock_pm.grid_manager = mock_gm
+        mock_pm.db_manager.get_grid_session_by_stock.return_value = {
+            'risk_level': 'moderate',
+            'template_name': '稳健型网格',
+        }
+        mock_pm.get_position.return_value = {'stock_code': '000001.SZ', 'current_price': 8.5}
+
+        resp, ms = self._get('/api/grid/session/000001.SZ')
+        data = self._parse(resp)
+
+        self._record(
+            '/api/grid/session/<stock_code>', 'GET',
+            '网格 tooltip 字段使用小数比例与完整状态',
+            resp, ms,
+            extra_checks=lambda d: (
+                self.assertTrue(d.get('success')),
+                self.assertTrue(d.get('has_session')),
+                self.assertEqual(d.get('stock_code'), '000001.SZ'),
+                self.assertEqual(d['config']['stock_code'], '000001.SZ'),
+                self.assertAlmostEqual(d['stats']['profit_ratio'], snapshot['profit_ratio']),
+                self.assertAlmostEqual(d['stats']['pnl_snapshot']['profit_ratio'], snapshot['profit_ratio']),
+                self.assertAlmostEqual(d['stats']['grid_profit'], -185.0),
+                self.assertAlmostEqual(d['stats']['current_investment'], 16469.0),
+                self.assertAlmostEqual(d['stats']['max_investment'], 20000.0),
+                self.assertAlmostEqual(d['stats']['center_deviation_ratio'], -0.10),
+                self.assertAlmostEqual(d['stats']['deviation_ratio'], 0.10),
+                self.assertAlmostEqual(d['stats']['market_deviation_ratio'], abs(8.5 - 9.0) / 9.0),
+                self.assertAlmostEqual(d['stats']['effective_deviation_ratio'], 0.10),
+                self.assertEqual(d['stats']['trade_count'], 5),
+                self.assertEqual(d['stats']['buy_count'], 5),
+                self.assertEqual(d['stats']['sell_count'], 0),
+                self.assertIsNotNone(d['stats']['start_time']),
+            ),
+        )
+        mock_gm.get_pnl_snapshot.assert_called_with(mock_session, current_price=8.5)
+        mock_session.get_deviation_ratio.assert_called_once()
+        mock_pm.grid_manager = None
+        mock_pm.db_manager.get_grid_session_by_stock.return_value = None
+        mock_pm.get_position.return_value = None
+
     def test_03_get_grid_status_by_stock(self):
         """GET /api/grid/status/<stock_code> 获取网格实时状态"""
         mock_gm = _make_grid_manager_mock()

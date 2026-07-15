@@ -3309,6 +3309,10 @@
 
     // ============ 更新Tooltip内容 ============
     function updateTooltipContent(data) {
+        const stats = data.stats || {};
+        const snapshot = stats.pnl_snapshot || {};
+        const config = data.config || {};
+
         // 风险等级徽章
         const riskLevel = data.risk_level || 'moderate';
         const riskNames = {
@@ -3318,15 +3322,16 @@
         };
 
         const badgeElement = document.getElementById('tooltipRiskLevel');
-        badgeElement.textContent = riskNames[riskLevel];
+        badgeElement.textContent = riskNames[riskLevel] || riskNames.moderate;
         badgeElement.className = `tooltip-risk-badge ${riskLevel}`;
 
         // 股票代码
-        document.getElementById('tooltipStockCode').textContent = data.config?.stock_code || '未知';
+        document.getElementById('tooltipStockCode').textContent =
+            data.stock_code || config.stock_code || snapshot.stock_code || '未知';
 
         // 运行时长
-        if (data.stats && data.stats.start_time) {
-            const duration = calculateDuration(data.stats.start_time, new Date());
+        if (stats.start_time) {
+            const duration = calculateDuration(stats.start_time, new Date());
             document.getElementById('tooltipDuration').textContent = duration;
         } else {
             document.getElementById('tooltipDuration').textContent = '计算中...';
@@ -3334,18 +3339,15 @@
 
         // 网格盈亏
         if (data.stats) {
-            const snapshot = data.stats.pnl_snapshot || {};
-            const profitRatio = Number(data.stats.profit_ratio || 0);
-            const displayRatio = Math.abs(profitRatio) <= 1 ? profitRatio * 100 : profitRatio;
+            const profitRatio = Number(snapshot.profit_ratio ?? stats.profit_ratio ?? 0);
             const profitElement = document.getElementById('tooltipProfit');
-            const profitSign = displayRatio >= 0 ? '+' : '';
-            profitElement.textContent = `${profitSign}${displayRatio.toFixed(2)}%`;
+            profitElement.textContent = formatGridPercent(profitRatio);
             profitElement.className = profitRatio >= 0 ? 'tooltip-value profit' : 'tooltip-value loss';
 
             const breakdown = document.getElementById('tooltipPnlBreakdown');
             if (breakdown) {
-                const realized = Number(snapshot.realized_pnl || 0);
-                const unrealized = Number(snapshot.unrealized_pnl || 0);
+                const realized = Number(snapshot.realized_pnl ?? 0);
+                const unrealized = Number(snapshot.unrealized_pnl ?? 0);
                 breakdown.textContent = `${formatGridMoney(realized)} / ${formatGridMoney(unrealized)}`;
                 breakdown.className = (realized + unrealized) >= 0 ? 'tooltip-value profit' : 'tooltip-value loss';
             }
@@ -3353,31 +3355,35 @@
 
         // 交易次数
         if (data.stats) {
-            const buyCount = data.stats.buy_count || 0;
-            const sellCount = data.stats.sell_count || 0;
-            const total = data.stats.trade_count || (buyCount + sellCount);
+            const buyCount = stats.buy_count || 0;
+            const sellCount = stats.sell_count || 0;
+            const total = stats.trade_count || (buyCount + sellCount);
             document.getElementById('tooltipTrades').textContent = `${total}次 (买${buyCount}/卖${sellCount})`;
         }
 
         // 资金使用
         if (data.stats && data.config) {
-            const used = data.stats.current_investment || 0;
-            const max = data.config.max_investment || 1;
-            const percent = ((used / max) * 100).toFixed(0);
-            document.getElementById('tooltipInvestment').textContent = `${percent}% (${used.toFixed(0)}/${max.toFixed(0)}元)`;
+            const used = Number(stats.current_investment || 0);
+            const max = Number(config.max_investment || stats.max_investment || snapshot.denominator || 0);
+            if (max > 0) {
+                const percent = Math.round((used / max) * 100);
+                document.getElementById('tooltipInvestment').textContent = `${percent}% (${used.toFixed(0)}/${max.toFixed(0)}元)`;
+            } else {
+                document.getElementById('tooltipInvestment').textContent = `-- (${used.toFixed(0)}/--元)`;
+            }
         }
 
         // 中心价偏离
         if (data.stats) {
-            const deviation = calculateDeviation(
-                data.stats.center_price,
-                data.stats.current_center_price
-            );
+            const signedDeviation = Number(stats.center_deviation_ratio ?? 0);
+            const deviation = Number(stats.deviation_ratio ?? Math.abs(signedDeviation));
             const deviationElement = document.getElementById('tooltipDeviation');
-            deviationElement.textContent = `${deviation >= 0 ? '+' : ''}${deviation.toFixed(2)}%`;
+            const direction = signedDeviation > 0 ? '上移' : signedDeviation < 0 ? '下移' : '';
+            deviationElement.textContent = `${formatGridPercent(deviation)}${direction ? `（${direction}）` : ''}`;
 
             // 根据偏离度设置颜色
-            if (Math.abs(deviation) > 10) {
+            const maxDeviation = Number(config.max_deviation || 0.10);
+            if (deviation >= maxDeviation) {
                 deviationElement.className = 'tooltip-value warning';
             } else {
                 deviationElement.className = 'tooltip-value';
@@ -3393,6 +3399,9 @@
     // ============ 辅助函数 ============
     function calculateDuration(startTime, currentTime) {
         const diff = currentTime - new Date(startTime);
+        if (!Number.isFinite(diff) || diff < 0) {
+            return '0天0小时';
+        }
         const days = Math.floor(diff / (1000 * 60 * 60 * 24));
         const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
         return `${days}天${hours}小时`;

@@ -210,6 +210,69 @@ def _find_active_grid_session(grid_manager, stock_code):
 def _is_grid_session_active(grid_manager, stock_code) -> bool:
     return _find_active_grid_session(grid_manager, stock_code) is not None
 
+
+def _positive_float(value):
+    """将外部行情/持仓字段转为正数价格；无效值返回 None。"""
+    try:
+        if value is None:
+            return None
+        number = float(value)
+        if pd.isna(number) or number <= 0:
+            return None
+        return number
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_grid_mark_price(position_manager, stock_code, session):
+    """网格展示 PnL 的标记价：优先当前市价，失败时退回当前中心价。"""
+    try:
+        position = position_manager.get_position(stock_code)
+        if position:
+            for key in ('current_price', '市价', 'lastPrice', 'price'):
+                price = _positive_float(position.get(key))
+                if price is not None:
+                    return price
+    except Exception as e:
+        logger.debug(f"[GRID] 获取 {stock_code} 当前市价失败，使用网格中心价兜底: {e}")
+
+    return (
+        _positive_float(getattr(session, 'current_center_price', None)) or
+        _positive_float(getattr(session, 'center_price', None)) or
+        0.0
+    )
+
+
+def _build_grid_deviation_stats(session, mark_price):
+    """构造 tooltip/API 使用的偏离率字段，比例均为小数格式。"""
+    center_price = _positive_float(getattr(session, 'center_price', None))
+    current_center = _positive_float(getattr(session, 'current_center_price', None))
+    mark = _positive_float(mark_price)
+
+    center_deviation_ratio = 0.0
+    if center_price and current_center:
+        center_deviation_ratio = (current_center - center_price) / center_price
+
+    market_deviation_ratio = 0.0
+    if current_center and mark:
+        market_deviation_ratio = abs(mark - current_center) / current_center
+
+    get_deviation_ratio = getattr(session, 'get_deviation_ratio', None)
+    if callable(get_deviation_ratio):
+        try:
+            drift_deviation_ratio = float(get_deviation_ratio())
+        except Exception:
+            drift_deviation_ratio = abs(center_deviation_ratio)
+    else:
+        drift_deviation_ratio = abs(center_deviation_ratio)
+    return {
+        'deviation_ratio': drift_deviation_ratio,
+        'center_deviation_ratio': center_deviation_ratio,
+        'market_deviation_ratio': market_deviation_ratio,
+        'effective_deviation_ratio': max(drift_deviation_ratio, market_deviation_ratio),
+        'market_price': mark or current_center or center_price or 0.0,
+    }
+
 # 创建线程池用于超时调用(最大2个工作线程,避免资源消耗)
 api_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api_timeout")
 
@@ -2040,20 +2103,24 @@ def get_grid_session_status(stock_code):
             db_session = position_manager.db_manager.get_grid_session_by_stock(stock_code)
             risk_level = db_session.get('risk_level', 'moderate') if db_session else 'moderate'
             template_name = db_session.get('template_name') if db_session else None
+            mark_price = _get_grid_mark_price(position_manager, stock_code, session)
             pnl_snapshot = grid_manager.get_pnl_snapshot(
                 session,
-                current_price=session.current_center_price or session.center_price
+                current_price=mark_price
             )
+            deviation_stats = _build_grid_deviation_stats(session, mark_price)
 
             # 返回现有配置(小数格式，前端会乘以100显示)
             return jsonify({
                 'success': True,
                 'has_session': True,
                 'session_id': session.id,
+                'stock_code': session.stock_code,
                 'risk_level': risk_level,  # ⚠️ 新增
                 'template_name': template_name,  # ⚠️ 新增
                 'enabled': bool(getattr(session, 'enabled', True)),
                 'config': {
+                    'stock_code': session.stock_code,
                     'enabled': bool(getattr(session, 'enabled', True)),
                     'center_price': session.center_price,  # ⭐ 新增: 中心价格，用于前端回显
                     'price_interval': session.price_interval,  # ⭐ 小数格式，前端乘以100显示
@@ -2071,10 +2138,15 @@ def get_grid_session_status(stock_code):
                     'trade_count': session.trade_count,
                     'buy_count': session.buy_count,
                     'sell_count': session.sell_count,
-                    'profit_ratio': pnl_snapshot['profit_ratio'] * 100,
+                    # 小数比例，和 /api/grid/sessions、pnl_snapshot.profit_ratio 保持一致。
+                    'profit_ratio': pnl_snapshot['profit_ratio'],
                     'grid_profit': pnl_snapshot['total_pnl'],
                     'pnl_snapshot': pnl_snapshot,
-                    'current_investment': session.current_investment
+                    'current_investment': session.current_investment,
+                    'max_investment': session.max_investment,
+                    'start_time': session.start_time.isoformat() if session.start_time else None,
+                    'end_time': session.end_time.isoformat() if session.end_time else None,
+                    **deviation_stats,
                 }
             })
         else:

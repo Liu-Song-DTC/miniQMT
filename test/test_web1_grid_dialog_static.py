@@ -32,6 +32,16 @@ class TestWeb1GridDialogStatic(unittest.TestCase):
         self.assertIn("setGridSessionEnabled(activeSessionId", script)
         self.assertIn("centerPriceInput.addEventListener('input'", script)
 
+    def test_grid_tooltip_uses_backend_ratios_without_double_scaling(self):
+        script = self._read_web1_file("script.js")
+
+        self.assertIn("snapshot.profit_ratio ?? stats.profit_ratio", script)
+        self.assertIn("profitElement.textContent = formatGridPercent(profitRatio)", script)
+        self.assertIn("stats.center_deviation_ratio", script)
+        self.assertIn("stats.deviation_ratio", script)
+        self.assertIn("formatGridPercent(deviation)", script)
+        self.assertNotIn("Math.abs(profitRatio) <= 1 ? profitRatio * 100 : profitRatio", script)
+
     def test_top_auto_switches_are_split_and_wired(self):
         html = self._read_web1_file("index.html")
         script = self._read_web1_file("script.js")
