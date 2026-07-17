@@ -169,10 +169,8 @@ class StockDataUpdater:
         start = since_date.replace('-', '')
         try:
             self.xtdata.download_history_data(
-                stock_list=xt_codes,
-                period='1d',
-                start_time=start,
-                end_time='',
+                xt_codes, period='1d',
+                start_time=start, end_time='',
                 incrementally=True,
             )
         except Exception as e:
@@ -190,7 +188,7 @@ class StockDataUpdater:
             # 先下载到本地缓存（必须，否则 get_market_data 返回空）
             try:
                 self.xtdata.download_history_data(
-                    stock_list=[xt_code], period='1d',
+                    [xt_code], period='1d',
                     start_time=start, end_time='', incrementally=True,
                 )
             except Exception:
