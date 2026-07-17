@@ -58,11 +58,14 @@ class StockDataUpdater:
     def get_stock_list(self) -> List[str]:
         """从现有CSV文件获取股票列表"""
         stocks = []
-        if self.csv_dir.exists():
-            for f in self.csv_dir.glob("*_qfq.csv"):
-                code = f.stem.replace("_qfq", "")
-                if code and not code.startswith('.'):
-                    stocks.append(code)
+        try:
+            if self.csv_dir.exists():
+                for f in self.csv_dir.glob("*_qfq.csv"):
+                    code = f.stem.replace("_qfq", "")
+                    if code and not code.startswith('.'):
+                        stocks.append(code)
+        except OSError:
+            logger.warning(f"无法读取CSV目录: {self.csv_dir}")
         if not stocks:
             logger.warning(f"未找到已有CSV文件({self.csv_dir})，将使用默认股票池")
             import config
@@ -81,7 +84,10 @@ class StockDataUpdater:
     def read_last_date(self, stock_code: str) -> Optional[str]:
         """读取CSV最后一行的日期，校验格式后返回 YYYY-MM-DD 或 None"""
         csv_path = self._code_to_csv_path(stock_code)
-        if not csv_path.exists():
+        try:
+            if not csv_path.exists():
+                return None
+        except OSError:
             return None
         try:
             df = pd.read_csv(csv_path)
@@ -115,14 +121,21 @@ class StockDataUpdater:
     def append_to_csv(self, stock_code: str, new_rows: list):
         """追加新数据行到CSV文件"""
         csv_path = self._code_to_csv_path(stock_code)
-        file_exists = csv_path.exists()
+        try:
+            file_exists = csv_path.exists()
+        except OSError:
+            file_exists = False
 
-        with open(csv_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(self.CSV_FIELDS)
-            for row in new_rows:
-                writer.writerow(row)
+        try:
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(self.CSV_FIELDS)
+                for row in new_rows:
+                    writer.writerow(row)
+        except OSError as e:
+            logger.error(f"写入 {stock_code} CSV失败: {str(e)[:80]}")
+            raise
 
     # ==================== 数据源: xtdata ====================
 
