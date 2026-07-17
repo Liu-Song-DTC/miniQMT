@@ -188,11 +188,12 @@ class SwingTradingManager:
                 if session.session_date and session.session_date != today:
                     old_date = session.session_date
                     # 隔夜：浮动仓位转底仓
-                    session.base_volume += session.floating_volume
+                    converted = session.floating_volume
+                    session.base_volume += converted
                     session.reset_daily(today)
                     self._persist_session(session)
                     logger.info(f"[日切换] {session.stock_code}: {old_date} -> {today}, "
-                                f"浮动{max(0, session.base_volume - session.base_volume)}股转底仓, 底仓={session.base_volume}股")
+                                f"浮动{converted}股转底仓, 底仓={session.base_volume}股")
 
     # ==================== 活跃股票列表 ====================
 
@@ -205,10 +206,11 @@ class SwingTradingManager:
             if positions is not None and not positions.empty:
                 stocks = positions['stock_code'].tolist()
 
+        stocks_set = {str(s) for s in stocks}
+
         # 确保有 session
         with self.lock:
-            for stock_code in stocks:
-                stock_code = str(stock_code)
+            for stock_code in stocks_set:
                 if stock_code not in self.sessions:
                     position = self.position_manager.get_position(stock_code)
                     volume = int(position.get('volume', 0)) if position else 0
@@ -218,8 +220,18 @@ class SwingTradingManager:
                             base_volume=volume,
                             session_date=datetime.now().strftime('%Y-%m-%d'),
                         )
+                        self._persist_session(self.sessions[stock_code])
 
-        return [s for s in stocks if s in self.sessions and self.sessions[s].enabled]
+            # 清理已清仓的过期 session
+            stale = [
+                code for code, sess in self.sessions.items()
+                if code not in stocks_set
+            ]
+            for code in stale:
+                logger.info(f"[SWING] {code} 持仓已清仓，清理摆动交易会话")
+                del self.sessions[code]
+
+        return [s for s in stocks_set if s in self.sessions and self.sessions[s].enabled]
 
     # ==================== 日内指标计算 ====================
 
@@ -404,19 +416,33 @@ class SwingTradingManager:
                 if elapsed < config.SWING_BUY_COOLDOWN:
                     return False, f"买入冷却中 (还需{int(config.SWING_BUY_COOLDOWN - elapsed)}s)"
 
+            buy_volume = max(int(session.base_volume * config.SWING_BUY_VOLUME_RATIO / 100) * 100,
+                             config.SWING_MIN_BUY_VOLUME)
+            if session.today_buy_volume + buy_volume > session.base_volume * config.SWING_MAX_DAILY_BUY_VOLUME_RATIO:
+                return False, f"已达每日最大买入量({config.SWING_MAX_DAILY_BUY_VOLUME_RATIO*100:.0f}%底仓)"
+
         position = self.position_manager.get_position(stock_code)
         if not position:
             return False, "无持仓"
 
         current_value = float(position.get('market_value', 0))
-        buy_volume = max(int(session.base_volume * config.SWING_BUY_VOLUME_RATIO / 100) * 100, 100)
-        buy_amount = buy_volume * (self.data_manager.get_latest_data(stock_code) or {}).get('lastPrice', 0) or 0
-        if current_value + buy_amount > config.MAX_POSITION_VALUE:
-            return False, f"将超过最大持仓市值({config.MAX_POSITION_VALUE})"
+        latest = self.data_manager.get_latest_data(stock_code) or {}
+        latest_price = latest.get('lastPrice', 0) or 0
+        if latest_price > 0:
+            buy_amount = buy_volume * latest_price
+            if current_value + buy_amount > config.MAX_POSITION_VALUE:
+                return False, f"将超过最大持仓市值({config.MAX_POSITION_VALUE})"
 
         return True, "OK"
 
     def _can_sell(self, stock_code) -> tuple[bool, str]:
+        position = self.position_manager.get_position(stock_code)
+        if not position:
+            return False, "无持仓"
+
+        total_volume = int(position.get('volume', 0))
+        available = int(position.get('available', 0))
+
         with self.lock:
             session = self.sessions.get(stock_code)
             if not session or not session.enabled:
@@ -433,26 +459,26 @@ class SwingTradingManager:
                 if elapsed < config.SWING_SELL_COOLDOWN:
                     return False, f"卖出冷却中 (还需{int(config.SWING_SELL_COOLDOWN - elapsed)}s)"
 
-        position = self.position_manager.get_position(stock_code)
-        if not position:
-            return False, "无持仓"
-
-        total_volume = int(position.get('volume', 0))
-        available = int(position.get('available', 0))
-
-        with self.lock:
-            session = self.sessions.get(stock_code)
-            if not session:
-                return False, "无会话"
-
             # T+1：不能卖出今天买入的部分（模拟模式下允许T+0）
             if not getattr(config, 'ENABLE_SIMULATION_MODE', False):
                 sellable_base = total_volume - session.floating_volume
                 if sellable_base <= 0:
                     return False, "全部为当日买入(T+1锁定)"
+            else:
+                sellable_base = total_volume
 
             if available < config.SWING_MIN_SELL_VOLUME:
                 return False, f"可用股数不足({available}<{config.SWING_MIN_SELL_VOLUME})"
+
+            sell_volume = max(int(sellable_base * config.SWING_SELL_VOLUME_RATIO / 100) * 100,
+                              config.SWING_MIN_SELL_VOLUME)
+            sell_volume = min(sell_volume, available, sellable_base)
+
+            if sell_volume < config.SWING_MIN_SELL_VOLUME:
+                return False, f"可卖数量不足({sell_volume}<{config.SWING_MIN_SELL_VOLUME})"
+
+            if session.today_sell_volume + sell_volume > session.base_volume * config.SWING_MAX_DAILY_SELL_VOLUME_RATIO:
+                return False, f"已达每日最大卖出量({config.SWING_MAX_DAILY_SELL_VOLUME_RATIO*100:.0f}%底仓)"
 
         # 最小盈利检查
         cost_price = float(position.get('cost_price', 0))
@@ -553,10 +579,15 @@ class SwingTradingManager:
         position = self.position_manager.get_position(stock_code)
         total_volume = int(position.get('volume', 0))
         available = int(position.get('available', 0))
+        is_simulation = getattr(config, 'ENABLE_SIMULATION_MODE', True)
 
         with self.lock:
             session = self.sessions[stock_code]
-            sellable_base = total_volume - session.floating_volume
+            # T+1：实盘不可卖今日买入；模拟允许T+0
+            if is_simulation:
+                sellable_base = total_volume
+            else:
+                sellable_base = total_volume - session.floating_volume
             sell_volume = max(int(sellable_base * config.SWING_SELL_VOLUME_RATIO / 100) * 100,
                               config.SWING_MIN_SELL_VOLUME)
             sell_volume = min(sell_volume, available, sellable_base)
@@ -567,7 +598,6 @@ class SwingTradingManager:
 
         logger.info(f"[SWING] {stock_code} 摆动卖出: {sell_volume}股 (底仓可卖={sellable_base}, 浮动锁定={session.floating_volume})")
 
-        is_simulation = getattr(config, 'ENABLE_SIMULATION_MODE', True)
         strategy = 'swing_simu' if is_simulation else 'swing'
 
         try:
