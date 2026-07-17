@@ -49,8 +49,9 @@ class StockDataUpdater:
         self.mootdx_client = None
 
         # 统计
-        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0}
+        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0, 'empty': 0}
         self.failed_stocks: List[str] = []
+        self._first_error_logged = False
 
     # ==================== 股票列表 ====================
 
@@ -120,15 +121,19 @@ class StockDataUpdater:
         try:
             import xtquant.xtdata as xt
             self.xtdata = xt
+            try:
+                xt.connect()
+            except Exception:
+                pass
             return True
         except ImportError:
-            logger.debug("xtquant.xtdata 不可用")
+            logger.warning("xtquant.xtdata 不可用，将尝试 mootdx 降级")
             return False
 
-    def _download_via_xtdata(self, stock_code: str, since_date: str) -> Optional[pd.DataFrame]:
-        """通过 xtdata 下载日线数据"""
+    def _download_via_xtdata(self, stock_code: str, since_date: str):
+        """通过 xtdata 下载日线数据。返回 (status, df) — status: 'ok'/'empty'/'error'"""
         if not self._init_xtdata():
-            return None
+            return 'error', None
 
         try:
             # xtdata 需要完整代码格式
@@ -147,7 +152,7 @@ class StockDataUpdater:
             )
 
             if data is None or data['close'].empty or data['close'].shape[0] == 0:
-                return None
+                return 'empty', None
 
             closes = data['close'].iloc[:, 0]
             opens = data['open'].iloc[:, 0]
@@ -156,28 +161,28 @@ class StockDataUpdater:
             volumes = data['volume'].iloc[:, 0]
             amounts = data.get('amount', data['volume']).iloc[:, 0]
 
-            # preClose (前收)
             if 'preClose' in data:
                 precloses = data['preClose'].iloc[:, 0]
             else:
                 precloses = closes.shift(1).fillna(closes.iloc[0])
 
-            dates = [str(d).split(' ')[0] if ' ' in str(d) else str(d)
+            dates = [str(d).strftime('%Y-%m-%d') if hasattr(d, 'strftime') else str(d).split(' ')[0]
                      for d in closes.index]
 
+            n = len(closes)
             rows = []
-            for i in range(len(closes)):
+            for i in range(n):
                 dt = dates[i]
                 if dt < since_date:
                     continue
 
-                o = float(opens[i])
-                h = float(highs[i])
-                l = float(lows[i])
-                c = float(closes[i])
-                v = float(volumes[i])
-                a = float(amounts[i]) if amounts is not None else 0
-                pc = float(precloses[i]) if precloses is not None and i < len(precloses) else c
+                o = float(opens.iloc[i])
+                h = float(highs.iloc[i])
+                l = float(lows.iloc[i])
+                c = float(closes.iloc[i])
+                v = float(volumes.iloc[i])
+                a = float(amounts.iloc[i])
+                pc = float(precloses.iloc[i]) if precloses is not None and i < n else c
 
                 pct_chg = ((c - pc) / pc * 100) if pc > 0 else 0
                 chg = c - pc
@@ -185,24 +190,21 @@ class StockDataUpdater:
 
                 rows.append({
                     'datetime': dt,
-                    'open': round(o, 2),
-                    'high': round(h, 2),
-                    'low': round(l, 2),
-                    'close': round(c, 2),
-                    'volume': int(v),
-                    'openinterest': 0,
-                    'amount': round(a, 2),
-                    'amplitude': round(ampl, 2),
+                    'open': round(o, 2), 'high': round(h, 2),
+                    'low': round(l, 2), 'close': round(c, 2),
+                    'volume': int(v), 'openinterest': 0,
+                    'amount': round(a, 2), 'amplitude': round(ampl, 2),
                     'change_percent': round(pct_chg, 2),
-                    'change_amount': round(chg, 2),
-                    'turnover_rate': 0,
+                    'change_amount': round(chg, 2), 'turnover_rate': 0,
                 })
 
-            return pd.DataFrame(rows) if rows else None
+            return ('ok', pd.DataFrame(rows)) if rows else ('empty', None)
 
         except Exception as e:
-            logger.debug(f"[xtdata] {stock_code} 下载失败: {str(e)[:80]}")
-            return None
+            if not self._first_error_logged:
+                logger.error(f"[xtdata] {stock_code} 下载异常: {str(e)[:100]}")
+                self._first_error_logged = True
+            return 'error', None
 
     # ==================== 数据源: mootdx ====================
 
@@ -217,10 +219,10 @@ class StockDataUpdater:
             logger.debug("mootdx 不可用")
             return False
 
-    def _download_via_mootdx(self, stock_code: str, since_date: str) -> Optional[pd.DataFrame]:
-        """通过 mootdx(通达信) 下载日线数据"""
+    def _download_via_mootdx(self, stock_code: str, since_date: str):
+        """通过 mootdx(通达信) 下载日线数据。返回 (status, df)"""
         if not self._init_mootdx():
-            return None
+            return 'error', None
 
         try:
             clean_code = stock_code.split('.')[0] if '.' in stock_code else stock_code
@@ -231,31 +233,26 @@ class StockDataUpdater:
             )
 
             if df is None or df.empty:
-                return None
+                return 'empty', None
 
             df = df.rename(columns={'datetime': 'datetime_raw'})
-            if 'datetime_raw' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime_raw']).dt.strftime('%Y-%m-%d')
-            else:
-                return None
+            if 'datetime_raw' not in df.columns:
+                return 'empty', None
 
+            df['datetime'] = pd.to_datetime(df['datetime_raw']).dt.strftime('%Y-%m-%d')
             df = df[df['datetime'] >= since_date].copy()
             if df.empty:
-                return None
+                return 'empty', None
 
             rows = []
             prev_close = None
             for _, row in df.iterrows():
-                o = float(row['open'])
-                h = float(row['high'])
-                l = float(row['low'])
-                c = float(row['close'])
-                v = float(row.get('volume', 0))
-                a = float(row.get('amount', 0))
+                o = float(row['open']); h = float(row['high'])
+                l = float(row['low']); c = float(row['close'])
+                v = float(row.get('volume', 0)); a = float(row.get('amount', 0))
 
-                if prev_close is None:
-                    prev_close = o
-                pc = prev_close
+                pc = prev_close if prev_close is not None else o
+                prev_close = c
 
                 pct_chg = ((c - pc) / pc * 100) if pc > 0 else 0
                 chg = c - pc
@@ -268,21 +265,21 @@ class StockDataUpdater:
                     'volume': int(v), 'openinterest': 0,
                     'amount': round(a, 2), 'amplitude': round(ampl, 2),
                     'change_percent': round(pct_chg, 2),
-                    'change_amount': round(chg, 2),
-                    'turnover_rate': 0,
+                    'change_amount': round(chg, 2), 'turnover_rate': 0,
                 })
-                prev_close = c
 
-            return pd.DataFrame(rows) if rows else None
+            return ('ok', pd.DataFrame(rows)) if rows else ('empty', None)
 
         except Exception as e:
-            logger.debug(f"[mootdx] {stock_code} 下载失败: {str(e)[:80]}")
-            return None
+            if not self._first_error_logged:
+                logger.error(f"[mootdx] {stock_code} 下载异常: {str(e)[:100]}")
+                self._first_error_logged = True
+            return 'error', None
 
     # ==================== 核心更新逻辑 ====================
 
     def update_stock(self, stock_code: str) -> bool:
-        """增量更新单只股票"""
+        """增量更新单只股票。返回 True=成功或无需更新, False=下载异常"""
         last_date = self.read_last_date(stock_code)
         if last_date:
             since = (datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -294,23 +291,29 @@ class StockDataUpdater:
             self.stats['skipped'] += 1
             return True
 
-        # 优先 xtdata，失败降级 mootdx
-        df = None
-        source = None
         import config
         pref = getattr(config, 'STOCK_DATA_SOURCE', 'auto')
 
+        # 优先 xtdata，失败降级 mootdx
+        status, df = 'error', None
+        source = None
+
         if pref in ('xtdata', 'auto'):
-            df = self._download_via_xtdata(stock_code, since)
-            if df is not None:
+            status, df = self._download_via_xtdata(stock_code, since)
+            if status == 'ok':
                 source = 'xtdata'
 
-        if df is None and pref in ('mootdx', 'auto'):
-            df = self._download_via_mootdx(stock_code, since)
-            if df is not None:
+        if status != 'ok' and pref in ('mootdx', 'auto'):
+            status, df = self._download_via_mootdx(stock_code, since)
+            if status == 'ok':
                 source = 'mootdx'
 
-        if df is None or df.empty:
+        if status == 'empty':
+            # 无新数据（停牌/退市/假期/已是最新），不算失败
+            self.stats['skipped'] += 1
+            return True
+
+        if status == 'error' or df is None or df.empty:
             self.stats['failed'] += 1
             self.failed_stocks.append(stock_code)
             return False
@@ -332,7 +335,7 @@ class StockDataUpdater:
             logger.info(f"[+] {stock_code} 新建 {len(rows)} 条 ({source})")
         else:
             self.stats['updated'] += 1
-            logger.debug(f"[~] {stock_code} {since}~{today} +{len(rows)}条 ({source})")
+            logger.info(f"[~] {stock_code} {since}~{today} +{len(rows)}条 ({source})")
 
         return True
 
@@ -349,8 +352,9 @@ class StockDataUpdater:
         total = len(stock_list)
         logger.info(f"开始更新 {total} 只股票 (批次={batch_size})")
 
-        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0}
+        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0, 'empty': 0}
         self.failed_stocks = []
+        self._first_error_logged = False
         start_time = time.time()
 
         for i in range(0, total, batch_size):
@@ -361,14 +365,17 @@ class StockDataUpdater:
                 except Exception as e:
                     self.stats['failed'] += 1
                     self.failed_stocks.append(stock_code)
-                    logger.error(f"[!] {stock_code} 异常: {str(e)[:100]}")
+                    if not self._first_error_logged:
+                        logger.error(f"[!] {stock_code} 异常: {str(e)[:120]}")
+                        self._first_error_logged = True
 
             elapsed = time.time() - start_time
             done = min(i + batch_size, total)
             rate = done / elapsed if elapsed > 0 else 0
             eta = (total - done) / rate if rate > 0 else 0
+            success = self.stats['updated'] + self.stats['new']
             logger.info(f"进度: {done}/{total} ({done/total*100:.1f}%) "
-                        f"成功={self.stats['updated']+self.stats['new']} "
+                        f"更新={success} 跳过={self.stats['skipped']} "
                         f"失败={len(self.failed_stocks)} "
                         f"速率={rate:.1f}只/s ETA={eta:.0f}s")
 
@@ -382,6 +389,9 @@ class StockDataUpdater:
         logger.info(f"更新完成: 总计{total}只, 新增{self.stats['new']}, "
                     f"更新{self.stats['updated']}, 跳过{self.stats['skipped']}, "
                     f"失败{self.stats['failed']}, 耗时{elapsed:.0f}s")
+        if self.failed_stocks:
+            logger.warning(f"失败股票({len(self.failed_stocks)}只): {self.failed_stocks[:20]}"
+                           f"{'...' if len(self.failed_stocks) > 20 else ''}")
 
     def retry_failed(self, batch_size: Optional[int] = None):
         """重试上次失败的股票"""
