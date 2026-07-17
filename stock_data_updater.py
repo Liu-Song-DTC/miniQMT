@@ -1,0 +1,488 @@
+#!/usr/bin/env python3
+"""
+盘后全市场日线数据增量更新器
+
+用法:
+  python stock_data_updater.py                     # 增量更新全部股票
+  python stock_data_updater.py --stock 000001.SZ   # 更新单只
+  python stock_data_updater.py --since 2026-07-01  # 从指定日期补数据
+  python stock_data_updater.py --check             # 检查数据状态
+  python stock_data_updater.py --failed            # 重试上次失败的股票
+
+数据格式: backtrader CSV (datetime,open,high,low,close,volume,openinterest,
+          amount,amplitude,change_percent,change_amount,turnover_rate)
+"""
+import os
+import sys
+import csv
+import json
+import time
+import argparse
+import traceback
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import List, Optional, Set
+
+import numpy as np
+import pandas as pd
+
+from logger import get_logger
+
+logger = get_logger("stock_updater")
+
+
+class StockDataUpdater:
+    """盘后全市场日线数据增量更新器"""
+
+    def __init__(self, data_dir=None):
+        import config
+        if data_dir is None:
+            data_dir = getattr(config, 'STOCK_DATA_DIR', r'D:\quant\data')
+        self.data_dir = Path(data_dir)
+        self.csv_dir = self.data_dir / "stock_data" / "backtrader_data"
+        self.meta_file = self.data_dir / "stock_data" / "metadata.json"
+        self.failed_file = self.data_dir / "stock_data" / "failed_stocks.json"
+
+        self.csv_dir.mkdir(parents=True, exist_ok=True)
+
+        self.xtdata = None
+        self.mootdx_client = None
+
+        # 统计
+        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0}
+        self.failed_stocks: List[str] = []
+
+    # ==================== 股票列表 ====================
+
+    def get_stock_list(self) -> List[str]:
+        """从现有CSV文件获取股票列表"""
+        stocks = []
+        if self.csv_dir.exists():
+            for f in self.csv_dir.glob("*_qfq.csv"):
+                code = f.stem.replace("_qfq", "")
+                if code and not code.startswith('.'):
+                    stocks.append(code)
+        if not stocks:
+            logger.warning(f"未找到已有CSV文件({self.csv_dir})，将使用默认股票池")
+            import config
+            stocks = [s.split('.')[0] for s in getattr(config, 'STOCK_POOL', [])]
+        return sorted(stocks)
+
+    def _code_to_csv_path(self, stock_code: str) -> Path:
+        return self.csv_dir / f"{stock_code}_qfq.csv"
+
+    # ==================== CSV读写 ====================
+
+    CSV_FIELDS = ['datetime', 'open', 'high', 'low', 'close', 'volume',
+                  'openinterest', 'amount', 'amplitude', 'change_percent',
+                  'change_amount', 'turnover_rate']
+
+    def read_last_date(self, stock_code: str) -> Optional[str]:
+        """读取CSV最后一行的日期"""
+        csv_path = self._code_to_csv_path(stock_code)
+        if not csv_path.exists():
+            return None
+        try:
+            df = pd.read_csv(csv_path)
+            if df.empty:
+                return None
+            last = str(df['datetime'].iloc[-1]).strip()
+            return last if last else None
+        except Exception:
+            # 文件可能损坏，尝试逐行读取
+            try:
+                with open(csv_path, 'r') as f:
+                    lines = f.readlines()
+                    if len(lines) < 2:
+                        return None
+                    last_line = lines[-1].strip()
+                    return last_line.split(',')[0] if last_line else None
+            except Exception:
+                return None
+
+    def append_to_csv(self, stock_code: str, new_rows: list):
+        """追加新数据行到CSV文件"""
+        csv_path = self._code_to_csv_path(stock_code)
+        file_exists = csv_path.exists()
+
+        with open(csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(self.CSV_FIELDS)
+            for row in new_rows:
+                writer.writerow(row)
+
+    # ==================== 数据源: xtdata ====================
+
+    def _init_xtdata(self) -> bool:
+        if self.xtdata is not None:
+            return True
+        try:
+            import xtquant.xtdata as xt
+            self.xtdata = xt
+            return True
+        except ImportError:
+            logger.debug("xtquant.xtdata 不可用")
+            return False
+
+    def _download_via_xtdata(self, stock_code: str, since_date: str) -> Optional[pd.DataFrame]:
+        """通过 xtdata 下载日线数据"""
+        if not self._init_xtdata():
+            return None
+
+        try:
+            # xtdata 需要完整代码格式
+            if '.' not in stock_code:
+                xt_code = f"{stock_code}.{'SH' if stock_code.startswith(('6','9','5')) else 'SZ'}"
+            else:
+                xt_code = stock_code
+
+            data = self.xtdata.get_market_data(
+                field_list=['open', 'high', 'low', 'close', 'volume', 'amount', 'preClose'],
+                stock_list=[xt_code],
+                period='1d',
+                start_time=since_date.replace('-', ''),
+                dividend_type='front',
+                fill_data=False,
+            )
+
+            if data is None or data['close'].empty or data['close'].shape[0] == 0:
+                return None
+
+            closes = data['close'].iloc[:, 0]
+            opens = data['open'].iloc[:, 0]
+            highs = data['high'].iloc[:, 0]
+            lows = data['low'].iloc[:, 0]
+            volumes = data['volume'].iloc[:, 0]
+            amounts = data.get('amount', data['volume']).iloc[:, 0]
+
+            # preClose (前收)
+            if 'preClose' in data:
+                precloses = data['preClose'].iloc[:, 0]
+            else:
+                precloses = closes.shift(1).fillna(closes.iloc[0])
+
+            dates = [str(d).split(' ')[0] if ' ' in str(d) else str(d)
+                     for d in closes.index]
+
+            rows = []
+            for i in range(len(closes)):
+                dt = dates[i]
+                if dt < since_date:
+                    continue
+
+                o = float(opens[i])
+                h = float(highs[i])
+                l = float(lows[i])
+                c = float(closes[i])
+                v = float(volumes[i])
+                a = float(amounts[i]) if amounts is not None else 0
+                pc = float(precloses[i]) if precloses is not None and i < len(precloses) else c
+
+                pct_chg = ((c - pc) / pc * 100) if pc > 0 else 0
+                chg = c - pc
+                ampl = ((h - l) / pc * 100) if pc > 0 else 0
+
+                rows.append({
+                    'datetime': dt,
+                    'open': round(o, 2),
+                    'high': round(h, 2),
+                    'low': round(l, 2),
+                    'close': round(c, 2),
+                    'volume': int(v),
+                    'openinterest': 0,
+                    'amount': round(a, 2),
+                    'amplitude': round(ampl, 2),
+                    'change_percent': round(pct_chg, 2),
+                    'change_amount': round(chg, 2),
+                    'turnover_rate': 0,
+                })
+
+            return pd.DataFrame(rows) if rows else None
+
+        except Exception as e:
+            logger.debug(f"[xtdata] {stock_code} 下载失败: {str(e)[:80]}")
+            return None
+
+    # ==================== 数据源: mootdx ====================
+
+    def _init_mootdx(self) -> bool:
+        if self.mootdx_client is not None:
+            return True
+        try:
+            from mootdx.quotes import Quotes
+            self.mootdx_client = Quotes.factory('std')
+            return True
+        except Exception:
+            logger.debug("mootdx 不可用")
+            return False
+
+    def _download_via_mootdx(self, stock_code: str, since_date: str) -> Optional[pd.DataFrame]:
+        """通过 mootdx(通达信) 下载日线数据"""
+        if not self._init_mootdx():
+            return None
+
+        try:
+            clean_code = stock_code.split('.')[0] if '.' in stock_code else stock_code
+            market = 1 if clean_code.startswith(('6', '9', '5')) else 0
+
+            df = self.mootdx_client.bars(
+                symbol=clean_code, frequency=9, offset=300, market=market,
+            )
+
+            if df is None or df.empty:
+                return None
+
+            df = df.rename(columns={'datetime': 'datetime_raw'})
+            if 'datetime_raw' in df.columns:
+                df['datetime'] = pd.to_datetime(df['datetime_raw']).dt.strftime('%Y-%m-%d')
+            else:
+                return None
+
+            df = df[df['datetime'] >= since_date].copy()
+            if df.empty:
+                return None
+
+            rows = []
+            prev_close = None
+            for _, row in df.iterrows():
+                o = float(row['open'])
+                h = float(row['high'])
+                l = float(row['low'])
+                c = float(row['close'])
+                v = float(row.get('volume', 0))
+                a = float(row.get('amount', 0))
+
+                if prev_close is None:
+                    prev_close = o
+                pc = prev_close
+
+                pct_chg = ((c - pc) / pc * 100) if pc > 0 else 0
+                chg = c - pc
+                ampl = ((h - l) / pc * 100) if pc > 0 else 0
+
+                rows.append({
+                    'datetime': row['datetime'],
+                    'open': round(o, 2), 'high': round(h, 2),
+                    'low': round(l, 2), 'close': round(c, 2),
+                    'volume': int(v), 'openinterest': 0,
+                    'amount': round(a, 2), 'amplitude': round(ampl, 2),
+                    'change_percent': round(pct_chg, 2),
+                    'change_amount': round(chg, 2),
+                    'turnover_rate': 0,
+                })
+                prev_close = c
+
+            return pd.DataFrame(rows) if rows else None
+
+        except Exception as e:
+            logger.debug(f"[mootdx] {stock_code} 下载失败: {str(e)[:80]}")
+            return None
+
+    # ==================== 核心更新逻辑 ====================
+
+    def update_stock(self, stock_code: str) -> bool:
+        """增量更新单只股票"""
+        last_date = self.read_last_date(stock_code)
+        if last_date:
+            since = (datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            since = '2015-01-01'
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        if since >= today:
+            self.stats['skipped'] += 1
+            return True
+
+        # 优先 xtdata，失败降级 mootdx
+        df = None
+        source = None
+        import config
+        pref = getattr(config, 'STOCK_DATA_SOURCE', 'auto')
+
+        if pref in ('xtdata', 'auto'):
+            df = self._download_via_xtdata(stock_code, since)
+            if df is not None:
+                source = 'xtdata'
+
+        if df is None and pref in ('mootdx', 'auto'):
+            df = self._download_via_mootdx(stock_code, since)
+            if df is not None:
+                source = 'mootdx'
+
+        if df is None or df.empty:
+            self.stats['failed'] += 1
+            self.failed_stocks.append(stock_code)
+            return False
+
+        # 写入CSV
+        rows = []
+        for _, row in df.iterrows():
+            rows.append([
+                row['datetime'], row['open'], row['high'], row['low'],
+                row['close'], row['volume'], row['openinterest'],
+                row['amount'], row['amplitude'], row['change_percent'],
+                row['change_amount'], row['turnover_rate'],
+            ])
+
+        self.append_to_csv(stock_code, rows)
+
+        if last_date is None:
+            self.stats['new'] += 1
+            logger.info(f"[+] {stock_code} 新建 {len(rows)} 条 ({source})")
+        else:
+            self.stats['updated'] += 1
+            logger.debug(f"[~] {stock_code} {since}~{today} +{len(rows)}条 ({source})")
+
+        return True
+
+    def update_all(self, stock_list: Optional[List[str]] = None,
+                   since_date: Optional[str] = None,
+                   batch_size: Optional[int] = None):
+        """批量更新全部股票"""
+        import config
+        if stock_list is None:
+            stock_list = self.get_stock_list()
+        if batch_size is None:
+            batch_size = getattr(config, 'STOCK_DATA_BATCH_SIZE', 100)
+
+        total = len(stock_list)
+        logger.info(f"开始更新 {total} 只股票 (批次={batch_size})")
+
+        self.stats = {'updated': 0, 'skipped': 0, 'failed': 0, 'new': 0}
+        self.failed_stocks = []
+        start_time = time.time()
+
+        for i in range(0, total, batch_size):
+            batch = stock_list[i:i + batch_size]
+            for stock_code in batch:
+                try:
+                    self.update_stock(stock_code)
+                except Exception as e:
+                    self.stats['failed'] += 1
+                    self.failed_stocks.append(stock_code)
+                    logger.error(f"[!] {stock_code} 异常: {str(e)[:100]}")
+
+            elapsed = time.time() - start_time
+            done = min(i + batch_size, total)
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = (total - done) / rate if rate > 0 else 0
+            logger.info(f"进度: {done}/{total} ({done/total*100:.1f}%) "
+                        f"成功={self.stats['updated']+self.stats['new']} "
+                        f"失败={len(self.failed_stocks)} "
+                        f"速率={rate:.1f}只/s ETA={eta:.0f}s")
+
+            if i + batch_size < total:
+                time.sleep(1)
+
+        self._save_metadata()
+        self._save_failed()
+
+        elapsed = time.time() - start_time
+        logger.info(f"更新完成: 总计{total}只, 新增{self.stats['new']}, "
+                    f"更新{self.stats['updated']}, 跳过{self.stats['skipped']}, "
+                    f"失败{self.stats['failed']}, 耗时{elapsed:.0f}s")
+
+    def retry_failed(self, batch_size: Optional[int] = None):
+        """重试上次失败的股票"""
+        if not self.failed_file.exists():
+            logger.info("无失败记录")
+            return
+
+        with open(self.failed_file, 'r') as f:
+            failed = json.load(f)
+
+        if not failed:
+            logger.info("无失败股票需要重试")
+            return
+
+        logger.info(f"重试 {len(failed)} 只失败股票")
+        self.update_all(stock_list=failed, batch_size=batch_size)
+
+    # ==================== 状态/元数据 ====================
+
+    def check_status(self):
+        """检查数据更新状态"""
+        stocks = self.get_stock_list()
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        up_to_date = 0
+        outdated = 0
+        empty = 0
+        outdated_stocks = []
+
+        for code in stocks:
+            last = self.read_last_date(code)
+            if last is None:
+                empty += 1
+            elif last >= today:
+                up_to_date += 1
+            else:
+                outdated += 1
+                if len(outdated_stocks) < 10:
+                    outdated_stocks.append((code, last))
+
+        print(f"\n========== 数据状态 ==========")
+        print(f"股票总数:     {len(stocks)}")
+        print(f"已更新至今天: {up_to_date}")
+        print(f"需要更新:     {outdated}")
+        print(f"无数据:       {empty}")
+        print(f"\n最后更新日期: {self._read_metadata().get('last_update', '未知')}")
+
+        if outdated_stocks:
+            print(f"\n需更新样本:")
+            for code, last in outdated_stocks:
+                print(f"  {code}  最后: {last}")
+
+        print(f"==============================\n")
+
+    def _read_metadata(self) -> dict:
+        if self.meta_file.exists():
+            try:
+                with open(self.meta_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_metadata(self):
+        self.meta_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.meta_file, 'w') as f:
+            json.dump({'last_update': datetime.now().strftime('%Y%m%d')}, f)
+
+    def _save_failed(self):
+        if self.failed_stocks:
+            self.failed_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.failed_file, 'w') as f:
+                json.dump(self.failed_stocks, f, ensure_ascii=False)
+            logger.warning(f"失败股票列表已保存: {self.failed_file} ({len(self.failed_stocks)}只)")
+
+
+# ==================== CLI ====================
+
+def main():
+    parser = argparse.ArgumentParser(description='盘后全市场日线数据增量更新')
+    parser.add_argument('--stock', '-s', type=str, help='更新单只股票')
+    parser.add_argument('--since', type=str, help='从指定日期开始补数据 (YYYY-MM-DD)')
+    parser.add_argument('--check', '-c', action='store_true', help='检查数据状态')
+    parser.add_argument('--failed', '-f', action='store_true', help='重试失败股票')
+    parser.add_argument('--batch', '-b', type=int, default=None, help='批量大小')
+    parser.add_argument('--data-dir', '-d', type=str, default=None, help='数据目录')
+    args = parser.parse_args()
+
+    updater = StockDataUpdater(data_dir=args.data_dir)
+
+    if args.check:
+        updater.check_status()
+    elif args.failed:
+        updater.retry_failed(batch_size=args.batch)
+    elif args.stock:
+        ok = updater.update_stock(args.stock)
+        status = "成功" if ok else "失败"
+        print(f"{args.stock}: {status}")
+    else:
+        updater.update_all(batch_size=args.batch)
+
+
+if __name__ == '__main__':
+    main()

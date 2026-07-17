@@ -945,6 +945,13 @@ SWING_TREND_SELL_BOOST = 1            # 下降趋势卖出阈值降低
 SWING_TREND_BUY_SUPPRESS = 2          # 下降趋势买入阈值提高
 
 
+# ======================= 盘后全市场数据下载 =======================
+STOCK_DATA_DIR = r"D:\quant\data"              # 股票数据根目录（与现有体系兼容）
+STOCK_DATA_BATCH_SIZE = 100                    # 每批下载股票数
+STOCK_DATA_RETRY_FAILED = True                 # 失败重试
+STOCK_DATA_SOURCE = "xtdata"                   # 数据源: xtdata / mootdx / auto
+
+
 def _apply_per_account_settings():
     """根据环境变量 QMT_ACCOUNT_ID，将全局配置覆写为账号专属值。
     单账号模式（不设置环境变量）时直接返回，行为与改动前完全一致。
