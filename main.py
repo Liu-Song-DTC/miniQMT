@@ -151,10 +151,10 @@ def _get_active_grid_session_count(position_manager=None):
 def _format_heartbeat_status_lines(active_grid_session_count):
     return (
         f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
-        f"自动操作:{_switch_text(config.ENABLE_AUTO_OPERATION)} | "
-        f"自动交易:{_switch_text(config.ENABLE_AUTO_TRADING)} | "
-        f"网格交易:{_switch_text(config.ENABLE_GRID_TRADING)}",
-        f"   活跃网格会话数:{active_grid_session_count}",
+        f"无人值守总开关:{_switch_text(config.ENABLE_AUTO_OPERATION)} | "
+        f"自动止盈:{_switch_text(config.ENABLE_AUTO_TRADING)}",
+        f"   自动网格:{_switch_text(config.ENABLE_GRID_TRADING)} | "
+        f"活跃网格会话数:{active_grid_session_count}",
     )
 
 def _spinner_worker():

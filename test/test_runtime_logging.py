@@ -46,11 +46,10 @@ class TestRuntimeLogging(unittest.TestCase):
         status_line, grid_line = main._format_heartbeat_status_lines(2)
 
         self.assertIn("模式:实盘", status_line)
-        self.assertIn("自动操作:开启", status_line)
-        self.assertIn("自动交易:关闭", status_line)
-        self.assertIn("网格交易:开启", status_line)
-        self.assertNotIn("活跃网格会话数", status_line)
-        self.assertEqual("   活跃网格会话数:2", grid_line)
+        self.assertIn("无人值守总开关:开启", status_line)
+        self.assertIn("自动止盈:关闭", status_line)
+        self.assertNotIn("自动网格", status_line)
+        self.assertEqual("   自动网格:开启 | 活跃网格会话数:2", grid_line)
 
     def test_active_grid_session_count_only_counts_enabled_active_sessions(self):
         grid_manager = types.SimpleNamespace(
