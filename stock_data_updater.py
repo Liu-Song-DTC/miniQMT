@@ -130,17 +130,47 @@ class StockDataUpdater:
             logger.warning("xtquant.xtdata 不可用，将尝试 mootdx 降级")
             return False
 
+    def _xt_code(self, stock_code: str) -> str:
+        """转换为 xtdata 标准代码格式"""
+        if '.' not in stock_code:
+            return f"{stock_code}.{'SH' if stock_code.startswith(('6','9','5')) else 'SZ'}"
+        return stock_code
+
+    def _batch_download_xtdata(self, stock_codes: list, since_date: str):
+        """批量下载日线数据到本地缓存（必须先下载，get_market_data 才能读到）"""
+        if not self._init_xtdata():
+            return
+
+        xt_codes = [self._xt_code(c) for c in stock_codes]
+        start = since_date.replace('-', '')
+        try:
+            self.xtdata.download_history_data(
+                stock_list=xt_codes,
+                period='1d',
+                start_time=start,
+                end_time='',
+                incrementally=True,
+            )
+        except Exception as e:
+            logger.warning(f"批量下载异常: {str(e)[:100]}")
+
     def _download_via_xtdata(self, stock_code: str, since_date: str):
-        """通过 xtdata 下载日线数据。返回 (status, df) — status: 'ok'/'empty'/'error'"""
+        """下载并返回日线数据。返回 (status, df)"""
         if not self._init_xtdata():
             return 'error', None
 
         try:
-            # xtdata 需要完整代码格式
-            if '.' not in stock_code:
-                xt_code = f"{stock_code}.{'SH' if stock_code.startswith(('6','9','5')) else 'SZ'}"
-            else:
-                xt_code = stock_code
+            xt_code = self._xt_code(stock_code)
+            start = since_date.replace('-', '')
+
+            # 先下载到本地缓存（必须，否则 get_market_data 返回空）
+            try:
+                self.xtdata.download_history_data(
+                    stock_list=[xt_code], period='1d',
+                    start_time=start, end_time='', incrementally=True,
+                )
+            except Exception:
+                pass  # 失败也不影响，可能缓存已有数据
 
             data = self.xtdata.get_market_data(
                 field_list=['open', 'high', 'low', 'close', 'volume', 'amount', 'preClose'],
@@ -342,7 +372,7 @@ class StockDataUpdater:
     def update_all(self, stock_list: Optional[List[str]] = None,
                    since_date: Optional[str] = None,
                    batch_size: Optional[int] = None):
-        """批量更新全部股票"""
+        """批量更新全部股票（先批量下载到缓存，再逐只读取写入）"""
         import config
         if stock_list is None:
             stock_list = self.get_stock_list()
@@ -357,8 +387,29 @@ class StockDataUpdater:
         self._first_error_logged = False
         start_time = time.time()
 
+        # 预计算每只股票的 since_date
+        stock_since = {}
+        today = datetime.now().strftime('%Y-%m-%d')
+        for code in stock_list:
+            last = self.read_last_date(code)
+            if last:
+                since = (datetime.strptime(last, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+            else:
+                since = '2015-01-01'
+            stock_since[code] = since
+
         for i in range(0, total, batch_size):
             batch = stock_list[i:i + batch_size]
+
+            # 阶段1：批量下载到本地缓存
+            active = [(c, stock_since[c]) for c in batch if stock_since[c] < today]
+            if active:
+                min_since = min(s for _, s in active)
+                logger.debug(f"批量下载 {len(active)} 只 (since={min_since})")
+                self._batch_download_xtdata([c for c, _ in active], min_since)
+                time.sleep(1)
+
+            # 阶段2：逐只从缓存读取并写入
             for stock_code in batch:
                 try:
                     self.update_stock(stock_code)
@@ -378,9 +429,6 @@ class StockDataUpdater:
                         f"更新={success} 跳过={self.stats['skipped']} "
                         f"失败={len(self.failed_stocks)} "
                         f"速率={rate:.1f}只/s ETA={eta:.0f}s")
-
-            if i + batch_size < total:
-                time.sleep(1)
 
         self._save_metadata()
         self._save_failed()
