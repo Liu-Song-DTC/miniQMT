@@ -372,27 +372,50 @@ class SwingTradingManager:
         return score, details
 
     def _get_fused_signal(self, stock_code, indicators: dict) -> Optional[dict]:
-        """多指标融合，返回信号 None 或 {'direction': 'buy'/'sell', 'confidence': score, ...}"""
+        """多指标融合 + 趋势自适应，返回信号或 None"""
         if indicators is None:
             return None
 
         buy_score, buy_details = self._score_buy_signal(indicators)
         sell_score, sell_details = self._score_sell_signal(indicators)
 
-        logger.debug(f"[{stock_code}] 融合打分: 买入={buy_score}/8 {buy_details}, 卖出={sell_score}/8 {sell_details}")
+        # 趋势识别
+        slope = indicators.get('trend_slope', 0)
+        threshold = config.SWING_TREND_SLOPE_THRESHOLD
+        if slope > threshold:
+            trend = 'up'
+        elif slope < -threshold:
+            trend = 'down'
+        else:
+            trend = 'range'
 
-        if buy_score >= config.SWING_BUY_SIGNAL_THRESHOLD:
+        # 趋势自适应阈值
+        if trend == 'up':
+            effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD - config.SWING_TREND_BUY_BOOST
+            effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD + config.SWING_TREND_SELL_SUPPRESS
+        elif trend == 'down':
+            effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD + config.SWING_TREND_BUY_SUPPRESS
+            effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD - config.SWING_TREND_SELL_BOOST
+        else:
+            effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD
+            effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD
+
+        logger.debug(f"[{stock_code}] 趋势={trend}(斜率={slope:.6f}) "
+                     f"买入={buy_score}/{effective_buy_threshold} {buy_details}, "
+                     f"卖出={sell_score}/{effective_sell_threshold} {sell_details}")
+
+        if buy_score >= effective_buy_threshold:
             return {
                 'direction': 'buy',
                 'confidence': buy_score,
-                'details': buy_details,
+                'details': buy_details + [f'趋势:{trend}'],
                 'price': indicators['close'],
             }
-        elif sell_score >= config.SWING_SELL_SIGNAL_THRESHOLD:
+        elif sell_score >= effective_sell_threshold:
             return {
                 'direction': 'sell',
                 'confidence': sell_score,
-                'details': sell_details,
+                'details': sell_details + [f'趋势:{trend}'],
                 'price': indicators['close'],
             }
 

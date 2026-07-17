@@ -299,6 +299,19 @@ class IndicatorCalculator:
             kdj_k, kdj_d, kdj_j = KDJ(close, high, low,
                                       N=config.SWING_KDJ_PERIOD, M1=3, M2=3)
 
+            # 趋势斜率（线性回归，识别震荡/趋势市）
+            trend_slope = 0.0
+            trend_period = getattr(config, 'SWING_TREND_PERIOD', 20)
+            if len(close) >= trend_period:
+                recent = close[-trend_period:]
+                n = len(recent)
+                x = np.arange(n)
+                slope = (n * np.sum(x * recent) - np.sum(x) * np.sum(recent)) / \
+                        (n * np.sum(x ** 2) - np.sum(x) ** 2)
+                avg_price = np.mean(recent)
+                if avg_price > 0:
+                    trend_slope = float(slope / avg_price)
+
             return {
                 'close': float(close[-1]),
                 'boll_upper': float(upper[-1]),
@@ -317,6 +330,7 @@ class IndicatorCalculator:
                 'prev_rsi': float(rsi_series[-2]) if len(rsi_series) >= 2 else 50.0,
                 'prev_kdj_k': float(kdj_k[-2]) if len(kdj_k) >= 2 else 50.0,
                 'prev_kdj_d': float(kdj_d[-2]) if len(kdj_d) >= 2 else 50.0,
+                'trend_slope': trend_slope,
                 'timestamp': datetime.now().isoformat(),
             }
 
