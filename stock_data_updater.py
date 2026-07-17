@@ -79,27 +79,38 @@ class StockDataUpdater:
                   'change_amount', 'turnover_rate']
 
     def read_last_date(self, stock_code: str) -> Optional[str]:
-        """读取CSV最后一行的日期"""
+        """读取CSV最后一行的日期，校验格式后返回 YYYY-MM-DD 或 None"""
         csv_path = self._code_to_csv_path(stock_code)
         if not csv_path.exists():
             return None
         try:
             df = pd.read_csv(csv_path)
-            if df.empty:
+            if df.empty or 'datetime' not in df.columns:
                 return None
             last = str(df['datetime'].iloc[-1]).strip()
-            return last if last else None
+            return last if self._is_valid_date(last) else None
         except Exception:
-            # 文件可能损坏，尝试逐行读取
             try:
                 with open(csv_path, 'r') as f:
                     lines = f.readlines()
                     if len(lines) < 2:
                         return None
                     last_line = lines[-1].strip()
-                    return last_line.split(',')[0] if last_line else None
+                    val = last_line.split(',')[0] if last_line else ''
+                    return val if self._is_valid_date(val) else None
             except Exception:
                 return None
+
+    @staticmethod
+    def _is_valid_date(val: str) -> bool:
+        """校验是否为 YYYY-MM-DD 格式的合法日期"""
+        if not val or len(val) != 10 or val[4] != '-' or val[7] != '-':
+            return False
+        try:
+            datetime.strptime(val, '%Y-%m-%d')
+            return True
+        except ValueError:
+            return False
 
     def append_to_csv(self, stock_code: str, new_rows: list):
         """追加新数据行到CSV文件"""
