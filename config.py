@@ -921,6 +921,20 @@ SWING_FAILURE_COOLDOWN = 300         # 连续失败后跳过时间（秒）
 # 摆动交易股票池（空列表=自动使用持仓中已有底仓的股票）
 SWING_STOCK_POOL = []
 
+# -------- 上证指数大盘过滤器 --------
+SWING_INDEX_ENABLED = True            # 是否启用大盘指数过滤
+SWING_INDEX_CODE = "000001.SH"        # 参考大盘指数代码
+SWING_INDEX_MA_PERIOD = 20            # 大盘5分钟均线周期
+# 急跌禁买/禁全交易
+SWING_INDEX_BAN_BUY_DROP = -0.015     # 大盘跌超1.5%禁止买入
+SWING_INDEX_BAN_ALL_DROP = -0.025     # 大盘跌超2.5%禁止全部交易
+# 急涨禁卖
+SWING_INDEX_BAN_SELL_RISE = 0.015     # 大盘涨超1.5%禁止卖出
+# 强弱修正
+SWING_INDEX_WEAK_THRESHOLD = 0.01     # 个股弱于大盘1%（同期涨幅差）降买入分
+SWING_INDEX_STRONG_THRESHOLD = 0.01   # 个股强于大盘1%（同期涨幅差）降卖出分
+SWING_INDEX_SCORE_ADJUST = 1          # 强弱修正每次调整的分数
+
 
 def _apply_per_account_settings():
     """根据环境变量 QMT_ACCOUNT_ID，将全局配置覆写为账号专属值。

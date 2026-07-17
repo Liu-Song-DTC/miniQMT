@@ -59,6 +59,7 @@ class SwingTradingManager:
 
         self.sessions: Dict[str, SwingSession] = {}
         self.indicator_cache: Dict[str, tuple[float, dict]] = {}
+        self.index_cache: tuple[float, dict] = (0, {})  # (timestamp, index_data)
         self.lock = threading.RLock()
 
         self.monitor_thread: Optional[threading.Thread] = None
@@ -397,6 +398,153 @@ class SwingTradingManager:
 
         return None
 
+    # ==================== 大盘指数过滤器 ====================
+
+    def _get_index_state(self) -> dict:
+        """获取上证指数日内状态（带60s缓存）"""
+        if not config.SWING_INDEX_ENABLED:
+            return {'available': False}
+
+        now = time.time()
+        cache_time, cache_data = self.index_cache
+        if cache_data and now - cache_time < config.SWING_INDICATOR_CACHE_TTL:
+            return cache_data
+
+        try:
+            from xtquant import xtdata
+            index_code = config.SWING_INDEX_CODE
+
+            # 获取日线前收
+            daily = xtdata.get_market_data(
+                field_list=['close'], stock_list=[index_code],
+                period='1d', count=2, dividend_type='front', fill_data=True,
+            )
+            if daily is None or daily['close'].empty or daily['close'].shape[0] < 1:
+                return {'available': False}
+            closes = daily['close'].iloc[:, 0].values
+            previous_close = float(closes[-1]) if len(closes) >= 1 else 0
+
+            # 获取5分钟线（用于MA20和日内涨跌）
+            k5 = xtdata.get_market_data(
+                field_list=['close'], stock_list=[index_code],
+                period='5m', count=config.SWING_INDEX_MA_PERIOD + 5,
+                dividend_type='front', fill_data=True,
+            )
+            if k5 is None or k5['close'].empty or k5['close'].shape[0] < 2:
+                return {'available': False}
+            k5_close = k5['close'].iloc[:, 0].values.astype(float)
+            current_price = float(k5_close[-1])
+            ma20 = float(k5_close[-min(len(k5_close), config.SWING_INDEX_MA_PERIOD):].mean())
+
+            # 日内涨跌 = (当前价 - 昨收) / 昨收
+            intraday_change = (current_price - previous_close) / previous_close if previous_close > 0 else 0
+
+            # 获取个股级别的实时tick（如果可用）
+            full_tick = xtdata.get_full_tick([index_code])
+            if full_tick and index_code in full_tick:
+                tick = full_tick[index_code]
+                tick_price = getattr(tick, 'lastPrice', 0) or 0
+                if tick_price > 0:
+                    current_price = float(tick_price)
+                    intraday_change = (current_price - previous_close) / previous_close if previous_close > 0 else intraday_change
+
+            result = {
+                'available': True,
+                'current_price': current_price,
+                'previous_close': previous_close,
+                'intraday_change': intraday_change,
+                'ma20': ma20,
+                'above_ma20': current_price >= ma20,
+            }
+
+            with self.lock:
+                self.index_cache = (now, result)
+            return result
+
+        except Exception as e:
+            logger.debug(f"[INDEX] 获取指数数据失败: {str(e)}")
+            return {'available': False}
+
+    def _get_stock_intraday_change(self, stock_code) -> float:
+        """获取个股的日内涨跌幅（相对昨收）"""
+        try:
+            from xtquant import xtdata
+            daily = xtdata.get_market_data(
+                field_list=['close'], stock_list=[stock_code],
+                period='1d', count=2, dividend_type='front', fill_data=True,
+            )
+            if daily is None or daily['close'].empty or daily['close'].shape[0] < 1:
+                return 0
+            closes = daily['close'].iloc[:, 0].values
+            prev = float(closes[-1])
+            if prev <= 0:
+                return 0
+
+            tick = xtdata.get_full_tick([stock_code])
+            cur = 0
+            if tick and stock_code in tick:
+                cur = getattr(tick[stock_code], 'lastPrice', 0) or 0
+            if cur <= 0:
+                return 0
+            return (cur - prev) / prev
+        except Exception:
+            return 0
+
+    def _apply_index_filter(self, stock_code, signal: dict) -> Optional[dict]:
+        """将大盘指数状态应用于摆动信号，可能拦截或修正信号分数"""
+        index = self._get_index_state()
+        if not index.get('available'):
+            return signal  # 指数数据不可用，放行
+
+        direction = signal['direction']
+        intraday_change = index['intraday_change']
+
+        # 规则1: 大盘暴跌 >2.5%，禁止所有交易
+        if intraday_change <= config.SWING_INDEX_BAN_ALL_DROP:
+            logger.info(f"[INDEX] 大盘暴跌 {intraday_change*100:.1f}%，暂停全部摆动交易")
+            return None
+
+        if direction == 'buy':
+            # 规则2: 大盘急跌 >1.5%，禁止买入
+            if intraday_change <= config.SWING_INDEX_BAN_BUY_DROP:
+                logger.info(f"[INDEX] {stock_code} 大盘急跌 {intraday_change*100:.1f}%，暂停买入")
+                return None
+
+            # 规则3: 大盘在MA20下方，趋势偏空，禁止买入
+            if not index['above_ma20']:
+                logger.info(f"[INDEX] {stock_code} 大盘({index['current_price']:.1f})在MA20({index['ma20']:.1f})下方，禁止买入")
+                return None
+
+            # 规则4: 个股弱于大盘，降低买入分数
+            stock_change = self._get_stock_intraday_change(stock_code)
+            diff = stock_change - intraday_change
+            if diff < -config.SWING_INDEX_WEAK_THRESHOLD:
+                signal = dict(signal)
+                signal['confidence'] -= config.SWING_INDEX_SCORE_ADJUST
+                signal['details'] = list(signal.get('details', [])) + [f'弱于大盘({diff*100:.1f}%)']
+                if signal['confidence'] < config.SWING_BUY_SIGNAL_THRESHOLD:
+                    logger.info(f"[INDEX] {stock_code} 买入信号被降分至{signal['confidence']}（弱于大盘{diff*100:.1f}%），低于阈值")
+                    return None
+
+        elif direction == 'sell':
+            # 规则5: 大盘急涨 >1.5%，禁止卖出
+            if intraday_change >= config.SWING_INDEX_BAN_SELL_RISE:
+                logger.info(f"[INDEX] {stock_code} 大盘急涨 {intraday_change*100:.1f}%，禁止卖出")
+                return None
+
+            # 规则6: 个股强于大盘，降低卖出分数（持仓待涨）
+            stock_change = self._get_stock_intraday_change(stock_code)
+            diff = stock_change - intraday_change
+            if diff > config.SWING_INDEX_STRONG_THRESHOLD:
+                signal = dict(signal)
+                signal['confidence'] -= config.SWING_INDEX_SCORE_ADJUST
+                signal['details'] = list(signal.get('details', [])) + [f'强于大盘({diff*100:.1f}%)']
+                if signal['confidence'] < config.SWING_SELL_SIGNAL_THRESHOLD:
+                    logger.info(f"[INDEX] {stock_code} 卖出信号被降分至{signal['confidence']}（强于大盘{diff*100:.1f}%），低于阈值")
+                    return None
+
+        return signal
+
     # ==================== 风控校验 ====================
 
     def _can_buy(self, stock_code) -> tuple[bool, str]:
@@ -684,7 +832,9 @@ class SwingTradingManager:
 
                     signal = self._get_fused_signal(stock_code, indicators)
                     if signal:
-                        self.execute_swing_signal(stock_code, signal)
+                        signal = self._apply_index_filter(stock_code, signal)
+                        if signal:
+                            self.execute_swing_signal(stock_code, signal)
 
                     time.sleep(1)
 
