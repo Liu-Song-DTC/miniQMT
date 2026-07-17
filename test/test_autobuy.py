@@ -13,6 +13,11 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
+os.environ.setdefault(
+    "MINIQMT_AUTOBUY_LOG_PATH",
+    os.path.join(os.path.dirname(__file__), "logs", "miniqmt_autobuy_test.log"),
+)
+
 from autobuy.config import AutoBuyConfig, load_config
 from autobuy.pool import normalize_code, read_candidates, recent_trading_dates, to_xt_code
 from autobuy.filter import MARKET_INDEX_CODES, MarketIndexFilter, BuyConditionFilter

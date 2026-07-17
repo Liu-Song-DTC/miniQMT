@@ -20,6 +20,16 @@ from easy_qmt_trader import easy_qmt_trader
 logger = get_logger("position_manager")
 
 
+def _price_changed_at_display_precision(old_price, new_price, digits=2):
+    """按日志展示精度判断价格是否变化，避免 8.79 -> 8.79 这类噪音。"""
+    if old_price is None:
+        return True
+    try:
+        return round(float(old_price), digits) != round(float(new_price), digits)
+    except (TypeError, ValueError):
+        return old_price != new_price
+
+
 def _create_qmt_trader():
     """
     工厂函数：根据配置返回交易接口对象。
@@ -1611,9 +1621,9 @@ class PositionManager:
                     # 获取数据库中的旧成本价
                     old_db_cost_price = float(result_row['cost_price']) if result_row['cost_price'] is not None else None
 
-                    # 如果最高价发生变化，强制重新计算止损价格
-                    if old_db_highest_price != final_highest_price:
-                        logger.info(f"{stock_code} 最高价变化：{old_db_highest_price:.2f} -> {final_highest_price:.2f}，重新计算止损价格")
+                    # 如果最高价发生可见变化，强制重新计算止损价格
+                    if _price_changed_at_display_precision(old_db_highest_price, final_highest_price):
+                        logger.info(f"{stock_code} 最高价变化：{_fmt_optional_price(old_db_highest_price)} -> {_fmt_optional_price(final_highest_price)}，重新计算止损价格")
                         calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 

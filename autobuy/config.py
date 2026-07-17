@@ -18,7 +18,10 @@ from logging.handlers import RotatingFileHandler
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(MODULE_DIR)
 DEFAULT_CFG_PATH = os.path.join(MODULE_DIR, "miniqmt_autobuy.cfg")
-LOG_PATH = os.path.join(PROJECT_ROOT, "logs", "miniqmt_autobuy.log")
+LOG_PATH = os.environ.get(
+    "MINIQMT_AUTOBUY_LOG_PATH",
+    os.path.join(PROJECT_ROOT, "logs", "miniqmt_autobuy.log"),
+)
 
 # SQL 标识符白名单(防注入): 表名/字段名只允许字母数字下划线
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
