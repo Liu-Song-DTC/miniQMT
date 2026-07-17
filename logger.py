@@ -58,6 +58,8 @@ MODULE_NAME_MAP = {
     'grid_trading_manager': 'gtm',
     'grid_database': 'gdb',
     'main': 'main',
+    'easy_qmt_trader': 'qt',
+    'maintenance': 'mt',
 }
 
 # ============ 颜色化Formatter ============
