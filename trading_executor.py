@@ -57,7 +57,9 @@ class TradingExecutor:
         # 调试模式标志 - 新增
         self.debug_mode = True
 
-    def init_simulation_account(self, balance=1000000):
+    def init_simulation_account(self, balance=None):
+        if balance is None:
+            balance = getattr(config, 'SIMULATION_BALANCE', 300000)
         """初始化模拟账户资金，在测试中使用"""
         try:
             # 检查是否为模拟交易模式

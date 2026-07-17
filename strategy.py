@@ -2,6 +2,9 @@
 交易策略模块，实现具体的交易策略逻辑
 优化版本：统一止盈止损逻辑，优先处理止损，支持模拟交易
 """
+import os
+import json
+import shutil
 import time
 import threading
 from datetime import datetime
@@ -55,6 +58,9 @@ class TradingStrategy:
 
         # 添加这行 - 重试计数器
         self.retry_counts = {}
+
+        # 选股系统下发的止盈止损价
+        self.price_guards = {}  # {stock_code: {"stop_loss": float, "take_profit": float}}
     
     # ===== 旧的网格交易方法已废弃，请使用GridTradingManager =====
     # init_grid_trading(), execute_grid_trading()
@@ -154,8 +160,8 @@ class TradingStrategy:
                 # 模拟买入
                 success = self.position_manager.simulate_buy_position(
                     stock_code=stock_code,
-                    volume=volume,
-                    price=current_price
+                    buy_volume=volume,
+                    buy_price=current_price
                 )
                 
                 if success:
@@ -261,8 +267,8 @@ class TradingStrategy:
                 # 模拟交易：调用优化后的模拟卖出方法
                 success = self.position_manager.simulate_sell_position(
                     stock_code=stock_code,
-                    sell_volume=volume,
-                    sell_price=current_price,
+                    sell_sell_volume=volume,
+                    sell_sell_price=current_price,
                     sell_type='full'
                 )
                 
@@ -326,8 +332,8 @@ class TradingStrategy:
                 # 模拟交易：调用优化后的模拟卖出方法
                 success = self.position_manager.simulate_sell_position(
                     stock_code=stock_code,
-                    sell_volume=sell_volume,
-                    sell_price=current_price,
+                    sell_sell_volume=sell_volume,
+                    sell_sell_price=current_price,
                     sell_type='partial'
                 )
                 
@@ -398,8 +404,8 @@ class TradingStrategy:
                 # 模拟交易：直接调整持仓
                 success = self.position_manager.simulate_sell_position(
                     stock_code=stock_code,
-                    sell_volume=volume,
-                    sell_price=current_price,
+                    sell_sell_volume=volume,
+                    sell_sell_price=current_price,
                     sell_type='full'
                 )
                 
@@ -552,16 +558,33 @@ class TradingStrategy:
                     buy_amount = config.POSITION_UNIT
                     logger.info(f"执行 {stock_code} 首次建仓，金额: {buy_amount:.2f}")
                 
-                # 执行买入：与动态止盈/止损一致走对手价模式，买单由执行器取卖三价
-                order_id = self.trading_executor.buy_stock(stock_code, amount=buy_amount, price_type=5)
-                
-                if order_id:
-                    # 记录已处理信号
-                    self.processed_signals.add(signal_key)
+                # 模拟交易模式
+                if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                    latest_quote = self.data_manager.get_latest_data(stock_code)
+                    current_price = float(latest_quote.get('lastPrice', 0)) if latest_quote else 0
+                    if current_price <= 0:
+                        logger.warning(f"{stock_code} 无法获取当前价格，跳过模拟买入")
+                        return False
+                    volume = int(buy_amount // current_price / 100) * 100
+                    if volume < 100:
+                        logger.warning(f"{stock_code} 计算的买入数量过小: {volume}，跳过")
+                        return False
+                    success = self.position_manager.simulate_buy_position(
+                        stock_code=stock_code,
+                        buy_volume=volume,
+                        buy_price=current_price
+                    )
+                    if success:
+                        self.processed_signals.add(signal_key)
+                        logger.info(f"[模拟交易] {stock_code} 技术指标买入执行完成，数量: {volume}")
+                        return True
+                else:
+                    # 实盘交易：与动态止盈/止损一致走对手价模式，买单由执行器取卖三价
+                    order_id = self.trading_executor.buy_stock(stock_code, amount=buy_amount, price_type=5)
 
-                    # 旧的网格交易初始化已废弃，请使用GridTradingManager
-
-                    return True
+                    if order_id:
+                        self.processed_signals.add(signal_key)
+                        return True
             
             return False
             
@@ -600,15 +623,34 @@ class TradingStrategy:
                     return False
                 
                 volume = position['volume']
-                
-                # 执行卖出
-                logger.info(f"执行 {stock_code} 卖出策略，数量: {volume}")
-                order_id = self.trading_executor.sell_stock(stock_code, volume, price_type=0)
-                
-                if order_id:
-                    # 记录已处理信号
-                    self.processed_signals.add(signal_key)
-                    return True
+                current_price = position.get('current_price', 0)
+
+                # 模拟交易模式
+                if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                    if current_price <= 0:
+                        logger.warning(f"{stock_code} 无法获取当前价格，跳过模拟卖出")
+                        return False
+                    sell_volume = min(int(volume / 100) * 100, int(position.get('available', volume)))
+                    if sell_volume < 100:
+                        sell_volume = int(volume)
+                    success = self.position_manager.simulate_sell_position(
+                        stock_code=stock_code,
+                        sell_sell_volume=sell_volume,
+                        sell_sell_price=current_price,
+                        sell_type='full'
+                    )
+                    if success:
+                        self.processed_signals.add(signal_key)
+                        logger.info(f"[模拟交易] {stock_code} 技术指标卖出执行完成，数量: {sell_volume}")
+                        return True
+                else:
+                    # 执行实盘卖出
+                    logger.info(f"执行 {stock_code} 卖出策略，数量: {volume}")
+                    order_id = self.trading_executor.sell_stock(stock_code, volume, price_type=0)
+
+                    if order_id:
+                        self.processed_signals.add(signal_key)
+                        return True
             
             return False
             
@@ -644,55 +686,52 @@ class TradingStrategy:
             priority_mode = priority_info['priority']
             scenario = priority_info['scenario']
 
+            # 一次查询复用，避免多次遍历 latest_signals 字典
+            pending_signals = self.position_manager.get_pending_signals() if config.ENABLE_DYNAMIC_STOP_PROFIT else {}
+
             # 场景A: 补仓优先 (补仓阈值 < 止损阈值, 例如补仓5% < 止损7%)
             # 执行顺序: 止盈 → 补仓 → 止损
             if priority_mode == 'add_position_first':
                 logger.debug(f"【场景{scenario}】使用补仓优先策略: 止盈 → 补仓 → 止损")
 
                 # 1️⃣ 止盈信号处理（第一优先级）
-                if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                    pending_signals = self.position_manager.get_pending_signals()
-                    if stock_code in pending_signals:
-                        signal_data = pending_signals[stock_code]
-                        signal_type = signal_data['type']
-                        signal_info = signal_data['info']
+                if stock_code in pending_signals:
+                    signal_data = pending_signals[stock_code]
+                    signal_type = signal_data['type']
+                    signal_info = signal_data['info']
 
-                        if signal_type in ['take_profit_half', 'take_profit_full']:
-                            logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
-                            retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                    if signal_type in ['take_profit_half', 'take_profit_full']:
+                        logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
+                        retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
 
-                            # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                            with self.signal_lock:
-                                retry_count = self.retry_counts.get(retry_key, 0)
-
-                                if retry_count >= 3:
-                                    logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    return
-
-                            if config.ENABLE_AUTO_TRADING:
-                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if result == self.SIGNAL_EXECUTION_SUCCESS:
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                                    with self.signal_lock:
-                                        self.retry_counts.pop(retry_key, None)
-                                    logger.info(f"{stock_code} {signal_type}信号执行成功")
-                                    return  # 止盈执行成功后直接返回
-                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
-                                    return
-                                else:
-                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                                    with self.signal_lock:
-                                        self.retry_counts[retry_key] = retry_count + 1
-                                        if retry_count + 1 >= 3:
-                                            logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
-                                            self.position_manager.mark_signal_processed(stock_code)
-                                            self.retry_counts.pop(retry_key, None)
-                            else:
-                                logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
+                        with self.signal_lock:
+                            retry_count = self.retry_counts.get(retry_key, 0)
+                            if retry_count >= 3:
+                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
                                 self.position_manager.mark_signal_processed(stock_code)
+                                return
+
+                        if config.ENABLE_AUTO_TRADING:
+                            result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                            if result == self.SIGNAL_EXECUTION_SUCCESS:
+                                self.position_manager.mark_signal_processed(stock_code)
+                                with self.signal_lock:
+                                    self.retry_counts.pop(retry_key, None)
+                                logger.info(f"{stock_code} {signal_type}信号执行成功")
+                                return
+                            elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
+                                return
+                            else:
+                                with self.signal_lock:
+                                    self.retry_counts[retry_key] = retry_count + 1
+                                    if retry_count + 1 >= 3:
+                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                        self.position_manager.mark_signal_processed(stock_code)
+                                        self.retry_counts.pop(retry_key, None)
+                        else:
+                            logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
+                            self.position_manager.mark_signal_processed(stock_code)
 
                 # 2️⃣ 补仓信号处理（第二优先级）
                 add_position_signal, add_position_info = self.position_manager.check_add_position_signal(stock_code)
@@ -702,37 +741,35 @@ class TradingStrategy:
                     if config.ENABLE_AUTO_TRADING:
                         if self.execute_add_position_strategy(stock_code, add_position_info):
                             logger.info(f"{stock_code} 执行补仓策略成功")
-                            return  # 补仓执行后直接返回
+                            return
                     else:
                         logger.info(f"{stock_code} 检测到补仓信号，但自动交易已关闭")
 
                 # 3️⃣ 止损信号处理（第三优先级 - 仅在仓位已满时触发）
-                if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                    pending_signals = self.position_manager.get_pending_signals()
-                    if stock_code in pending_signals:
-                        signal_data = pending_signals[stock_code]
-                        signal_type = signal_data['type']
-                        signal_info = signal_data['info']
+                if stock_code in pending_signals:
+                    signal_data = pending_signals[stock_code]
+                    signal_type = signal_data['type']
+                    signal_info = signal_data['info']
 
-                        if signal_type == 'stop_loss':
-                            logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(仓位已满)")
+                    if signal_type == 'stop_loss':
+                        logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(仓位已满)")
 
-                            if config.ENABLE_AUTO_TRADING:
-                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if result == self.SIGNAL_EXECUTION_SUCCESS:
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    logger.warning(f"✅ {stock_code} 止损信号执行成功")
-                                    return
-                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
-                                    return
-                                else:
-                                    logger.error(f"❌ {stock_code} 止损信号执行失败")
-                                    return
-                            else:
-                                logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                        if config.ENABLE_AUTO_TRADING:
+                            result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                            if result == self.SIGNAL_EXECUTION_SUCCESS:
                                 self.position_manager.mark_signal_processed(stock_code)
+                                logger.warning(f"✅ {stock_code} 止损信号执行成功")
                                 return
+                            elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
+                                return
+                            else:
+                                logger.error(f"❌ {stock_code} 止损信号执行失败")
+                                return
+                        else:
+                            logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                            self.position_manager.mark_signal_processed(stock_code)
+                            return
 
             # 场景B: 止损优先 (止损阈值 <= 补仓阈值, 例如止损5% <= 补仓7%)
             # 执行顺序: 止损 → 止盈 → (永不补仓)
@@ -740,90 +777,85 @@ class TradingStrategy:
                 logger.debug(f"【场景{scenario}】使用止损优先策略: 止损 → 止盈 → (永不补仓)")
 
                 # 1️⃣ 止损信号处理（最高优先级）
-                if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                    pending_signals = self.position_manager.get_pending_signals()
-                    if stock_code in pending_signals:
-                        signal_data = pending_signals[stock_code]
-                        signal_type = signal_data['type']
-                        signal_info = signal_data['info']
+                if stock_code in pending_signals:
+                    signal_data = pending_signals[stock_code]
+                    signal_type = signal_data['type']
+                    signal_info = signal_data['info']
 
-                        if signal_type == 'stop_loss':
-                            logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(最高优先级)，立即处理")
+                    if signal_type == 'stop_loss':
+                        logger.warning(f"⚠️  【场景{scenario}】{stock_code} 检测到止损信号(最高优先级)，立即处理")
 
-                            if config.ENABLE_AUTO_TRADING:
-                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if result == self.SIGNAL_EXECUTION_SUCCESS:
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    logger.warning(f"✅ {stock_code} 止损信号执行成功，跳过其他策略")
-                                    return  # 止损执行后直接返回
-                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
-                                    return
-                                else:
-                                    logger.error(f"❌ {stock_code} 止损信号执行失败")
-                                    return
+                        if config.ENABLE_AUTO_TRADING:
+                            result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                            if result == self.SIGNAL_EXECUTION_SUCCESS:
+                                self.position_manager.mark_signal_processed(stock_code)
+                                logger.warning(f"✅ {stock_code} 止损信号执行成功，跳过其他策略")
+                                return
+                            elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                logger.warning(f"{stock_code} 止损信号被委托/同步状态阻断，保留信号等待自动重试")
+                                return
                             else:
-                                logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                                logger.error(f"❌ {stock_code} 止损信号执行失败")
+                                return
+                        else:
+                            logger.warning(f"{stock_code} 检测到止损信号，但自动交易已关闭")
+                            self.position_manager.mark_signal_processed(stock_code)
+                            return
+
+                # 2️⃣ 止盈信号处理（第二优先级）
+                if stock_code in pending_signals:
+                    signal_data = pending_signals[stock_code]
+                    signal_type = signal_data['type']
+                    signal_info = signal_data['info']
+
+                    if signal_type in ['take_profit_half', 'take_profit_full']:
+                        logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
+                        retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+
+                        with self.signal_lock:
+                            retry_count = self.retry_counts.get(retry_key, 0)
+                            if retry_count >= 3:
+                                logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
                                 self.position_manager.mark_signal_processed(stock_code)
                                 return
 
-                # 2️⃣ 止盈信号处理（第二优先级）
-                if config.ENABLE_DYNAMIC_STOP_PROFIT:
-                    pending_signals = self.position_manager.get_pending_signals()
-                    if stock_code in pending_signals:
-                        signal_data = pending_signals[stock_code]
-                        signal_type = signal_data['type']
-                        signal_info = signal_data['info']
-
-                        if signal_type in ['take_profit_half', 'take_profit_full']:
-                            logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
-                            retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-
-                            # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                            with self.signal_lock:
-                                retry_count = self.retry_counts.get(retry_key, 0)
-
-                                if retry_count >= 3:
-                                    logger.warning(f"{stock_code} {signal_type}信号重试次数已达上限")
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    return
-
-                            if config.ENABLE_AUTO_TRADING:
-                                result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
-                                if result == self.SIGNAL_EXECUTION_SUCCESS:
-                                    self.position_manager.mark_signal_processed(stock_code)
-                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                                    with self.signal_lock:
-                                        self.retry_counts.pop(retry_key, None)
-                                    logger.info(f"{stock_code} {signal_type}信号执行成功")
-                                    return
-                                elif result == self.SIGNAL_EXECUTION_BLOCKED:
-                                    logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
-                                    return
-                                else:
-                                    # 🔒 线程安全：使用锁保护retry_counts访问 (修复C1)
-                                    with self.signal_lock:
-                                        self.retry_counts[retry_key] = retry_count + 1
-                                        if retry_count + 1 >= 3:
-                                            logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
-                                            self.position_manager.mark_signal_processed(stock_code)
-                                            self.retry_counts.pop(retry_key, None)
-                            else:
-                                logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
+                        if config.ENABLE_AUTO_TRADING:
+                            result = self.execute_trading_signal_direct(stock_code, signal_type, signal_info)
+                            if result == self.SIGNAL_EXECUTION_SUCCESS:
                                 self.position_manager.mark_signal_processed(stock_code)
+                                with self.signal_lock:
+                                    self.retry_counts.pop(retry_key, None)
+                                logger.info(f"{stock_code} {signal_type}信号执行成功")
+                                return
+                            elif result == self.SIGNAL_EXECUTION_BLOCKED:
+                                logger.warning(f"{stock_code} {signal_type}信号被委托/同步状态阻断，保留信号等待自动重试")
+                                return
+                            else:
+                                with self.signal_lock:
+                                    self.retry_counts[retry_key] = retry_count + 1
+                                    if retry_count + 1 >= 3:
+                                        logger.error(f"🚨 {stock_code} {signal_type}信号重试{retry_count + 1}次仍失败，立即清除")
+                                        self.position_manager.mark_signal_processed(stock_code)
+                                        self.retry_counts.pop(retry_key, None)
+                        else:
+                            logger.info(f"{stock_code} 检测到{signal_type}信号，但自动交易已关闭")
+                            self.position_manager.mark_signal_processed(stock_code)
 
                 # 3️⃣ 补仓信号 - 在场景B中永远不会触发
                 # check_add_position_signal() 已在 position_manager 中拒绝补仓
                 logger.debug(f"【场景{scenario}】补仓功能已禁用(止损优先策略)")
 
-            # 4. 清理历史遗留网格信号。网格交易已由 GridTradingManager 独立检测和执行。
-            pending_signals = self.position_manager.get_pending_signals()
+            # 4. 清理历史遗留网格信号和摆动信号。
+            # 网格交易已由 GridTradingManager，摆动交易已由 SwingTradingManager 独立检测和执行。
             if stock_code in pending_signals:
                 signal_type = pending_signals[stock_code]['type']
                 if signal_type in ['grid_buy', 'grid_sell', 'grid_exit']:
                     logger.info(f"[GRID-STRATEGY] {stock_code} 清理遗留网格信号: {signal_type}")
                     self.position_manager.mark_signal_processed(stock_code)
                     return
+                if signal_type in ['swing_buy', 'swing_sell']:
+                    logger.debug(f"[SWING-STRATEGY] {stock_code} 清理遗留摆动信号: {signal_type}")
+                    self.position_manager.mark_signal_processed(stock_code)
 
             # 5. 检查技术指标买入信号
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
@@ -863,10 +895,295 @@ class TradingStrategy:
                         logger.info(f"{stock_code} 检测到卖出信号，但自动交易已关闭")
             
             logger.debug(f"{stock_code} 没有检测到交易信号")
-            
+
         except Exception as e:
             logger.error(f"检查 {stock_code} 的交易策略时出错: {str(e)}")
-    
+
+    # ========== 选股系统订单文件处理 ==========
+    def process_order_file(self):
+        """读取选股系统输出的 trade_orders.json，执行建仓/调仓/清仓指令。
+
+        文件不存在或已过期（非当日）时跳过。处理成功后归档到 data/orders_history/。
+        仅 ENVIRONMENT_AUTO_TRADING 开启时执行，模拟/实盘均走各自的买卖路径。
+        """
+        if not getattr(config, 'ENABLE_ORDER_FILE', False):
+            return
+
+        order_path = getattr(config, 'ORDER_FILE_PATH', None)
+        if not order_path:
+            logger.warning("[订单文件] ORDER_FILE_PATH 未配置")
+            return
+        if not os.path.exists(order_path):
+            return
+
+        logger.info(f"[订单文件] 检测到文件: {order_path}")
+
+        archive_dir = getattr(config, 'ORDER_ARCHIVE_DIR', None)
+        today_str = datetime.now().strftime('%Y%m%d')
+
+        try:
+            with open(order_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"[订单文件] 读取失败: {e}")
+            return
+
+        orders = data.get('orders', []) if isinstance(data, dict) else []
+        if not orders:
+            return
+
+        file_date = data.get('date', '') if isinstance(data, dict) else ''
+        logger.info(f"[订单文件] 开始处理 {len(orders)} 条选股订单 (文件日期={file_date})")
+
+        processed = 0
+        for i, order in enumerate(orders):
+            stock_code = order.get('stock_code', '')
+            action = order.get('action', '')
+            amount = order.get('amount', 0)
+            stop_loss_price = order.get('stop_loss_price')
+            take_profit_price = order.get('take_profit_price')
+            note = order.get('note', '')
+
+            if not stock_code or not action:
+                logger.warning(f"[订单文件] 第{i+1}条订单缺少 stock_code/action，跳过")
+                continue
+
+            try:
+                if action == 'open':
+                    processed += int(self._exec_order_open(stock_code, amount, note, stop_loss_price, take_profit_price))
+                elif action == 'adjust':
+                    processed += int(self._exec_order_adjust(stock_code, amount, note, stop_loss_price, take_profit_price))
+                elif action == 'close':
+                    processed += int(self._exec_order_close(stock_code, note))
+                else:
+                    logger.warning(f"[订单文件] {stock_code} 未知 action={action}，跳过")
+            except Exception as e:
+                logger.error(f"[订单文件] {stock_code} {action} 执行异常: {e}")
+
+        # 归档已处理的文件
+        if archive_dir:
+            try:
+                os.makedirs(archive_dir, exist_ok=True)
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                archive_name = f"trade_orders_{today_str}_{ts}.json"
+                shutil.move(order_path, os.path.join(archive_dir, archive_name))
+                logger.info(f"[订单文件] 已归档 → {archive_name} (成功{processed}/{len(orders)}条)")
+            except OSError as e:
+                logger.error(f"[订单文件] 归档失败: {e}")
+                # 归档失败仍删除原文件，避免重复处理
+                try:
+                    os.remove(order_path)
+                except OSError:
+                    pass
+
+    def _get_fallback_price(self, stock_code):
+        """获取模拟交易可用价格：实时行情 → 历史收盘价 → DB缓存"""
+        quote = self.data_manager.get_latest_data(stock_code)
+        if quote:
+            price = float(quote.get('lastPrice', 0))
+            if price > 0:
+                return price
+        # xtdata 历史收盘价 fallback
+        try:
+            from xtquant import xtdata
+            import datetime as _dt
+            yesterday = (_dt.datetime.now() - _dt.timedelta(days=1)).strftime('%Y%m%d')
+            hist = xtdata.get_market_data(
+                field_list=['close'], stock_list=[stock_code],
+                period='1d', start_time=yesterday, count=1
+            )
+            if hist is not None and 'close' in hist:
+                vals = hist['close'].values
+                if len(vals) > 0:
+                    price = float(vals[-1][0]) if hasattr(vals[-1], '__getitem__') else float(vals[-1])
+                    if price > 0:
+                        return price
+        except Exception:
+            pass
+        # DB历史数据 fallback
+        try:
+            df = self.data_manager.get_history_data_from_db(stock_code)
+            if not df.empty:
+                price = float(df.iloc[-1]['close'])
+                if price > 0:
+                    return price
+        except Exception:
+            pass
+        return 0.0
+
+    # ========== 选股系统止盈止损价守卫 ==========
+
+    def _set_price_guard(self, stock_code, stop_loss_price, take_profit_price):
+        """记录选股系统下发的止盈止损价"""
+        guard = {}
+        if stop_loss_price is not None:
+            try:
+                guard['stop_loss'] = float(stop_loss_price)
+            except (TypeError, ValueError):
+                pass
+        if take_profit_price is not None:
+            try:
+                guard['take_profit'] = float(take_profit_price)
+            except (TypeError, ValueError):
+                pass
+        if guard:
+            self.price_guards[stock_code] = guard
+            logger.info(f"[价格守卫] {stock_code} 止损={guard.get('stop_loss')} 止盈={guard.get('take_profit')}")
+
+    def _check_price_guards(self, stock_code):
+        """检查当前价是否触及选股系统设定的止盈止损价。触发时直接清仓。"""
+        guard = self.price_guards.get(stock_code)
+        if not guard:
+            return
+
+        position = self.position_manager.get_position(stock_code)
+        if not position or int(position.get('volume', 0)) == 0:
+            return
+
+        current_price = position.get('current_price', 0)
+        if current_price <= 0:
+            return
+
+        stop_loss_price = guard.get('stop_loss')
+        take_profit_price = guard.get('take_profit')
+
+        if stop_loss_price and current_price <= stop_loss_price:
+            logger.warning(f"[价格守卫] {stock_code} 触发止损: 当前={current_price:.2f} <= 止损={stop_loss_price:.2f}")
+            self._exec_order_close(stock_code, f'选股系统止损触发 @ {current_price:.2f}')
+        elif take_profit_price and current_price >= take_profit_price:
+            logger.warning(f"[价格守卫] {stock_code} 触发止盈: 当前={current_price:.2f} >= 止盈={take_profit_price:.2f}")
+            self._exec_order_close(stock_code, f'选股系统止盈触发 @ {current_price:.2f}')
+
+    def _exec_order_open(self, stock_code, amount, note, stop_loss_price=None, take_profit_price=None):
+        """执行建仓订单：首次买入指定金额，同时记录选股系统的止盈止损价"""
+        position = self.position_manager.get_position(stock_code)
+        if position and int(position.get('volume', 0)) > 0:
+            logger.info(f"[订单文件] {stock_code} 已有持仓，跳过建仓 (open)，请使用 adjust 调仓")
+            return False
+
+        if amount <= 0:
+            logger.warning(f"[订单文件] {stock_code} 建仓金额无效: {amount}")
+            return False
+
+        self._set_price_guard(stock_code, stop_loss_price, take_profit_price)
+        logger.info(f"[订单文件] {stock_code} 建仓: amount={amount} {note}")
+
+        if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+            current_price = self._get_fallback_price(stock_code)
+            if current_price <= 0:
+                logger.warning(f"[订单文件] {stock_code} 无法获取价格，跳过建仓")
+                return False
+            volume = int(amount // current_price / 100) * 100
+            if volume < 100:
+                logger.warning(f"[订单文件] {stock_code} 建仓数量过小: {volume}")
+                return False
+            success = self.position_manager.simulate_buy_position(
+                stock_code=stock_code, buy_volume=volume, buy_price=current_price
+            )
+            if success:
+                logger.info(f"[订单文件] {stock_code} 模拟建仓成功: {volume}股 @ {current_price:.2f}")
+            return success
+        else:
+            order_id = self.trading_executor.buy_stock(stock_code, amount=amount, price_type=5, strategy='order_file')
+            if order_id:
+                logger.info(f"[订单文件] {stock_code} 实盘建仓委托: {order_id}")
+                return True
+            return False
+
+    def _exec_order_adjust(self, stock_code, target_amount, note, stop_loss_price=None, take_profit_price=None):
+        """执行调仓订单：买卖差额使持仓市值接近目标金额，同时更新止盈止损价"""
+        position = self.position_manager.get_position(stock_code)
+        if not position or int(position.get('volume', 0)) == 0:
+            # 无持仓 → 等同于建仓
+            logger.info(f"[订单文件] {stock_code} 无持仓，调仓转建仓: target={target_amount}")
+            return self._exec_order_open(stock_code, target_amount, note + ' (调仓转建仓)',
+                                         stop_loss_price, take_profit_price)
+
+        self._set_price_guard(stock_code, stop_loss_price, take_profit_price)
+
+        current_value = float(position.get('market_value', 0))
+        diff = target_amount - current_value
+        if abs(diff) < 500:  # 差额小于500元不操作
+            logger.debug(f"[订单文件] {stock_code} 调仓差额过小: diff={diff:.0f}，跳过")
+            return False
+
+        logger.info(f"[订单文件] {stock_code} 调仓: 当前={current_value:.0f} 目标={target_amount} diff={diff:+.0f} {note}")
+
+        if diff > 0:
+            # 加仓
+            if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                current_price = self._get_fallback_price(stock_code)
+                if current_price <= 0:
+                    return False
+                volume = int(diff // current_price / 100) * 100
+                if volume < 100:
+                    return False
+                return self.position_manager.simulate_buy_position(
+                    stock_code=stock_code, buy_volume=volume, buy_price=current_price
+                )
+            else:
+                order_id = self.trading_executor.buy_stock(stock_code, amount=diff, price_type=5, strategy='order_file')
+                return order_id is not None
+        else:
+            # 减仓
+            sell_amount = abs(diff)
+            if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+                current_price = self._get_fallback_price(stock_code)
+                if current_price <= 0:
+                    return False
+                volume = int(sell_amount // current_price / 100) * 100
+                available = int(position.get('available', 0))
+                volume = min(volume, available)
+                if volume < 100:
+                    return False
+                return self.position_manager.simulate_sell_position(
+                    stock_code=stock_code, sell_sell_volume=volume, sell_sell_price=current_price, sell_type='partial'
+                )
+            else:
+                # 实盘减仓：先算出股数
+                current_price = self._get_fallback_price(stock_code)
+                if current_price <= 0:
+                    return False
+                volume = int(sell_amount // current_price / 100) * 100
+                volume = min(volume, int(position.get('available', 0)))
+                if volume < 100:
+                    return False
+                order_id = self.trading_executor.sell_stock(stock_code, volume, price_type=5, strategy='order_file')
+                return order_id is not None
+
+    def _exec_order_close(self, stock_code, note):
+        """执行清仓订单：全部卖出，同时清除止盈止损价"""
+        self.price_guards.pop(stock_code, None)
+        position = self.position_manager.get_position(stock_code)
+        if not position or int(position.get('volume', 0)) == 0:
+            logger.info(f"[订单文件] {stock_code} 无持仓，跳过清仓")
+            return False
+
+        available = int(position.get('available', 0))
+        if available <= 0:
+            logger.warning(f"[订单文件] {stock_code} 可卖数量为0，跳过清仓")
+            return False
+
+        logger.info(f"[订单文件] {stock_code} 清仓: available={available} {note}")
+
+        if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
+            latest_quote = self.data_manager.get_latest_data(stock_code)
+            current_price = float(latest_quote.get('lastPrice', 0)) if latest_quote else 0
+            if current_price <= 0:
+                return False
+            volume = min(int(available / 100) * 100, available)
+            if volume < 100:
+                volume = available
+            return self.position_manager.simulate_sell_position(
+                stock_code=stock_code, sell_sell_volume=volume, sell_sell_price=current_price, sell_type='full'
+            )
+        else:
+            order_id = self.trading_executor.sell_stock(stock_code, available, price_type=5, strategy='order_file')
+            if order_id:
+                logger.info(f"[订单文件] {stock_code} 实盘清仓委托: {order_id}")
+                return True
+            return False
+
     def start_strategy_thread(self):
         """启动策略运行线程 - 始终启动，不依赖ENABLE_AUTO_TRADING"""
         if self.strategy_thread and self.strategy_thread.is_alive():
@@ -888,20 +1205,28 @@ class TradingStrategy:
     
     def _strategy_loop(self):
         """策略运行循环 - 修复版本: 优先处理所有持仓股票"""
+        logger.info("[策略循环] 已启动")
         while not self.stop_flag:
             try:
-                # 判断是否在交易时间
+                # 选股系统订单文件处理（不受交易时间限制）
+                self.process_order_file()
+
+                # 选股系统止盈止损价守卫（不受交易时间限制）
+                positions = self.position_manager.get_all_positions()
+                if positions is not None and not positions.empty:
+                    for stock_code in positions['stock_code'].tolist():
+                        self._check_price_guards(stock_code)
+
+                # 交易时间内的策略检查
                 if config.is_trade_time():
                     if config.VERBOSE_LOOP_LOGGING or config.DEBUG:
                         logger.debug("开始执行交易策略")
 
-                    # 🔑 修复: 优先处理所有持仓股票 (止盈止损信号优先级最高)
                     positions = self.position_manager.get_all_positions()
                     processed_stocks = set()
 
                     if positions is not None and not positions.empty:
                         logger.debug(f"处理 {len(positions)} 只持仓股票的信号")
-                        # ✅ 修复: 直接提取股票代码列表进行迭代
                         stock_codes = positions['stock_code'].tolist()
                         for stock_code in stock_codes:
                             self.check_and_execute_strategies(stock_code)

@@ -51,7 +51,7 @@ _load_dotenv_fallback()
 # 调试开关
 DEBUG = False
 DEBUG_SIMU_STOCK_DATA= False
-LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL = "DEBUG"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FILE = "qmt_trading.log"
 LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 5  # 保留5个备份文件
@@ -85,13 +85,18 @@ def _env_bool(name: str, default: bool) -> bool:
 # 模拟交易模式开关：环境变量 ENABLE_SIMULATION_MODE 优先（启动器控制），
 # 否则用源码默认 True（避免开发者本地误连实盘）。
 ENABLE_SIMULATION_MODE = _env_bool("ENABLE_SIMULATION_MODE", True)
-ENABLE_AUTO_OPERATION = False   # 全局自动操作总开关：关闭时自动策略不产生新交易动作
-ENABLE_AUTO_TRADING = False     # 非网格自动策略执行开关（不影响网格交易）
+ENABLE_AUTO_OPERATION = True    # 全局自动操作总开关：关闭时自动策略不产生新交易动作
+ENABLE_AUTO_TRADING = True      # 非网格自动策略执行开关（不影响网格交易）
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作
 ENABLE_ALLOW_SELL = True        # 是否允许卖出操作
 
+# 选股系统订单文件（外部选股系统通过JSON文件驱动建仓/调仓/清仓）
+ENABLE_ORDER_FILE = True            # 是否启用订单文件监听
+ORDER_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "trade_orders.json")
+ORDER_ARCHIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "orders_history")
+
 # 策略功能模块开关(独立控制)
-ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关（信号检测）
+ENABLE_DYNAMIC_STOP_PROFIT = False  # 止盈止损功能开关（已由摆动交易接管高抛低吸）
 # ENABLE_GRID_TRADING 已移至第470行的新网格交易配置区域
 
 
@@ -370,7 +375,7 @@ QMT_RPC_ALLOW_ORDER = _env_bool("QMT_RPC_ALLOW_ORDER", False)
 POSITION_UNIT = 35000  # 每次买入金额
 MAX_POSITION_VALUE = 70000  # 单只股票最大持仓金额
 MAX_TOTAL_POSITION_RATIO = 0.95  # 最大总持仓比例（占总资金）
-SIMULATION_BALANCE = 1000000 # 模拟持仓
+SIMULATION_BALANCE = 300000 # 模拟持仓
 
 # ======================= 补仓策略配置（止盈止损策略专用） =======================
 # 说明：此配置仅用于动态止盈止损策略的补仓功能，与网格交易策略无关
@@ -854,6 +859,67 @@ def get_grid_default_config(position_market_value: float) -> dict:
         'stop_loss': GRID_STOP_LOSS_RATIO,
         'duration_days': GRID_DEFAULT_DURATION_DAYS
     }
+
+
+# ======================= 盘中高抛低吸策略配置 =======================
+# 多指标融合（布林带+RSI+MACD+成交量）日内摆动交易
+
+ENABLE_SWING_TRADING = True          # 盘中高抛低吸总开关
+
+# 日内K线数据
+SWING_KLINE_PERIOD = "5m"            # K线周期（5分钟）
+SWING_INTRADAY_BARS = 120            # 获取K线条数（120根5分线=10小时，覆盖全天）
+
+# 多指标融合信号阈值（满分8分，>=阈值触发信号）
+SWING_BUY_SIGNAL_THRESHOLD = 3       # 买入信号分数阈值
+SWING_SELL_SIGNAL_THRESHOLD = 3      # 卖出信号分数阈值
+
+# 布林带参数
+SWING_BOLL_PERIOD = 20               # 布林带周期
+SWING_BOLL_STD = 1.8                 # 标准差倍数
+
+# RSI参数
+SWING_RSI_PERIOD = 14                # RSI周期
+SWING_RSI_OVERSOLD = 30              # 超卖阈值
+SWING_RSI_OVERBOUGHT = 70            # 超买阈值
+
+# MACD参数（日内使用较日线更快的参数）
+SWING_MACD_FAST = 6                  # 快线周期
+SWING_MACD_SLOW = 13                 # 慢线周期
+SWING_MACD_SIGNAL = 5                # 信号线周期
+
+# KDJ参数
+SWING_KDJ_PERIOD = 9                 # KDJ周期
+SWING_KDJ_K_OVERBOUGHT = 80          # K值超买
+SWING_KDJ_K_OVERSOLD = 20            # K值超卖
+
+# 成交量确认
+SWING_VOLUME_MA_PERIOD = 20          # 成交量均线周期
+SWING_VOLUME_SPIKE_RATIO = 1.5       # 放量倍数阈值
+
+# 仓位管理
+SWING_BUY_VOLUME_RATIO = 0.3         # 单次买入占底仓的比例
+SWING_SELL_VOLUME_RATIO = 0.3        # 单次卖出占底仓的比例
+SWING_MIN_BUY_VOLUME = 100           # 最小买入股数
+SWING_MIN_SELL_VOLUME = 100          # 最小卖出股数
+
+# 风控限制
+SWING_MAX_DAILY_BUYS = 3             # 每日最大买入次数
+SWING_MAX_DAILY_SELLS = 3            # 每日最大卖出次数
+SWING_BUY_COOLDOWN = 120             # 买入冷却时间（秒）
+SWING_SELL_COOLDOWN = 120            # 卖出冷却时间（秒）
+SWING_MAX_DAILY_BUY_VOLUME_RATIO = 0.5   # 每日最大买入量占底仓比例
+SWING_MAX_DAILY_SELL_VOLUME_RATIO = 0.5  # 每日最大卖出量占底仓比例
+SWING_MIN_PROFIT_RATIO = 0.002       # 最小盈利要求（0.2%，扣除手续费后）
+
+# 监控与控制
+SWING_MONITOR_INTERVAL = 15          # 摆动交易监控循环间隔（秒）
+SWING_INDICATOR_CACHE_TTL = 60       # 指标缓存有效期（秒）
+SWING_CONSECUTIVE_FAILURE_LIMIT = 3  # 连续失败多少次后跳过该股票
+SWING_FAILURE_COOLDOWN = 300         # 连续失败后跳过时间（秒）
+
+# 摆动交易股票池（空列表=自动使用持仓中已有底仓的股票）
+SWING_STOCK_POOL = []
 
 
 def _apply_per_account_settings():

@@ -72,8 +72,13 @@ def _mootdx_daily_bars(code, freq, offset, adjustflag):
     mootdx_freq = {'d': 9, 'w': 5, 'm': 6}[freq]
     if code.startswith(("sh.", "sz.")):
         code = code.split('.')[1]
-    client = Quotes.factory('std')  # 使用标准版通达信数据
-    return client.bars(symbol=code, frequency=mootdx_freq, offset=offset, adjust=adjustflag)
+    try:
+        client = Quotes.factory('std')  # 使用标准版通达信数据
+        return client.bars(symbol=code, frequency=mootdx_freq, offset=offset, adjust=adjustflag)
+    except (ValueError, ConnectionError, OSError) as e:
+        from logger import logger
+        logger.warning(f"mootdx 获取 {code} 日线数据失败: {e}")
+        return None
 
 
 def _baostock_daily_bars(code, fields, start_date, end_date, freq, adjustflag):
@@ -152,9 +157,14 @@ def getStockData(code,
     elif freq>=0 and freq<=11:
         if code.startswith(("sh.", "sz.")):
             code = code.split('.')[1]
-        client = Quotes.factory('std')  # 使用标准版通达信数据
-        df = client.bars(symbol=code, frequency=freq, offset=offset, adjust=adjustflag) 
-        return df
+        try:
+            client = Quotes.factory('std')  # 使用标准版通达信数据
+            df = client.bars(symbol=code, frequency=freq, offset=offset, adjust=adjustflag)
+            return df
+        except (ValueError, ConnectionError, OSError) as e:
+            from logger import logger
+            logger.warning(f"mootdx 获取 {code} K线数据失败: {e}")
+            return None
     else:
         return None
 

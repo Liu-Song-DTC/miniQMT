@@ -11,6 +11,11 @@ import config
 from logger import get_logger
 from data_manager import get_data_manager
 
+try:
+    from xtquant import xtdata
+except ImportError:
+    xtdata = None
+
 # 获取logger
 logger = get_logger("indicator_calculator")
 
@@ -220,7 +225,105 @@ class IndicatorCalculator:
         except Exception as e:
             logger.error(f"保存指标数据时出错: {str(e)}")
             self.conn.rollback()
-    
+
+    def calculate_intraday_indicators(self, stock_code, period=None, count=None):
+        """
+        计算日内技术指标（盘中高抛低吸用）
+
+        参数:
+        stock_code (str): 股票代码
+        period (str): K线周期，默认取 config.SWING_KLINE_PERIOD
+        count (int): 获取的K线条数，默认取 config.SWING_INTRADAY_BARS
+
+        返回:
+        dict: {close, boll_upper, boll_mid, boll_lower, rsi, macd, macd_signal,
+               macd_hist, volume, volume_ma, prev_macd_hist, prev_rsi, timestamp}
+        失败时返回 None
+        """
+        if period is None:
+            period = config.SWING_KLINE_PERIOD
+        if count is None:
+            count = config.SWING_INTRADAY_BARS
+
+        try:
+            if xtdata is None:
+                logger.warning(f"[{stock_code}] xtquant.xtdata 不可用，跳过日内指标计算")
+                return None
+
+            data = xtdata.get_market_data(
+                field_list=['open', 'high', 'low', 'close', 'volume'],
+                stock_list=[stock_code],
+                period=period,
+                count=count,
+                dividend_type='front',
+                fill_data=True,
+            )
+
+            if data is None or len(data) == 0:
+                logger.debug(f"[{stock_code}] 无日内K线数据")
+                return None
+
+            if data['close'].empty or data['close'].shape[0] == 0:
+                logger.debug(f"[{stock_code}] 日内K线数据为空(盘后无新数据)")
+                return None
+
+            close = np.array(data['close'].iloc[:, 0].values, dtype=float)
+            high = np.array(data['high'].iloc[:, 0].values, dtype=float)
+            low = np.array(data['low'].iloc[:, 0].values, dtype=float)
+            volume = np.array(data['volume'].iloc[:, 0].values, dtype=float)
+
+            if len(close) < max(config.SWING_BOLL_PERIOD, config.SWING_RSI_PERIOD,
+                                config.SWING_MACD_SLOW + config.SWING_MACD_SIGNAL,
+                                config.SWING_KDJ_PERIOD + 3):
+                logger.debug(f"[{stock_code}] K线数据不足({len(close)}条)，跳过日内指标计算")
+                return None
+
+            # 布林带
+            upper, mid, lower = BOLL(close, N=config.SWING_BOLL_PERIOD, P=config.SWING_BOLL_STD)
+
+            # RSI
+            rsi_series = RSI(close, N=config.SWING_RSI_PERIOD)
+
+            # MACD
+            dif, dea, hist = MACD(
+                close,
+                SHORT=config.SWING_MACD_FAST,
+                LONG=config.SWING_MACD_SLOW,
+                M=config.SWING_MACD_SIGNAL,
+            )
+
+            # 成交量均线
+            vol_ma = MA(volume, N=config.SWING_VOLUME_MA_PERIOD)
+
+            # KDJ
+            kdj_k, kdj_d, kdj_j = KDJ(close, high, low,
+                                      N=config.SWING_KDJ_PERIOD, M1=3, M2=3)
+
+            return {
+                'close': float(close[-1]),
+                'boll_upper': float(upper[-1]),
+                'boll_mid': float(mid[-1]),
+                'boll_lower': float(lower[-1]),
+                'rsi': float(rsi_series[-1]),
+                'macd': float(dif[-1]),
+                'macd_signal': float(dea[-1]),
+                'macd_hist': float(hist[-1]),
+                'volume': float(volume[-1]),
+                'volume_ma': float(vol_ma[-1]),
+                'kdj_k': float(kdj_k[-1]),
+                'kdj_d': float(kdj_d[-1]),
+                'kdj_j': float(kdj_j[-1]),
+                'prev_macd_hist': float(hist[-2]) if len(hist) >= 2 else 0.0,
+                'prev_rsi': float(rsi_series[-2]) if len(rsi_series) >= 2 else 50.0,
+                'prev_kdj_k': float(kdj_k[-2]) if len(kdj_k) >= 2 else 50.0,
+                'prev_kdj_d': float(kdj_d[-2]) if len(kdj_d) >= 2 else 50.0,
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f"[{stock_code}] 计算日内指标时出错: {str(e)}")
+            return None
+
     def get_latest_indicators(self, stock_code):
         """
         获取最新的指标数据

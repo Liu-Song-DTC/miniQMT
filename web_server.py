@@ -2995,6 +2995,113 @@ def get_single_grid_checkbox_state(stock_code):
 
 # ======================= 网格交易API端点结束 =======================
 
+# ======================= 摆动交易API端点 =======================
+
+@app.route('/api/swing/status', methods=['GET'])
+def get_swing_status():
+    """获取摆动交易状态"""
+    try:
+        position_manager = get_position_manager_instance()
+        swing_mgr = getattr(position_manager, 'swing_manager', None)
+        if not swing_mgr:
+            return jsonify({'enabled': False, 'sessions': []})
+        stock_code = request.args.get('stock_code')
+        data = swing_mgr.get_swing_status(stock_code)
+        return jsonify({'enabled': True, 'sessions': data if isinstance(data, list) else [data] if data else []})
+    except Exception as e:
+        logger.error(f"获取摆动交易状态失败: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/swing/config', methods=['GET'])
+def get_swing_config():
+    """获取摆动交易配置"""
+    try:
+        return jsonify({
+            'enabled': config.ENABLE_SWING_TRADING,
+            'kline_period': config.SWING_KLINE_PERIOD,
+            'intraday_bars': config.SWING_INTRADAY_BARS,
+            'buy_threshold': config.SWING_BUY_SIGNAL_THRESHOLD,
+            'sell_threshold': config.SWING_SELL_SIGNAL_THRESHOLD,
+            'boll_period': config.SWING_BOLL_PERIOD,
+            'boll_std': config.SWING_BOLL_STD,
+            'rsi_period': config.SWING_RSI_PERIOD,
+            'rsi_oversold': config.SWING_RSI_OVERSOLD,
+            'rsi_overbought': config.SWING_RSI_OVERBOUGHT,
+            'macd_fast': config.SWING_MACD_FAST,
+            'macd_slow': config.SWING_MACD_SLOW,
+            'macd_signal': config.SWING_MACD_SIGNAL,
+            'volume_spike_ratio': config.SWING_VOLUME_SPIKE_RATIO,
+            'buy_volume_ratio': config.SWING_BUY_VOLUME_RATIO,
+            'sell_volume_ratio': config.SWING_SELL_VOLUME_RATIO,
+            'max_daily_buys': config.SWING_MAX_DAILY_BUYS,
+            'max_daily_sells': config.SWING_MAX_DAILY_SELLS,
+            'buy_cooldown': config.SWING_BUY_COOLDOWN,
+            'sell_cooldown': config.SWING_SELL_COOLDOWN,
+            'min_profit_ratio': config.SWING_MIN_PROFIT_RATIO,
+            'monitor_interval': config.SWING_MONITOR_INTERVAL,
+        })
+    except Exception as e:
+        logger.error(f"获取摆动交易配置失败: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/swing/trades', methods=['GET'])
+def get_swing_trades():
+    """获取摆动交易成交记录"""
+    try:
+        position_manager = get_position_manager_instance()
+        swing_mgr = getattr(position_manager, 'swing_manager', None)
+        if not swing_mgr:
+            return jsonify({'trades': []})
+        stock_code = request.args.get('stock_code')
+        trades = swing_mgr.get_recent_trades(stock_code)
+        return jsonify({'trades': trades})
+    except Exception as e:
+        logger.error(f"获取摆动交易记录失败: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/swing/enable', methods=['POST'])
+def enable_swing():
+    """启用单只股票的摆动交易"""
+    try:
+        data = request.get_json()
+        stock_code = data.get('stock_code', '') if data else ''
+        if not stock_code:
+            return jsonify({'error': '缺少 stock_code'}), 400
+        position_manager = get_position_manager_instance()
+        swing_mgr = getattr(position_manager, 'swing_manager', None)
+        if not swing_mgr:
+            return jsonify({'error': '摆动交易未启用'}), 400
+        ok = swing_mgr.enable_swing(stock_code)
+        return jsonify({'success': ok})
+    except Exception as e:
+        logger.error(f"启用摆动交易失败: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/swing/disable', methods=['POST'])
+def disable_swing():
+    """禁用单只股票的摆动交易"""
+    try:
+        data = request.get_json()
+        stock_code = data.get('stock_code', '') if data else ''
+        if not stock_code:
+            return jsonify({'error': '缺少 stock_code'}), 400
+        position_manager = get_position_manager_instance()
+        swing_mgr = getattr(position_manager, 'swing_manager', None)
+        if not swing_mgr:
+            return jsonify({'error': '摆动交易未启用'}), 400
+        ok = swing_mgr.disable_swing(stock_code)
+        return jsonify({'success': ok})
+    except Exception as e:
+        logger.error(f"禁用摆动交易失败: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ======================= 摆动交易API端点结束 =======================
+
 def shutdown_web_server():
     """关闭Web服务器并清理资源"""
     global stop_push_flag, api_executor, push_thread

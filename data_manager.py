@@ -982,11 +982,8 @@ class DataManager:
         if not xt_start_date:
             xt_start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d')
 
-        # ⚠️ 仅在 XtQuantManager 网关模式下用 xtdata 拉历史数据。
-        # 标准模式(ENABLE_XTQUANT_MANAGER=False)走 Mootdx：部分 QMT 客户端的
-        # xtdata.get_market_data_ex 会触发底层 BSON 断言 "u < 1000000"
-        # (bsonobj.cpp) 直接 abort 整个进程，且 try/except 与超时均无法拦截。
-        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False) and self.xt:
+        # xtdata 优先（QMT 客户端本地免费数据），失败后 fallback 到 Tushare/Mootdx
+        if self.xt:
             xt_df = self.download_history_xtdata(
                 stock_code,
                 period=xt_period,
@@ -1122,7 +1119,7 @@ class DataManager:
                 })
             else:
                 # 其他错误，记录并返回None
-                logger.error(f"下载 {stock_code} 的历史数据时出错: {str(e)}")
+                logger.warning(f"Mootdx 兜底下载 {stock_code} 历史数据失败: {str(e)}")
                 return None
 
 

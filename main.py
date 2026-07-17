@@ -23,6 +23,22 @@ for _i, _arg in enumerate(_argv):
 
 import config
 
+# ── 添加 QMT xtquant 到搜索路径 ──
+_qmt_base = getattr(config, 'QMT_PATH', '') or os.environ.get('QMT_PATH', '')
+if not _qmt_base:
+    import json as _json
+    _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'account_config.json')
+    try:
+        with open(_cfg_path, 'r', encoding='utf-8') as _f:
+            _qmt_base = _json.load(_f).get('qmt_path', '')
+    except Exception:
+        pass
+if _qmt_base:
+    _qmt_site = os.path.join(os.path.dirname(_qmt_base), 'bin.x64', 'Lib', 'site-packages')
+    if os.path.isdir(_qmt_site) and _qmt_site not in sys.path:
+        sys.path.append(_qmt_site)
+        print(f"[QMT] xtquant path added: {_qmt_site}")
+
 # ── 设置控制台窗口标题 + 写入 PID 文件（供 menu.bat / scripts/_launcher.py 跟踪进程）──
 def _setup_window_and_pid():
     _aid = os.environ.get('QMT_ACCOUNT_ID', '').strip()
@@ -421,6 +437,18 @@ def cleanup():
         logger.error(f"心跳日志停止失败:{str(e)[:30]}")
 
     # 第3步: 停止其他业务线程
+    # 优先停止摆动交易线程（在position thread之前）
+    if config.ENABLE_SWING_TRADING:
+        try:
+            from position_manager import get_position_manager
+            pm = get_position_manager()
+            swing_mgr = getattr(pm, 'swing_manager', None)
+            if swing_mgr:
+                logger.info("停止摆动交易管理器")
+                swing_mgr.stop()
+        except Exception as e:
+            logger.error(f"摆动交易管理器停止失败:{str(e)[:30]}")
+
     for thread_name, stop_func in threads:
         if thread_name == "web_thread":
             continue  # 已经停止
@@ -498,6 +526,21 @@ def main():
         else:
             logger.warning("网格交易功能未启用 (ENABLE_GRID_TRADING=False)")
 
+        # ============ 新增: 初始化摆动交易管理器 ============
+        if config.ENABLE_SWING_TRADING:
+            try:
+                from swing_trading_manager import SwingTradingManager
+                swing_manager = SwingTradingManager(
+                    position_manager=position_manager,
+                    trading_executor=trading_executor,
+                    data_manager=data_manager,
+                )
+                position_manager.swing_manager = swing_manager
+                logger.info("✓ 摆动交易管理器初始化完成")
+            except Exception as e:
+                logger.error(f"摆动交易管理器初始化失败: {str(e)}")
+                logger.info("系统继续运行(摆动交易功能不可用)")
+
         # 下载初始数据
         download_initial_data(data_manager)
 
@@ -515,6 +558,12 @@ def main():
         from premarket_sync import start_premarket_sync_scheduler
         start_premarket_sync_scheduler()
         logger.info("✓ 盘前同步调度器已启动")
+
+        # ============ 新增: 启动摆动交易监控线程 ============
+        if config.ENABLE_SWING_TRADING and hasattr(position_manager, 'swing_manager'):
+            swing_manager = position_manager.swing_manager
+            swing_manager.start()
+            logger.info("✓ 摆动交易监控线程已启动")
 
         # ============ 新增: 启动线程健康监控 ============
         if config.ENABLE_THREAD_MONITOR:
@@ -545,6 +594,15 @@ def main():
                 lambda: trading_strategy.strategy_thread,
                 trading_strategy.start_strategy_thread
             )
+
+            # 注册摆动交易线程
+            if config.ENABLE_SWING_TRADING and hasattr(position_manager, 'swing_manager'):
+                _swing_mgr = position_manager.swing_manager
+                thread_monitor.register_thread(
+                    "摆动交易线程",
+                    lambda: _swing_mgr.monitor_thread,
+                    _swing_mgr.start,
+                )
 
             # 启动监控
             thread_monitor.start()
