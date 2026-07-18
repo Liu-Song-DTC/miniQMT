@@ -90,6 +90,89 @@ heartbeat_thread = None  # 心跳日志线程
 _spinner_stop = threading.Event()
 _spinner_thread = None
 
+def _switch_text(enabled):
+    return "开启" if enabled else "关闭"
+
+
+def _get_existing_position_manager():
+    position_manager_module = sys.modules.get("position_manager")
+    return getattr(position_manager_module, "_instance", None)
+
+
+def _get_runtime_identity(position_manager=None):
+    """返回当前进程身份信息，清理阶段不得因取值失败影响退出。"""
+    try:
+        account_config = config.get_account_config()
+        account_id = os.environ.get("QMT_ACCOUNT_ID", "").strip() or account_config.get("account_id", "")
+    except Exception:
+        account_id = os.environ.get("QMT_ACCOUNT_ID", "").strip()
+
+    session_id = "N/A"
+    try:
+        pm = position_manager or _get_existing_position_manager()
+        qmt_trader = getattr(pm, "qmt_trader", None) if pm else None
+        qmt_config = getattr(qmt_trader, "config", None)
+        session_id = (
+            getattr(qmt_trader, "session_id", None)
+            or getattr(qmt_config, "session_id", None)
+            or "N/A"
+        )
+    except Exception:
+        session_id = "N/A"
+
+    return {
+        "pid": os.getpid(),
+        "account_id": account_id or "未配置",
+        "port": getattr(config, "WEB_SERVER_PORT", "N/A"),
+        "session_id": session_id,
+    }
+
+
+def _format_runtime_identity(identity=None):
+    identity = identity or _get_runtime_identity()
+    return (
+        f"pid={identity['pid']} "
+        f"account_id={identity['account_id']} "
+        f"port={identity['port']} "
+        f"session_id={identity['session_id']}"
+    )
+
+
+def _log_process_lifecycle(event, position_manager=None):
+    logger.info(f"进程生命周期: {event} {_format_runtime_identity(_get_runtime_identity(position_manager))}")
+
+
+def _get_active_grid_session_count(position_manager=None):
+    try:
+        pm = position_manager or _get_existing_position_manager()
+        grid_manager = getattr(pm, "grid_manager", None) if pm else None
+        if not grid_manager:
+            return 0
+
+        lock = getattr(grid_manager, "lock", None)
+        if lock:
+            with lock:
+                sessions = list((getattr(grid_manager, "sessions", {}) or {}).values())
+        else:
+            sessions = list((getattr(grid_manager, "sessions", {}) or {}).values())
+
+        return sum(
+            1 for session in sessions
+            if getattr(session, "status", None) == "active" and getattr(session, "enabled", True)
+        )
+    except Exception:
+        return "获取失败"
+
+
+def _format_heartbeat_status_lines(active_grid_session_count):
+    return (
+        f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
+        f"无人值守总开关:{_switch_text(config.ENABLE_AUTO_OPERATION)} | "
+        f"自动止盈:{_switch_text(config.ENABLE_AUTO_TRADING)}",
+        f"   自动网格:{_switch_text(config.ENABLE_GRID_TRADING)} | "
+        f"活跃网格会话数:{active_grid_session_count}",
+    )
+
 def _spinner_worker():
     """在终端同一行滚动显示 |/-\\ 旋转符号，表示程序正在运行。
     直接写 stdout，不进入日志文件；logger 输出的完整行会自然覆盖该符号。"""
@@ -245,6 +328,8 @@ def heartbeat_logger():
             else:
                 uptime_str = "未知"
 
+            position_manager = None
+
             # 获取持仓信息
             try:
                 position_manager = get_position_manager()
@@ -269,11 +354,12 @@ def heartbeat_logger():
             except Exception as e:
                 market_health_str = f"行情健康: 获取失败:{str(e)[:20]}"
 
+            active_grid_session_count = _get_active_grid_session_count(position_manager)
+
             logger.info("=" * 50)
             logger.info(f"💓 系统心跳 - 运行时长:{uptime_str}")
-            logger.info(f"   模式:{'模拟' if config.ENABLE_SIMULATION_MODE else '实盘'} | "
-                       f"自动交易:{'开启' if config.ENABLE_AUTO_TRADING else '关闭'} | "
-                       f"网格交易:{'开启' if config.ENABLE_GRID_TRADING else '关闭'}")
+            for status_line in _format_heartbeat_status_lines(active_grid_session_count):
+                logger.info(status_line)
             logger.info(f"   持仓数量:{position_count} | {asset_str}")
             logger.info(f"   {market_health_str}")
             logger.info("=" * 50)
@@ -409,7 +495,7 @@ def calculate_initial_indicators(indicator_calculator):
 
 def cleanup():
     """清理资源 - 优雅关闭版本"""
-    logger.info("清理资源")
+    _log_process_lifecycle("开始清理")
 
     # 第1步: 先停止Web服务器(避免在关闭数据库后仍有请求)
     for thread_name, stop_func in threads:
@@ -477,7 +563,7 @@ def cleanup():
     except Exception as e:
         logger.error(f"数据管理器关闭失败:{str(e)[:30]}")
 
-    logger.info("✓ 资源清理完成")
+    _log_process_lifecycle("清理完成")
 
 def main():
     """主函数"""
@@ -492,6 +578,7 @@ def main():
 
         # 初始化系统
         data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy = init_system()
+        _log_process_lifecycle("启动", position_manager)
 
         # 初始化网格交易管理器
         logger.info(f"检查网格交易配置: ENABLE_GRID_TRADING = {config.ENABLE_GRID_TRADING}")
