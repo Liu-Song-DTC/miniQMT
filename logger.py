@@ -36,12 +36,19 @@ except ImportError:
     Fore = _DummyFore()
     Style = _DummyStyle()
 
-# 创建日志目录
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+def _resolve_log_file_path(log_file_name):
+    """解析日志文件路径：裸文件名写入 logs/，带目录时按项目相对路径处理。"""
+    if not log_file_name:
+        log_file_name = config.LOG_FILE
+    if os.path.isabs(log_file_name):
+        return log_file_name
+    if os.path.dirname(log_file_name):
+        return log_file_name
+    return os.path.join('logs', log_file_name)
+
 
 # 日志文件路径
-log_file = os.path.join('logs', config.LOG_FILE)
+log_file = _resolve_log_file_path(os.environ.get("MINIQMT_LOG_FILE", config.LOG_FILE))
 
 # 模块名称映射(精简日志输出)
 MODULE_NAME_MAP = {
@@ -58,6 +65,8 @@ MODULE_NAME_MAP = {
     'grid_trading_manager': 'gtm',
     'grid_database': 'gdb',
     'main': 'main',
+    'easy_qmt_trader': 'qt',
+    'maintenance': 'mt',
 }
 
 # ============ 颜色化Formatter ============
@@ -100,14 +109,23 @@ class ColoredFormatter(logging.Formatter):
 log_formatter = logging.Formatter('%(asctime)s [%(levelname).1s] %(name)s - %(message)s')
 colored_formatter = ColoredFormatter('%(asctime)s [%(levelname).1s] %(name)s - %(message)s')
 
+def _create_file_handler(path):
+    log_dir = os.path.dirname(path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    handler = RotatingFileHandler(
+        path,
+        encoding='utf-8',  # 指定编码为 UTF-8
+        maxBytes=config.LOG_MAX_SIZE,
+        backupCount=config.LOG_BACKUP_COUNT
+    )
+    handler.setFormatter(log_formatter)
+    return handler
+
+
 # 创建日志处理器
-file_handler = RotatingFileHandler(
-    log_file,
-    encoding='utf-8',  # 指定编码为 UTF-8
-    maxBytes=config.LOG_MAX_SIZE, 
-    backupCount=config.LOG_BACKUP_COUNT
-)
-file_handler.setFormatter(log_formatter)
+file_handler = _create_file_handler(log_file)
+_file_handler_lock = threading.RLock()
 
 # 控制台处理器 - 添加错误处理,避免程序退出时的I/O错误
 class SafeStreamHandler(logging.StreamHandler):
@@ -185,6 +203,29 @@ logger.propagate = False
 # 设置调试模式下的详细日志
 if config.DEBUG:
     logger.setLevel(logging.DEBUG)
+
+def set_log_file(log_file_name=None):
+    """运行期切换主日志文件，用于测试日志与实盘日志隔离。"""
+    global file_handler, log_file
+    target_file = _resolve_log_file_path(log_file_name or config.LOG_FILE)
+
+    with _file_handler_lock:
+        if os.path.abspath(target_file) == os.path.abspath(log_file):
+            return target_file
+
+        new_handler = _create_file_handler(target_file)
+        logger.addHandler(new_handler)
+
+        old_handler = file_handler
+        if old_handler:
+            logger.removeHandler(old_handler)
+            old_handler.close()
+
+        file_handler = new_handler
+        log_file = target_file
+        if log_file_name:
+            config.LOG_FILE = log_file_name
+        return target_file
 
 def get_logger(name=None):
     """获取指定名称的logger,自动应用模块名称映射"""

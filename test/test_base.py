@@ -21,7 +21,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
-from logger import get_logger
+from logger import get_logger, set_log_file
 
 logger = get_logger("test_base")
 
@@ -52,6 +52,7 @@ class TestBase(unittest.TestCase):
         2. Set test mode configuration
         3. Initialize test database
         """
+        cls._setup_test_logging()
         logger.info(f"=== Setting up test class: {cls.__name__} ===")
 
         # Backup production database
@@ -83,6 +84,12 @@ class TestBase(unittest.TestCase):
         cls._cleanup_test_artifacts()
 
         logger.info(f"Test class {cls.__name__} teardown complete")
+
+    @classmethod
+    def _setup_test_logging(cls):
+        """Redirect test logs before the first test setup log is emitted."""
+        config.LOG_FILE = "test/logs/test.log"
+        set_log_file(config.LOG_FILE)
 
     def setUp(self):
         """Setup before each test method"""
@@ -148,6 +155,7 @@ class TestBase(unittest.TestCase):
 
         # Use test log file
         config.LOG_FILE = "test/logs/test.log"
+        set_log_file(config.LOG_FILE)
 
         # Set test simulation balance
         config.SIMULATION_BALANCE = 100000.0

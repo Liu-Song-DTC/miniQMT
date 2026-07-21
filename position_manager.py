@@ -20,6 +20,16 @@ from easy_qmt_trader import easy_qmt_trader
 logger = get_logger("position_manager")
 
 
+def _price_changed_at_display_precision(old_price, new_price, digits=2):
+    """按日志展示精度判断价格是否变化，避免 8.79 -> 8.79 这类噪音。"""
+    if old_price is None:
+        return True
+    try:
+        return round(float(old_price), digits) != round(float(new_price), digits)
+    except (TypeError, ValueError):
+        return old_price != new_price
+
+
 def _create_qmt_trader():
     """
     工厂函数：根据配置返回交易接口对象。
@@ -133,7 +143,7 @@ class PositionManager:
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
         # 🔒 C2修复：添加内存数据库连接线程安全锁
         self.memory_conn_lock = threading.Lock()
-        self.sync_lock = threading.RLock()  # 可重入锁（必须在使用前初始化）
+        self.sync_lock = threading.RLock()  # 可重入锁（必须在 _sync_real_positions_to_memory 使用前初始化）
         self._create_memory_table()
         self._sync_db_to_memory()
 
@@ -1746,9 +1756,9 @@ class PositionManager:
                     # 获取数据库中的旧成本价
                     old_db_cost_price = float(result_row['cost_price']) if result_row['cost_price'] is not None else None
 
-                    # 如果最高价发生变化，强制重新计算止损价格
-                    if old_db_highest_price != final_highest_price:
-                        logger.info(f"{stock_code} 最高价变化：{old_db_highest_price:.2f} -> {final_highest_price:.2f}，重新计算止损价格")
+                    # 如果最高价发生可见变化，强制重新计算止损价格
+                    if _price_changed_at_display_precision(old_db_highest_price, final_highest_price):
+                        logger.info(f"{stock_code} 最高价变化：{_fmt_optional_price(old_db_highest_price)} -> {_fmt_optional_price(final_highest_price)}，重新计算止损价格")
                         calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
@@ -3885,18 +3895,22 @@ class PositionManager:
             return pd.DataFrame()
 
     def get_pending_signals(self):
-        """获取待处理的信号 - 增加时效性检查，就地清理过期信号避免替换dict丢信号"""
+        """获取待处理的信号 - 增加时效性检查"""
         with self.signal_lock:
             current_time = config.now_cst()
-            expired = []
+            valid_signals = {}
+            
             for stock_code, signal_data in self.latest_signals.items():
                 signal_timestamp = signal_data.get('timestamp', current_time)
-                if (current_time - signal_timestamp).total_seconds() >= 300:
-                    expired.append(stock_code)
-            for stock_code in expired:
-                logger.debug(f"{stock_code} 信号已过期，自动清除")
-                self.latest_signals.pop(stock_code, None)
-            return dict(self.latest_signals)
+                # 信号有效期5分钟
+                if (current_time - signal_timestamp).total_seconds() < 300:
+                    valid_signals[stock_code] = signal_data
+                else:
+                    logger.debug(f"{stock_code} 信号已过期，自动清除")
+            
+            # 更新有效信号
+            self.latest_signals = valid_signals
+            return dict(valid_signals)
     
     def mark_signal_processed(self, stock_code):
         """标记信号已处理 - 增加状态跟踪"""
@@ -4273,6 +4287,13 @@ class PositionManager:
         try:
             order_status = getattr(order, 'order_status', None)
             stock_code = str(getattr(order, 'stock_code', '') or '')[:6]
+            order_id = self._field_any(
+                order,
+                ['order_id', 'm_strOrderID', '订单编号', 'order_sysid', 'm_strOrderSysID', '系统订单号']
+            )
+            if stock_code and order_status == 54:
+                self._confirm_canceled_order(stock_code, order_id, "撤单回报")
+
             if stock_code and order_status not in [48, 49, 50, 51, 52, 55]:
                 self._request_immediate_position_refresh(stock_code, f"委托终态({order_status})")
 
@@ -4316,7 +4337,8 @@ class PositionManager:
                     'submit_time': config.now_cst(),
                     'signal_type': signal_type,
                     'signal_info': signal_info,
-                    'stock_code': stock_code
+                    'stock_code': stock_code,
+                    'status': 'submitted'
                 }
                 logger.info(f"📋 开始跟踪委托单: {stock_code} {signal_type} order_id={order_id}")
         except Exception as e:
@@ -4384,6 +4406,16 @@ class PositionManager:
                 return key
         return None
 
+    def _find_cancel_requested_order_key_locked(self, stock_code):
+        stock_code_base = self._base_stock_code(stock_code)
+        for key, info in self.pending_orders.items():
+            if not isinstance(info, dict):
+                continue
+            tracked_code = self._base_stock_code(info.get('stock_code') or key)
+            if tracked_code == stock_code_base and info.get('status') == 'cancel_requested':
+                return key
+        return None
+
     def _record_trade_after_confirmation(self, order_id, order_info, trade=None):
         """成交确认后补写 trade_records；模拟模式跳过，避免测试/模拟盘误触发实盘流水。"""
         if getattr(config, 'ENABLE_SIMULATION_MODE', False):
@@ -4432,6 +4464,49 @@ class PositionManager:
             self._record_trade_after_confirmation(order_id, pending_snapshot, trade=trade)
 
         self._request_immediate_position_refresh(stock_code_base, source)
+
+    def _confirm_canceled_order(self, stock_code, order_id, source):
+        """统一处理撤单完成确认：收到 54=已撤 后再清理旧委托，并按配置重挂。"""
+        stock_code_base = self._base_stock_code(stock_code)
+        pending_snapshot = {}
+        matched_key = None
+
+        with self.pending_orders_lock:
+            matched_key = self._find_pending_order_key_locked(stock_code_base, order_id)
+            if not matched_key:
+                matched_key = self._find_cancel_requested_order_key_locked(stock_code_base)
+
+            if matched_key:
+                pending_snapshot = dict(self.pending_orders.get(matched_key) or {})
+                del self.pending_orders[matched_key]
+
+        if not matched_key:
+            return False
+
+        signal_type = pending_snapshot.get('signal_type', '')
+        signal_info = pending_snapshot.get('signal_info', {})
+        should_reorder = bool(pending_snapshot.get('reorder_after_cancel', False))
+
+        logger.info(
+            f"✅ [{source}] {stock_code_base} 委托已撤(order_id={order_id})，"
+            f"撤单完成确认已收到(信号={signal_type})"
+        )
+
+        if should_reorder:
+            logger.info(
+                f"🔄 [REORDER] {stock_code_base} 撤单完成，按配置重新挂单 "
+                f"(价格模式: {config.PENDING_ORDER_REORDER_PRICE_MODE})"
+            )
+            self._reorder_after_cancel(stock_code_base, signal_type, signal_info)
+        elif pending_snapshot.get('status') == 'cancel_requested':
+            logger.warning(
+                f"⚠️ [REORDER] {stock_code_base} 撤单完成，但 PENDING_ORDER_AUTO_REORDER=False，"
+                f"不自动重挂，请人工确认是否需要补单"
+            )
+        else:
+            logger.info(f"ℹ️ {stock_code_base} 委托已撤，未处于系统自动重挂流程，不自动重挂")
+
+        return True
 
     def _get_pending_order_timeout_minutes(self, signal_type):
         """按信号类型获取委托超时阈值，止损单使用更短等待时间。"""
@@ -4505,10 +4580,15 @@ class PositionManager:
                 self._get_pending_order_timeout_minutes(signal_type)
             )
             elapsed = (config.now_cst() - submit_time).total_seconds() / 60
+            local_status = order_info.get('status')
 
-            logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
-                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={timeout_minutes}分钟)，"
-                         f"将查询当前状态并决定是否自动撤单")
+            if local_status == 'cancel_requested':
+                logger.info(f"⏳ {stock_code} 撤单请求已提交: order_id={order_id}, "
+                            f"等待 54=已撤 后再决定是否重挂")
+            else:
+                logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
+                             f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={timeout_minutes}分钟)，"
+                             f"将查询当前状态并决定是否提交撤单请求")
 
             # 查询委托单当前状态
             order_status = self._query_order_status(stock_code, order_id)
@@ -4530,34 +4610,71 @@ class PositionManager:
                 )
                 return
 
+            if order_status == 54:  # 54=已撤
+                self._confirm_canceled_order(stock_code, order_id, "撤单状态查询")
+                return
+
+            if local_status == 'cancel_requested':
+                if order_status in [48, 49, 50, 51, 52, 55]:
+                    logger.info(f"⏳ {stock_code} 撤单尚未完成: order_id={order_id}, "
+                                f"当前状态={order_status}，继续等待 54=已撤")
+                    return
+
+                logger.info(f"ℹ️ {stock_code} 撤单等待中收到终态/其他状态={order_status}，移除跟踪")
+                with self.pending_orders_lock:
+                    current_order = self.pending_orders.get(stock_code)
+                    if (current_order and
+                            str(current_order.get('order_id')) == str(order_id)):
+                        self.pending_orders.pop(stock_code, None)
+                return
+
             # 如果是未成交状态，执行撤单
             if order_status in [48, 49, 50, 55]:  # 未成交状态
                 logger.warning(f"🚨 [E_ORDER_TIMEOUT_002] {stock_code} 委托单超时未成交 (状态={order_status})，"
-                               f"原因可能是: 价格偏离、流动性不足或交易所限制，准备自动撤单...")
+                               f"原因可能是: 价格偏离、流动性不足或交易所限制，准备提交撤单请求...")
 
                 # 执行撤单
                 cancel_result = self._cancel_order(stock_code, order_id)
 
                 if cancel_result:
-                    logger.info(f"✅ {stock_code} 委托单撤销成功: {order_id}")
+                    logger.info(f"✅ {stock_code} 撤单请求已提交: {order_id}，等待 54=已撤 后再重挂")
 
-                    # 先移除旧委托，再重挂；否则新委托跟踪会被下面的 pop 误删。
                     with self.pending_orders_lock:
                         current_order = self.pending_orders.get(stock_code)
                         if (not current_order or
                                 str(current_order.get('order_id')) == str(order_id)):
-                            self.pending_orders.pop(stock_code, None)
+                            pending_info = current_order or dict(order_info)
+                            pending_info.update({
+                                'status': 'cancel_requested',
+                                'cancel_request_time': config.now_cst(),
+                                'reorder_after_cancel': bool(config.PENDING_ORDER_AUTO_REORDER),
+                                'cancel_requested_order_status': order_status,
+                            })
+                            self.pending_orders[stock_code] = pending_info
 
-                    # 如果配置了自动重新挂单
                     if config.PENDING_ORDER_AUTO_REORDER:
-                        logger.info(f"🔄 [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=True，将以最新价重新挂单 (价格模式: {config.PENDING_ORDER_REORDER_PRICE_MODE})...")
-                        self._reorder_after_cancel(stock_code, signal_type, signal_info)
+                        logger.info(f"🔄 [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=True，"
+                                    f"将在撤单完成(54=已撤)后重新挂单")
                     else:
-                        logger.warning(f"⚠️ [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=False，撤单后不自动重挂，"
+                        logger.warning(f"⚠️ [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=False，撤单完成后不自动重挂，"
                                        f"请人工确认是否需要手动补单 (信号类型={signal_type}，委托号={order_id})")
                 else:
                     logger.error(f"❌ [E_ORDER_TIMEOUT_003] {stock_code} 自动撤单失败: order_id={order_id}，"
                                  f"请人工介入处理：登录QMT客户端手动撤销该委托，并确认持仓状态后视情况补单")
+            elif order_status in [51, 52]:  # 已报待撤/部分待撤，等待撤单终态
+                logger.info(f"⏳ {stock_code} 委托正在撤单中: order_id={order_id}, 状态={order_status}，等待 54=已撤")
+                with self.pending_orders_lock:
+                    current_order = self.pending_orders.get(stock_code)
+                    if (not current_order or
+                            str(current_order.get('order_id')) == str(order_id)):
+                        pending_info = current_order or dict(order_info)
+                        pending_info.update({
+                            'status': 'cancel_requested',
+                            'cancel_request_time': pending_info.get('cancel_request_time', config.now_cst()),
+                            'reorder_after_cancel': bool(config.PENDING_ORDER_AUTO_REORDER),
+                            'cancel_requested_order_status': order_status,
+                        })
+                        self.pending_orders[stock_code] = pending_info
             else:
                 # 其他状态（已撤、废单等），直接移除跟踪
                 logger.info(f"ℹ️ {stock_code} 委托单状态={order_status} (已撤/废单/其他)，无需操作，移除跟踪")
