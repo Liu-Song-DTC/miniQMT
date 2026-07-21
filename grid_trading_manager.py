@@ -620,7 +620,7 @@ class GridTradingManager:
                     # 1. 检查会话是否已过期
                     # BUG FIX: 使用session_dict而不是session_data
                     end_time = datetime.fromisoformat(session_dict['end_time'])
-                    if datetime.now() > end_time:
+                    if config.now_cst() > end_time:
                         # 先更新数据库状态
                         self.db.stop_grid_session(session_id, 'expired')
 
@@ -757,7 +757,7 @@ class GridTradingManager:
                     levels = session.get_grid_levels()
                     logger.info(f"[GRID]   - 网格档位: {levels['lower']:.2f} / {levels['center']:.2f} / {levels['upper']:.2f}")
 
-                    remaining_days = (end_time - datetime.now()).days
+                    remaining_days = (end_time - config.now_cst()).days
                     logger.info(f"[GRID]   - 剩余时长: {remaining_days}天")
 
                     recovered_count += 1
@@ -836,7 +836,7 @@ class GridTradingManager:
                 'filled_volume': int(order.get('filled_volume') or 0),
                 'filled_amount': float(order.get('filled_amount') or 0),
                 'confirmed_trade_ids': set(),
-                'created_at': order.get('submitted_at') or datetime.now().isoformat()
+                'created_at': order.get('submitted_at') or config.now_cst().isoformat()
             }
             recovered += 1
 
@@ -905,7 +905,7 @@ class GridTradingManager:
             return float('inf')
 
     def _pending_order_ids_for_reconcile(self, min_age_seconds: float = 0) -> list:
-        now = datetime.now()
+        now = config.now_cst()
         with self.lock:
             order_ids = []
             for order_id, pending in self.pending_grid_orders.items():
@@ -1069,7 +1069,7 @@ class GridTradingManager:
             raise ValueError(f"{stock_code}缺少有效的中心价格")
 
         # 预构建会话数据
-        start_time = datetime.now()
+        start_time = config.now_cst()
         end_time = start_time + timedelta(days=user_config.get('duration_days', 7))
         current_price = position.get('current_price', highest_price)
 
@@ -1512,9 +1512,9 @@ class GridTradingManager:
 
         # 3. 时间限制
         if session.end_time:
-            remaining = session.end_time - datetime.now()
+            remaining = session.end_time - config.now_cst()
             logger.debug(f"[GRID] _check_exit_conditions: 时间检测 end_time={session.end_time}, remaining={remaining}")
-            if datetime.now() > session.end_time:
+            if config.now_cst() > session.end_time:
                 logger.info(f"[GRID] _check_exit_conditions: {session.stock_code} 达到运行时长限制, 触发退出")
                 return 'expired'
 
@@ -1695,7 +1695,7 @@ class GridTradingManager:
             'grid_level': tracker.crossed_level,
             'trigger_price': current_price,
             'session_id': session.id,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': config.now_cst().isoformat(),
             'signal_source': 'grid_tracker',
             'require_price_recheck': True
         }
@@ -1929,7 +1929,7 @@ class GridTradingManager:
 
             max_age = getattr(config, 'GRID_SIGNAL_MAX_AGE_SECONDS', 60)
             if max_age and max_age > 0:
-                age_seconds = (datetime.now() - signal_time).total_seconds()
+                age_seconds = (config.now_cst() - signal_time).total_seconds()
                 if age_seconds > max_age:
                     logger.warning(f"[GRID] signal validate: 信号过期 age={age_seconds:.1f}s > {max_age}s")
                     return False
@@ -1983,7 +1983,7 @@ class GridTradingManager:
             'filled_volume': 0,
             'filled_amount': 0.0,
             'confirmed_trade_ids': set(),
-            'created_at': datetime.now().isoformat()
+            'created_at': config.now_cst().isoformat()
         }
         if hasattr(self.db, 'create_grid_order'):
             self.db.create_grid_order({
@@ -2085,7 +2085,7 @@ class GridTradingManager:
             'valley_price': signal.get('valley_price'),
             'callback_ratio': round(signal.get('callback_ratio'), 4) if signal.get('callback_ratio') else None,
             'trade_id': trade_id,
-            'trade_time': datetime.now().isoformat(),
+            'trade_time': config.now_cst().isoformat(),
             'grid_center_before': session.current_center_price,
             'grid_center_after': price
         }

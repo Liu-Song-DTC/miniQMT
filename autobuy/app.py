@@ -48,13 +48,13 @@ class AutoBuyApp:
         # 调度状态
         self._fired_daily = set()        # 当日已触发的 (h, m)
         self._fired_daily_date = None
-        self._last_interval_run = datetime.now()  # 启动后等一个间隔再触发 interval
+        self._last_interval_run = config.now_cst()  # 启动后等一个间隔再触发 interval
 
     # ------------------------------------------------------------------
     # 单轮执行
     # ------------------------------------------------------------------
     def run_once(self, trigger: str) -> None:
-        run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        run_time = config.now_cst().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"===== 触发自动买入 [{trigger}] {run_time} =====")
 
         codes = read_candidates(self.cfg)
@@ -166,7 +166,7 @@ class AutoBuyApp:
         return self.cfg.only_trade_time and not config.is_market_hours()
 
     def _tick(self) -> None:
-        now = datetime.now()
+        now = config.now_cst()
         mode = self.cfg.mode
 
         # 重置当日 daily 去重
@@ -217,7 +217,7 @@ class AutoBuyApp:
 
     # ------------------------------------------------------------------
     def _write_status(self, status: dict) -> None:
-        status["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status["updated_at"] = config.now_cst().strftime("%Y-%m-%d %H:%M:%S")
         try:
             os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
             tmp = STATUS_FILE + ".tmp"

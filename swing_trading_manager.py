@@ -34,6 +34,7 @@ class SwingSession:
     session_date: str = ""
     consecutive_failures: int = 0     # 连续失败计数
     failure_until: float = 0.0        # 连续失败后跳过直到此时（timestamp）
+    swing_entry_price: float = 0.0    # 摆动买入加权均价（用于卖出盈亏判断，区别于全部持仓平均成本）
 
     def reset_daily(self, new_date: str):
         self.floating_volume = 0
@@ -43,6 +44,7 @@ class SwingSession:
         self.today_sell_volume = 0
         self.consecutive_failures = 0
         self.failure_until = 0.0
+        self.swing_entry_price = 0.0
         self.session_date = new_date
 
 
@@ -66,6 +68,8 @@ class SwingTradingManager:
         self.stop_flag = False
 
         self.indicator_calculator = None
+
+        self._last_heartbeat = 0.0  # 心跳日志节流
 
         self._load_base_positions()
 
@@ -102,7 +106,7 @@ class SwingTradingManager:
     # ==================== 基础持仓加载 ====================
 
     def _load_base_positions(self):
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = config.now_cst().strftime('%Y-%m-%d')
         with self.lock:
             positions = self.position_manager.get_all_positions()
             if positions is None or positions.empty:
@@ -128,6 +132,7 @@ class SwingTradingManager:
                         today_sell_volume=int(db_session.get('total_sell_volume', 0)),
                         consecutive_failures=int(db_session.get('consecutive_failures', 0)),
                         session_date=today,
+                        swing_entry_price=float(db_session.get('swing_entry_price', 0)),
                     )
                     # 从数据库恢复 floating_volume（当日买入但不可卖出的部分）
                     session.floating_volume = max(0, session.today_buy_volume - session.today_sell_volume)
@@ -149,7 +154,7 @@ class SwingTradingManager:
         try:
             self.db.save_session({
                 'stock_code': session.stock_code,
-                'date': session.session_date or datetime.now().strftime('%Y-%m-%d'),
+                'date': session.session_date or config.now_cst().strftime('%Y-%m-%d'),
                 'enabled': int(session.enabled),
                 'base_volume_start': session.base_volume,
                 'total_buy_volume': session.today_buy_volume,
@@ -159,6 +164,7 @@ class SwingTradingManager:
                 'last_buy_time': datetime.fromtimestamp(session.last_buy_time).isoformat() if session.last_buy_time > 0 else '',
                 'last_sell_time': datetime.fromtimestamp(session.last_sell_time).isoformat() if session.last_sell_time > 0 else '',
                 'consecutive_failures': session.consecutive_failures,
+                'swing_entry_price': session.swing_entry_price,
             })
         except Exception as e:
             logger.error(f"持久化 {session.stock_code} 会话失败: {str(e)}")
@@ -167,8 +173,8 @@ class SwingTradingManager:
         try:
             self.db.save_trade({
                 'stock_code': stock_code,
-                'date': datetime.now().strftime('%Y-%m-%d'),
-                'time': datetime.now().strftime('%H:%M:%S'),
+                'date': config.now_cst().strftime('%Y-%m-%d'),
+                'time': config.now_cst().strftime('%H:%M:%S'),
                 'direction': direction,
                 'price': price,
                 'volume': volume,
@@ -183,7 +189,7 @@ class SwingTradingManager:
     # ==================== 日切换 ====================
 
     def _check_day_change(self):
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = config.now_cst().strftime('%Y-%m-%d')
         with self.lock:
             for session in self.sessions.values():
                 if session.session_date and session.session_date != today:
@@ -219,7 +225,7 @@ class SwingTradingManager:
                         self.sessions[stock_code] = SwingSession(
                             stock_code=stock_code,
                             base_volume=volume,
-                            session_date=datetime.now().strftime('%Y-%m-%d'),
+                            session_date=config.now_cst().strftime('%Y-%m-%d'),
                         )
                         self._persist_session(self.sessions[stock_code])
 
@@ -371,6 +377,31 @@ class SwingTradingManager:
 
         return score, details
 
+    def _is_in_freefall(self, indicators: dict) -> bool:
+        """检测是否处于急跌状态（连续大阴线），避免接飞刀"""
+        close = indicators.get('close', 0)
+        open_price = indicators.get('open', 0)
+        prev_close = indicators.get('prev_close', 0)
+
+        if close <= 0 or open_price <= 0:
+            return False
+
+        bar_change = (close - open_price) / open_price
+        if bar_change > -0.01:
+            return False  # 当前K线非阴线或小阴线，不算急跌
+
+        # 当前K线是大阴线（>1%），检查前一根
+        if prev_close > 0 and open_price > 0:
+            prev_bar_change = (open_price - prev_close) / prev_close
+            if prev_bar_change < -0.005:
+                return True  # 连续两根阴线，处于急跌
+
+        # 当前K线跌幅 >2%，单根就算急跌
+        if bar_change < -0.02:
+            return True
+
+        return False
+
     def _get_fused_signal(self, stock_code, indicators: dict) -> Optional[dict]:
         """多指标融合 + 趋势自适应，返回信号或 None"""
         if indicators is None:
@@ -400,11 +431,24 @@ class SwingTradingManager:
             effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD
             effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD
 
-        logger.debug(f"[{stock_code}] 趋势={trend}(斜率={slope:.6f}) "
-                     f"买入={buy_score}/{effective_buy_threshold} {buy_details}, "
-                     f"卖出={sell_score}/{effective_sell_threshold} {sell_details}")
+        # 节流 INFO 日志：仅当接近阈值(差1分)或超过时才记录
+        near_buy = buy_score >= effective_buy_threshold - 1
+        near_sell = sell_score >= effective_sell_threshold - 1
+        if near_buy or near_sell:
+            logger.info(f"[{stock_code}] 趋势={trend} 买入={buy_score}/{effective_buy_threshold} "
+                        f"{buy_details}, 卖出={sell_score}/{effective_sell_threshold} {sell_details}, "
+                        f"现价={indicators['close']:.2f}")
+        else:
+            logger.debug(f"[{stock_code}] 趋势={trend}(斜率={slope:.6f}) "
+                         f"买入={buy_score}/{effective_buy_threshold} {buy_details}, "
+                         f"卖出={sell_score}/{effective_sell_threshold} {sell_details}")
 
         if buy_score >= effective_buy_threshold:
+            # 急跌保护：连续大阴线时不买入，等待价格企稳
+            if self._is_in_freefall(indicators):
+                logger.info(f"[{stock_code}] 买入信号被急跌保护拦截 "
+                            f"(score={buy_score}, 价格仍在快速下跌，等待企稳)")
+                return None
             return {
                 'direction': 'buy',
                 'confidence': buy_score,
@@ -587,8 +631,13 @@ class SwingTradingManager:
                 if elapsed < config.SWING_BUY_COOLDOWN:
                     return False, f"买入冷却中 (还需{int(config.SWING_BUY_COOLDOWN - elapsed)}s)"
 
-            buy_volume = max(int(session.base_volume * config.SWING_BUY_VOLUME_RATIO / 100) * 100,
-                             config.SWING_MIN_BUY_VOLUME)
+            # 按底仓比例计算目标买入量，四舍五入到100股整数倍
+            desired = session.base_volume * config.SWING_BUY_VOLUME_RATIO
+            buy_volume = max(int(desired), config.SWING_MIN_BUY_VOLUME)
+            buy_volume = int(round(buy_volume / 100)) * 100
+            if buy_volume < config.SWING_MIN_BUY_VOLUME:
+                return False, f"底仓太小无法摆动(base={session.base_volume}股)"
+
             if session.today_buy_volume + buy_volume > session.base_volume * config.SWING_MAX_DAILY_BUY_VOLUME_RATIO:
                 return False, f"已达每日最大买入量({config.SWING_MAX_DAILY_BUY_VOLUME_RATIO*100:.0f}%底仓)"
 
@@ -641,8 +690,10 @@ class SwingTradingManager:
             if available < config.SWING_MIN_SELL_VOLUME:
                 return False, f"可用股数不足({available}<{config.SWING_MIN_SELL_VOLUME})"
 
-            sell_volume = max(int(sellable_base * config.SWING_SELL_VOLUME_RATIO / 100) * 100,
-                              config.SWING_MIN_SELL_VOLUME)
+            # 按可卖底仓比例计算目标卖出量，四舍五入到100股整数倍
+            desired = sellable_base * config.SWING_SELL_VOLUME_RATIO
+            sell_volume = max(int(desired), config.SWING_MIN_SELL_VOLUME)
+            sell_volume = int(round(sell_volume / 100)) * 100
             sell_volume = min(sell_volume, available, sellable_base)
 
             if sell_volume < config.SWING_MIN_SELL_VOLUME:
@@ -651,13 +702,16 @@ class SwingTradingManager:
             if session.today_sell_volume + sell_volume > session.base_volume * config.SWING_MAX_DAILY_SELL_VOLUME_RATIO:
                 return False, f"已达每日最大卖出量({config.SWING_MAX_DAILY_SELL_VOLUME_RATIO*100:.0f}%底仓)"
 
-        # 最小盈利检查
-        cost_price = float(position.get('cost_price', 0))
-        if cost_price > 0:
+        # 最小盈利检查：优先用摆动入场均价，无摆动仓位时用全部持仓平均成本
+        with self.lock:
+            swing_entry = self.sessions.get(stock_code)
+            entry_price = (swing_entry.swing_entry_price if swing_entry and swing_entry.swing_entry_price > 0
+                          else float(position.get('cost_price', 0)))
+        if entry_price > 0:
             latest = self.data_manager.get_latest_data(stock_code)
             current_price = latest.get('lastPrice', 0) if latest else 0
-            if current_price > 0 and current_price < cost_price * (1 + config.SWING_MIN_PROFIT_RATIO):
-                return False, f"未达最小盈利要求({config.SWING_MIN_PROFIT_RATIO*100:.1f}%)"
+            if current_price > 0 and current_price < entry_price * (1 + config.SWING_MIN_PROFIT_RATIO):
+                return False, f"未达最小盈利要求({config.SWING_MIN_PROFIT_RATIO*100:.1f}%), 入场{entry_price:.2f}"
 
         return True, "OK"
 
@@ -694,9 +748,14 @@ class SwingTradingManager:
 
         with self.lock:
             session = self.sessions[stock_code]
-            buy_volume = max(int(session.base_volume * config.SWING_BUY_VOLUME_RATIO / 100) * 100,
-                             config.SWING_MIN_BUY_VOLUME)
+            desired = session.base_volume * config.SWING_BUY_VOLUME_RATIO
+            buy_volume = max(int(desired), config.SWING_MIN_BUY_VOLUME)
+            buy_volume = int(round(buy_volume / 100)) * 100
             buy_amount = buy_volume * trigger_price
+
+        # 记录交易前持仓量，用于交易后成交验证
+        position_before = self.position_manager.get_position(stock_code)
+        prev_volume = int(position_before.get('volume', 0)) if position_before else 0
 
         logger.info(f"[SWING] {stock_code} 摆动买入: {buy_volume}股, 金额~{buy_amount:.2f}")
 
@@ -716,20 +775,49 @@ class SwingTradingManager:
                 }
             )
             if order_id:
+                # 交易后验证成交（检测部分成交）
+                # 模拟模式下 simulate_buy_position 是同步的，立即生效
+                # 实盘模式下需要短暂等待 QMT 回调
+                if not is_simulation:
+                    time.sleep(0.5)  # 给 QMT 回调一点时间
+                verified, actual_volume = self._verify_position_after_trade(
+                    stock_code, 'buy', buy_volume, prev_volume
+                )
+
+                if not verified:
+                    logger.error(f"[SWING] {stock_code} 买入成交验证失败，不更新会话状态")
+                    self._record_failure(stock_code)
+                    return
+
+                # 使用实际成交量
+                effective_volume = min(actual_volume, buy_volume)
+
                 with self.lock:
                     session = self.sessions[stock_code]
-                    session.floating_volume += buy_volume
+                    # 更新摆动入场加权均价
+                    if session.swing_entry_price > 0 and session.today_buy_volume > 0:
+                        old_total = session.swing_entry_price * session.today_buy_volume
+                        session.swing_entry_price = (old_total + effective_volume * trigger_price) / (session.today_buy_volume + effective_volume)
+                    else:
+                        session.swing_entry_price = trigger_price
+                    session.floating_volume += effective_volume
                     session.today_buy_count += 1
-                    session.today_buy_volume += buy_volume
+                    session.today_buy_volume += effective_volume
                     session.last_buy_time = time.time()
                     session.consecutive_failures = 0
                     self._persist_session(session)
 
+                # 如果部分成交，修正会话状态
+                if effective_volume < buy_volume:
+                    actual_volume_for_rollback = effective_volume
+                    self._rollback_session_state(stock_code, 'buy', buy_volume, effective_volume)
+                    # 这里不实际回滚因为上面已经用了 effective_volume
+
                 self._save_trade_record(
-                    stock_code, 'buy', trigger_price, buy_volume, confidence,
+                    stock_code, 'buy', trigger_price, effective_volume, confidence,
                     f'摆动买入(置信度={confidence}/8)', order_id,
                 )
-                logger.info(f"[SWING] {stock_code} 摆动买入成功, 订单号={order_id}")
+                logger.info(f"[SWING] {stock_code} 摆动买入成功, 订单号={order_id}, 成交={effective_volume}股")
                 self.position_manager._increment_data_version()
             else:
                 self._record_failure(stock_code)
@@ -759,13 +847,17 @@ class SwingTradingManager:
                 sellable_base = total_volume
             else:
                 sellable_base = total_volume - session.floating_volume
-            sell_volume = max(int(sellable_base * config.SWING_SELL_VOLUME_RATIO / 100) * 100,
-                              config.SWING_MIN_SELL_VOLUME)
+            desired = sellable_base * config.SWING_SELL_VOLUME_RATIO
+            sell_volume = max(int(desired), config.SWING_MIN_SELL_VOLUME)
+            sell_volume = int(round(sell_volume / 100)) * 100
             sell_volume = min(sell_volume, available, sellable_base)
 
         if sell_volume < config.SWING_MIN_SELL_VOLUME:
             logger.warning(f"[SWING] {stock_code} 可卖数量不足({sell_volume}<{config.SWING_MIN_SELL_VOLUME})")
             return
+
+        # 记录交易前持仓量，用于交易后成交验证
+        prev_volume = total_volume
 
         logger.info(f"[SWING] {stock_code} 摆动卖出: {sell_volume}股 (底仓可卖={sellable_base}, 浮动锁定={session.floating_volume})")
 
@@ -785,19 +877,40 @@ class SwingTradingManager:
                 }
             )
             if order_id:
+                # 交易后验证成交（检测部分成交）
+                if not is_simulation:
+                    time.sleep(0.5)
+                verified, actual_volume = self._verify_position_after_trade(
+                    stock_code, 'sell', sell_volume, prev_volume
+                )
+
+                if not verified:
+                    logger.error(f"[SWING] {stock_code} 卖出成交验证失败，不更新会话状态")
+                    self._record_failure(stock_code)
+                    return
+
+                effective_volume = min(actual_volume, sell_volume)
+
                 with self.lock:
                     session = self.sessions[stock_code]
                     session.today_sell_count += 1
-                    session.today_sell_volume += sell_volume
+                    session.today_sell_volume += effective_volume
                     session.last_sell_time = time.time()
                     session.consecutive_failures = 0
                     self._persist_session(session)
 
+                # 卖出后清空摆动入场价（本轮摆动结束）
+                if effective_volume >= sell_volume * 0.8:  # 大部分成交则认为本轮结束
+                    with self.lock:
+                        session = self.sessions.get(stock_code)
+                        if session:
+                            session.swing_entry_price = 0.0
+
                 self._save_trade_record(
-                    stock_code, 'sell', trigger_price, sell_volume, confidence,
+                    stock_code, 'sell', trigger_price, effective_volume, confidence,
                     f'摆动卖出(置信度={confidence}/8)', order_id,
                 )
-                logger.info(f"[SWING] {stock_code} 摆动卖出成功, 订单号={order_id}")
+                logger.info(f"[SWING] {stock_code} 摆动卖出成功, 订单号={order_id}, 成交={effective_volume}股")
                 self.position_manager._increment_data_version()
             else:
                 self._record_failure(stock_code)
@@ -820,6 +933,58 @@ class SwingTradingManager:
                 logger.warning(f"[SWING] {stock_code} 连续失败{session.consecutive_failures}次, "
                                f"跳过{config.SWING_FAILURE_COOLDOWN}s")
 
+    # ==================== 订单成交验证 ====================
+
+    def _verify_position_after_trade(self, stock_code, direction, expected_volume, prev_volume):
+        """交易后验证持仓是否按预期变化，检测部分成交。
+
+        返回: (verified: bool, actual_filled: int)
+        """
+        position = self.position_manager.get_position(stock_code)
+        if not position:
+            logger.warning(f"[SWING] {stock_code} 交易后持仓消失，无法验证成交")
+            return False, 0
+
+        current_volume = int(position.get('volume', 0))
+
+        if direction == 'buy':
+            actual_filled = current_volume - prev_volume
+            if actual_filled <= 0:
+                logger.warning(f"[SWING] {stock_code} 买入后持仓未增加 "
+                               f"(预期+{expected_volume}, 实际+{actual_filled}), 可能未成交")
+                return False, actual_filled
+            if actual_filled < expected_volume:
+                logger.warning(f"[SWING] {stock_code} 部分成交: 预期+{expected_volume}, 实际+{actual_filled}")
+                return True, actual_filled  # 部分成交也算成交，但数量需要修正
+            return True, actual_filled
+        else:
+            actual_filled = prev_volume - current_volume
+            if actual_filled <= 0:
+                logger.warning(f"[SWING] {stock_code} 卖出后持仓未减少 "
+                               f"(预期-{expected_volume}, 实际-{actual_filled}), 可能未成交")
+                return False, actual_filled
+            if actual_filled < expected_volume:
+                logger.warning(f"[SWING] {stock_code} 部分成交: 预期-{expected_volume}, 实际-{actual_filled}")
+                return True, actual_filled
+            return True, actual_filled
+
+    def _rollback_session_state(self, stock_code, direction, expected_volume, actual_volume):
+        """部分成交时回滚/修正会话状态"""
+        with self.lock:
+            session = self.sessions.get(stock_code)
+            if not session:
+                return
+            diff = expected_volume - actual_volume  # 未成交部分
+            if direction == 'buy':
+                session.floating_volume -= diff
+                session.today_buy_volume -= diff
+                # 不修改 swing_entry_price（未成交部分不应影响均价）
+            elif direction == 'sell':
+                session.today_sell_volume -= diff
+                session.today_sell_count = max(0, session.today_sell_count)
+            self._persist_session(session)
+            logger.info(f"[SWING] {stock_code} 会话状态已修正: {direction} 预期{expected_volume}→实际{actual_volume}, 修正{diff}股")
+
     # ==================== 监控主循环 ====================
 
     def _swing_loop(self):
@@ -838,6 +1003,21 @@ class SwingTradingManager:
                 active_stocks = self._get_active_stocks()
                 if active_stocks:
                     logger.debug(f"[SWING] 监控 {len(active_stocks)} 只股票")
+
+                    # 每 5 分钟输出一次心跳：指标是否正常、各股票打分状态
+                    now_ts = time.time()
+                    if now_ts - self._last_heartbeat >= 300:
+                        self._last_heartbeat = now_ts
+                        for sc in active_stocks:
+                            ind = self._get_cached_indicators(sc)
+                            if ind is None:
+                                logger.info(f"[SWING] {sc} 无日内K线数据，跳过")
+                            else:
+                                b, bd = self._score_buy_signal(ind)
+                                s, sd = self._score_sell_signal(ind)
+                                slope = ind.get('trend_slope', 0)
+                                logger.info(f"[SWING] {sc} 价格={ind['close']:.2f} 买入={b}分 {bd}, "
+                                            f"卖出={s}分 {sd}, 趋势斜率={slope:.6f}")
 
                 for stock_code in active_stocks:
                     if self.stop_flag:

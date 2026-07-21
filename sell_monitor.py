@@ -146,7 +146,7 @@ class SellMonitor:
             return
 
         attempt = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': config.now_cst().isoformat(),
             'stock_code': stock_code,
             'signal_type': signal_type,
             'stage': stage,
@@ -250,7 +250,7 @@ class SellMonitor:
         interval = rule_config['interval']
 
         # 统计时间窗口内的失败次数
-        now = datetime.now()
+        now = config.now_cst()
         window_start = now - timedelta(seconds=interval) if interval > 0 else datetime.min
 
         recent_failures = [
@@ -276,7 +276,7 @@ class SellMonitor:
 
         # 记录告警
         alert_record = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': config.now_cst().isoformat(),
             'priority': priority,
             'rule_key': rule_key,
             'message': full_msg,
@@ -326,7 +326,7 @@ class SellMonitor:
         - Dict: 统计信息
         """
         with self.stats_lock:
-            now = datetime.now()
+            now = config.now_cst()
 
             # 指定时间范围的数据
             time_threshold = now - timedelta(hours=hours)
@@ -383,7 +383,7 @@ class SellMonitor:
             "=" * 80,
             "卖出监控诊断报告",
             "=" * 80,
-            f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"生成时间: {config.now_cst().strftime('%Y-%m-%d %H:%M:%S')}",
             f"监控状态: {'✅ 启用' if stats['monitoring_enabled'] else '❌ 禁用'}",
             "",
             "📊 统计概览",
@@ -572,7 +572,7 @@ class SellMonitor:
         - Dict: 统计信息
         """
         with self.stats_lock:
-            now = datetime.now()
+            now = config.now_cst()
             time_threshold = now - timedelta(hours=hours)
 
             # 过滤指定股票和时间范围的记录

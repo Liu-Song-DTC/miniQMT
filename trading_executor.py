@@ -258,7 +258,7 @@ class TradingExecutor:
             amount = price * volume
             trade_id = deal_info.m_strTradeID
             commission = deal_info.m_dComssion
-            trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
             order_id = deal_info.m_strOrderID
 
             strategy = self._get_order_strategy(order_id)
@@ -605,7 +605,7 @@ class TradingExecutor:
         return {
             'order_id': order_id,
             'stock_code': stock_code,
-            'trade_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'trade_time': config.now_cst().strftime('%Y-%m-%d %H:%M:%S'),
             'trade_type': trade_type,
             'price': price,
             'volume': volume,
@@ -1086,7 +1086,7 @@ class TradingExecutor:
     def _generate_sim_order_id(self):
         """生成模拟交易订单ID"""
         self.sim_order_counter += 1
-        return f"SIM{datetime.now().strftime('%Y%m%d%H%M%S')}{self.sim_order_counter:04d}"
+        return f"SIM{config.now_cst().strftime('%Y%m%d%H%M%S')}{self.sim_order_counter:04d}"
     
     def buy_stock(self, stock_code, volume=None, price=None, amount=None, price_type=5,
                   callback=None, strategy='default', signal_type=None, signal_info=None):
@@ -1212,6 +1212,15 @@ class TradingExecutor:
                 
                 # 模拟交易模式处理
                 if is_simulation:
+                    # 资金检查：防止模拟账户出现负余额
+                    cost = price * volume * 1.0003  # 含买入手续费
+                    if self.simulation_balance < cost:
+                        logger.error(
+                            f"[模拟] 买入 {stock_code} 资金不足: 需要 {cost:.2f}, "
+                            f"可用 {self.simulation_balance:.2f}"
+                        )
+                        return None
+
                     # 调用 position_manager 的模拟买入方法
                     success = self.position_manager.simulate_buy_position(
                         stock_code=stock_code,
@@ -1219,16 +1228,24 @@ class TradingExecutor:
                         buy_price=price,
                         strategy=strategy if strategy != 'default' else 'simu'
                     )
-                    
+
                     if success:
+                        # 同步 self.simulation_balance（simulate_buy_position 只更新了 config.SIMULATION_BALANCE）
+                        self.simulation_balance -= cost
                         sim_order_id = self._generate_sim_order_id()
-                        logger.info(f"[模拟] 买入 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}")
+                        logger.info(f"[模拟] 买入 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}, 余额: {self.simulation_balance:.2f}")
                         return sim_order_id
                     else:
                         logger.error(f"[模拟] 买入 {stock_code} 失败")
                         return None
                 
                 # 实盘交易模式处理
+                # 交易规则校验（资金/权限/数量等）
+                can_trade, trade_rule_error = self._check_trade_rules(stock_code, volume, price, is_buy=True)
+                if not can_trade:
+                    logger.error(f"买入 {stock_code} 未通过交易规则检查: {trade_rule_error}")
+                    return None
+
                 # 使用qmt_trader检查股票是否可买入
                 can_buy = True
                 try:
@@ -1238,8 +1255,8 @@ class TradingExecutor:
                         amount=volume
                     )
                 except Exception as e:
-                    logger.warning(f"检查股票是否可买入时出错: {str(e)}，将继续尝试买入")
-                    can_buy = True  # 如果检查失败，仍然尝试买入
+                    logger.error(f"检查股票是否可买入时出错: {str(e)}，拒绝买入（安全优先）")
+                    can_buy = False
                 
                 if not can_buy:
                     logger.error(f"买入 {formatted_stock_code} 未通过可买入检查")
@@ -1291,7 +1308,7 @@ class TradingExecutor:
                                     f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
                                 )
                             else:
-                                trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                                 trade_saved= self._save_trade_record(
                                     stock_code=stock_code,
                                     trade_time=trade_time,
@@ -1311,7 +1328,7 @@ class TradingExecutor:
                                     'trade_type': 'BUY',
                                     'price': price,
                                     'volume': volume,
-                                    'order_time': datetime.now(),
+                                    'order_time': config.now_cst(),
                                     'amount': amount
                                 }
                                 
@@ -1499,7 +1516,7 @@ class TradingExecutor:
                 if is_simulation:
                     # 处理模拟交易
                     sim_order_id = self._generate_sim_order_id()
-                    trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                     
                     # 记录模拟交易
                     trade_saved = self._save_trade_record(
@@ -1527,6 +1544,12 @@ class TradingExecutor:
                     return sim_order_id
                 
                 # 实盘交易模式处理
+                # 交易规则校验（资金/权限/数量等）
+                can_trade, trade_rule_error = self._check_trade_rules(stock_code, volume, price, is_buy=False)
+                if not can_trade:
+                    logger.error(f"卖出 {stock_code} 未通过交易规则检查: {trade_rule_error}")
+                    return None
+
                 # 使用qmt_trader检查股票是否可卖出
                 can_sell = True
                 try:
@@ -1538,8 +1561,8 @@ class TradingExecutor:
                     )
                     logger.info(f"可卖出检查: 原始代码={formatted_stock_code}, 检查代码={check_stock_code}, 结果={can_sell}")
                 except Exception as e:
-                    logger.warning(f"检查股票是否可卖出时出错: {str(e)}，将继续尝试卖出")
-                    can_sell = True  # 如果检查失败，仍然尝试卖出
+                    logger.error(f"检查股票是否可卖出时出错: {str(e)}，拒绝卖出（安全优先）")
+                    can_sell = False
                 
                 if not can_sell:
                     logger.error(f"卖出 {formatted_stock_code} 未通过可卖出检查")
@@ -1591,7 +1614,7 @@ class TradingExecutor:
                                     f"{stock_code}, 订单号: {order_id}, 策略: {strategy}"
                                 )
                             else:
-                                trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                                 trade_saved = self._save_trade_record(
                                     stock_code=stock_code,
                                     trade_time=trade_time,
@@ -1612,7 +1635,7 @@ class TradingExecutor:
                                     'trade_type': 'SELL',
                                     'price': price,
                                     'volume': volume,
-                                    'order_time': datetime.now(),
+                                    'order_time': config.now_cst(),
                                     'amount': price * volume
                                 }
                                 

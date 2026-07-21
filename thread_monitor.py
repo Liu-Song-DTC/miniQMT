@@ -118,7 +118,7 @@ class ThreadHealthMonitor:
 
             # 记录历史
             self.restart_history.append({
-                'timestamp': datetime.now(),
+                'timestamp': config.now_cst(),
                 'thread_name': name,
                 'reason': reason,
                 'restart_count': info['restart_count']

@@ -297,7 +297,7 @@ def _build_default_account_info():
         'frozen_cash': 0.0,
         'market_value': 0.0,
         'total_asset': 0.0,
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
     }
 
 def _refresh_account_info_worker():
@@ -334,7 +334,7 @@ def _refresh_account_info_worker():
         if not account_info:
             account_info = _build_default_account_info()
         else:
-            account_info.setdefault('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            account_info.setdefault('timestamp', config.now_cst().strftime('%Y-%m-%d %H:%M:%S'))
 
         with _account_info_lock:
             _account_info_cache['data'] = account_info
@@ -434,7 +434,7 @@ def connection_status():
         return jsonify({
             'status': 'success',
             'connected': is_connected,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
         logger.error(f"检查API连接状态时出错: {str(e)}")
@@ -442,7 +442,7 @@ def connection_status():
             'status': 'error',
             'connected': False,
             'message': f"检查API连接状态时出错: {str(e)}",
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
         })
 
 @app.route('/api/status', methods=['GET'])
@@ -464,7 +464,7 @@ def get_status():
                 'frozen_cash': 0.0,
                 'market_value': 0.0,
                 'total_asset': 0.0,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
             }
             
         # 格式化为前端期望的结构
@@ -473,7 +473,7 @@ def get_status():
             'availableBalance': account_info.get('available', 0.0),
             'maxHoldingValue': account_info.get('market_value', 0.0),
             'totalAssets': account_info.get('total_asset', 0.0),
-            'timestamp': account_info.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            'timestamp': account_info.get('timestamp', config.now_cst().strftime('%Y-%m-%d %H:%M:%S'))
         }
         
         # 兼容字段 isMonitoring 映射全局自动操作总开关，不再依赖线程状态判断
@@ -498,7 +498,7 @@ def get_status():
             'isMonitoring': is_monitoring,  # 顶层兼容返回全局自动操作状态
             'account': account_data,
             'settings': system_settings,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
         logger.error(f"获取系统状态时出错: {str(e)}")
@@ -515,7 +515,7 @@ def get_market_health():
         return jsonify({
             'status': 'success',
             'data': snapshot,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
         logger.error(f"获取行情健康状态时出错: {str(e)}")
@@ -621,7 +621,7 @@ def get_trade_records():
     """获取交易记录"""
     try:
         # 仅返回最近N天（约2个月）的交易记录，避免下单日志清单过长
-        start_date = (datetime.now() - timedelta(days=config.WEB_TRADE_RECORDS_DISPLAY_DAYS)).strftime('%Y-%m-%d')
+        start_date = (config.now_cst() - timedelta(days=config.WEB_TRADE_RECORDS_DISPLAY_DAYS)).strftime('%Y-%m-%d')
         trades_df = trading_executor.get_trades(start_date=start_date)
         
         # 如果没有交易记录，返回空列表
@@ -965,7 +965,7 @@ def stop_monitor():
 #         return jsonify({
 #             'status': 'success',
 #             'data': status,
-#             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#             'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
 #         })
 #     except Exception as e:
 #         logger.error(f"获取数据源状态时出错: {str(e)}")
@@ -1048,7 +1048,7 @@ def stop_monitor():
 #             return jsonify({
 #                 'status': 'success',
 #                 'data': data,
-#                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#                 'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
 #             })
 #         else:
 #             return jsonify({
@@ -1109,7 +1109,7 @@ def stop_monitor():
 #             'status': 'success',
 #             'stock_code': stock_code,
 #             'results': results,
-#             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#             'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
 #         })
         
 #     except Exception as e:
@@ -1166,7 +1166,7 @@ def debug_status():
                 'config_LOG_FILE':    config.LOG_FILE,
                 **qmt_info,
             },
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
         logger.error(f"获取调试状态时出错: {str(e)}")
@@ -1200,7 +1200,7 @@ def clear_logs():
     """清空当天日志"""
     try:
         # 获取当天日期
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = config.now_cst().strftime('%Y-%m-%d')
         
         # 执行清空当天日志的操作
         cursor = data_manager.conn.cursor()
@@ -1534,7 +1534,7 @@ def sse():
                 account_info = get_account_info_cached()
 
                 current_data = {
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S'),
                     'account_info': {
                         'available': account_info.get('available', 0),
                         'market_value': account_info.get('market_value', 0),
@@ -2127,7 +2127,7 @@ def get_grid_session_status(stock_code):
                     'position_ratio': session.position_ratio,
                     'callback_ratio': session.callback_ratio,
                     'max_investment': session.max_investment,
-                    'duration_days': (session.end_time - datetime.now()).days,
+                    'duration_days': (session.end_time - config.now_cst()).days,
                     'max_deviation': session.max_deviation,
                     'target_profit': session.target_profit,
                     'stop_loss': session.stop_loss

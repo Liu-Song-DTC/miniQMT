@@ -140,7 +140,7 @@ class TradingStrategy:
             cool_key = f"add_position_{stock_code}"
             if cool_key in getattr(self, 'last_trade_time', {}):
                 last_time = self.last_trade_time[cool_key]
-                if (datetime.now() - last_time).total_seconds() < 120:  # 2分钟冷却期
+                if (config.now_cst() - last_time).total_seconds() < 120:  # 2分钟冷却期
                     logger.debug(f"{stock_code} 补仓信号在冷却期内，跳过")
                     return False   
                          
@@ -187,7 +187,7 @@ class TradingStrategy:
 
                 if not hasattr(self, 'last_trade_time'):
                     self.last_trade_time = {}
-                self.last_trade_time[cool_key] = datetime.now()
+                self.last_trade_time[cool_key] = config.now_cst()
                 logger.info(f"{stock_code} 补仓成功，设置2分钟冷却期")
 
                 return order_id is not None
@@ -216,7 +216,7 @@ class TradingStrategy:
     #             return False
             
     #         # 检查是否已处理过该信号（防重复处理）
-    #         signal_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d_%H')}"
+    #         signal_key = f"{signal_type}_{stock_code}_{config.now_cst().strftime('%Y%m%d_%H')}"
     #         if signal_key in self.processed_signals:
     #             logger.debug(f"{stock_code} {signal_type} 信号已处理，跳过")
     #             return False
@@ -462,7 +462,7 @@ class TradingStrategy:
             
     #         if signal_type == 'stop_loss':
     #             # 检查是否已处理过该信号
-    #             signal_key = f"stop_loss_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+    #             signal_key = f"stop_loss_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
     #             if signal_key in self.processed_signals:
     #                 logger.debug(f"{stock_code} 止损信号已处理，跳过")
     #                 return False
@@ -494,7 +494,7 @@ class TradingStrategy:
             
     #         if signal_type in ['take_profit_half', 'take_profit_full']:
     #             # 检查是否已处理过该信号
-    #             signal_key = f"take_profit_{stock_code}_{signal_type}_{datetime.now().strftime('%Y%m%d')}"
+    #             signal_key = f"take_profit_{stock_code}_{signal_type}_{config.now_cst().strftime('%Y%m%d')}"
     #             if signal_key in self.processed_signals:
     #                 logger.debug(f"{stock_code} {signal_type} 止盈信号已处理，跳过")
     #                 return False
@@ -533,7 +533,7 @@ class TradingStrategy:
 
             if buy_signal:
                 # 检查是否已处理过该信号
-                signal_key = f"buy_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                signal_key = f"buy_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
                 if signal_key in self.processed_signals:
                     logger.debug(f"{stock_code} 买入信号已处理，跳过")
                     return False
@@ -610,7 +610,7 @@ class TradingStrategy:
 
             if sell_signal:
                 # 检查是否已处理过该信号
-                signal_key = f"sell_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                signal_key = f"sell_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
                 if signal_key in self.processed_signals:
                     logger.debug(f"{stock_code} 卖出信号已处理，跳过")
                     return False
@@ -702,7 +702,7 @@ class TradingStrategy:
 
                     if signal_type in ['take_profit_half', 'take_profit_full']:
                         logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
-                        retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                        retry_key = f"{signal_type}_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
 
                         with self.signal_lock:
                             retry_count = self.retry_counts.get(retry_key, 0)
@@ -810,7 +810,7 @@ class TradingStrategy:
 
                     if signal_type in ['take_profit_half', 'take_profit_full']:
                         logger.info(f"{stock_code} 处理待执行的{signal_type}信号")
-                        retry_key = f"{signal_type}_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                        retry_key = f"{signal_type}_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
 
                         with self.signal_lock:
                             retry_count = self.retry_counts.get(retry_key, 0)
@@ -860,7 +860,7 @@ class TradingStrategy:
             # 5. 检查技术指标买入信号
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
             if buy_signal:
-                signal_key = f"buy_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                signal_key = f"buy_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
                 if signal_key in self.processed_signals:
                     logger.debug(f"{stock_code} 买入信号今日已处理，跳过")
                 else:
@@ -879,7 +879,7 @@ class TradingStrategy:
             # 6. 检查技术指标卖出信号
             sell_signal = self.indicator_calculator.check_sell_signal(stock_code)
             if sell_signal:
-                sell_key = f"sell_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                sell_key = f"sell_{stock_code}_{config.now_cst().strftime('%Y%m%d')}"
                 if sell_key in self.processed_signals:
                     logger.debug(f"{stock_code} 卖出信号今日已处理，跳过")
                 else:
@@ -919,7 +919,7 @@ class TradingStrategy:
         logger.info(f"[订单文件] 检测到文件: {order_path}")
 
         archive_dir = getattr(config, 'ORDER_ARCHIVE_DIR', None)
-        today_str = datetime.now().strftime('%Y%m%d')
+        today_str = config.now_cst().strftime('%Y%m%d')
 
         try:
             with open(order_path, 'r', encoding='utf-8') as f:
@@ -964,7 +964,7 @@ class TradingStrategy:
         if archive_dir:
             try:
                 os.makedirs(archive_dir, exist_ok=True)
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                ts = config.now_cst().strftime('%Y%m%d_%H%M%S')
                 archive_name = f"trade_orders_{today_str}_{ts}.json"
                 shutil.move(order_path, os.path.join(archive_dir, archive_name))
                 logger.info(f"[订单文件] 已归档 → {archive_name} (成功{processed}/{len(orders)}条)")
@@ -987,7 +987,7 @@ class TradingStrategy:
         try:
             from xtquant import xtdata
             import datetime as _dt
-            yesterday = (_dt.datetime.now() - _dt.timedelta(days=1)).strftime('%Y%m%d')
+            yesterday = (_dt.config.now_cst() - _dt.timedelta(days=1)).strftime('%Y%m%d')
             hist = xtdata.get_market_data(
                 field_list=['close'], stock_list=[stock_code],
                 period='1d', start_time=yesterday, count=1

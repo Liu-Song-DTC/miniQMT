@@ -133,8 +133,19 @@ class PositionManager:
         self.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
         # 🔒 C2修复：添加内存数据库连接线程安全锁
         self.memory_conn_lock = threading.Lock()
+        self.sync_lock = threading.RLock()  # 可重入锁（必须在使用前初始化）
         self._create_memory_table()
         self._sync_db_to_memory()
+
+        # 模拟模式可选：从实盘导入持仓到内存DB
+        if (hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
+                and getattr(config, 'SIMULATION_IMPORT_REAL_POSITIONS', False)):
+            self._import_real_positions_for_simulation()
+
+        # 模拟模式可选：从配置种子持仓创建模拟持仓
+        if (hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
+                and getattr(config, 'SIMULATION_SEED_POSITIONS', None)):
+            self._seed_simulation_positions()
 
         # 添加模拟交易模式的提示日志
         if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
@@ -190,8 +201,7 @@ class PositionManager:
         self.market_data_circuit_until = 0  # 熔断结束时间戳
         self.market_data_circuit_log_ts = 0  # 熔断日志节流
 
-        # 🔴 P0修复：添加同步操作线程锁，防止并发调用导致递归异常
-        self.sync_lock = threading.RLock()  # 可重入锁
+        # 🔴 P0修复：正在删除的股票代码集合 (sync_lock 已提前初始化)
         self._deleting_stocks = set()  # 正在删除的股票代码集合
 
         # 网格交易数据库管理器(用于网格交易会话和记录)
@@ -463,6 +473,131 @@ class PositionManager:
             self.memory_conn.commit()
         logger.info("内存表已创建")
 
+    def _import_real_positions_for_simulation(self):
+        """模拟模式：短暂连接QMT拉取真实持仓，写入内存DB后立即断开"""
+        logger.info("[SIMULATION] 正在从实盘导入持仓...")
+        temp_trader = None
+        try:
+            temp_trader = _create_qmt_trader()
+            connect_result = temp_trader.connect()
+            if connect_result is None:
+                logger.warning("[SIMULATION] QMT 连接失败，无法导入实盘持仓，模拟持仓保持磁盘快照")
+                return
+
+            logger.info("[SIMULATION] QMT 临时连接成功，拉取实盘持仓...")
+            real_positions = temp_trader.position()
+            if real_positions is None or (hasattr(real_positions, 'empty') and real_positions.empty):
+                logger.warning("[SIMULATION] 实盘无持仓，模拟持仓保持磁盘快照")
+                return
+
+            logger.info(f"[SIMULATION] 拉取到 {len(real_positions)} 只实盘持仓，写入内存DB")
+            self._sync_real_positions_to_memory(real_positions)
+            self._increment_data_version()
+
+            # 统计导入持仓的总成本
+            total_cost = 0.0
+            for _, row in real_positions.iterrows():
+                try:
+                    volume = float(row.get('股票余额', 0) or 0)
+                    cost_price = float(row.get('成本价', 0) or 0)
+                    total_cost += volume * cost_price
+                except (ValueError, TypeError):
+                    pass
+            logger.info(
+                f"[SIMULATION] 实盘持仓导入完成: {len(real_positions)} 只, "
+                f"总成本约 ¥{total_cost:,.2f}, 模拟余额 ¥{config.SIMULATION_BALANCE:,.2f}"
+            )
+        except Exception as e:
+            logger.error(f"[SIMULATION] 导入实盘持仓失败: {e}", exc_info=True)
+        finally:
+            if temp_trader is not None:
+                try:
+                    if hasattr(temp_trader, 'stop'):
+                        temp_trader.stop()
+                    elif hasattr(temp_trader, 'close'):
+                        temp_trader.close()
+                except Exception:
+                    pass
+
+    def _seed_simulation_positions(self):
+        """模拟模式：从 SIMULATION_SEED_POSITIONS 配置创建种子持仓"""
+        seed_list = config.SIMULATION_SEED_POSITIONS
+        if not seed_list or not isinstance(seed_list, list):
+            return
+
+        logger.info(f"[SIMULATION] 正在从配置创建 {len(seed_list)} 只种子持仓...")
+        created = 0
+        total_cost = 0.0
+
+        for entry in seed_list:
+            try:
+                stock_code = str(entry.get("stock_code", "")).strip()
+                if not stock_code:
+                    logger.warning(f"[SIMULATION] 种子持仓缺少 stock_code，跳过: {entry}")
+                    continue
+
+                volume = int(entry.get("volume", 0))
+                if volume <= 0:
+                    logger.warning(f"[SIMULATION] {stock_code} volume<=0，跳过")
+                    continue
+
+                # 获取当前市价
+                cost_price = float(entry.get("cost_price", 0) or 0)
+                current_price = cost_price
+                if cost_price <= 0:
+                    current_price = 0.0
+                    try:
+                        latest = self.data_manager.get_latest_data(stock_code)
+                        if latest and isinstance(latest, dict) and latest.get("lastPrice"):
+                            current_price = float(latest["lastPrice"])
+                    except Exception:
+                        pass
+                    if current_price <= 0:
+                        logger.warning(f"[SIMULATION] {stock_code} 无法获取市价，跳过")
+                        continue
+                    cost_price = current_price
+
+                # 确保证券名称已加载
+                self.data_manager.ensure_subscribed(stock_code)
+
+                market_value = current_price * volume
+                open_date = config.now_cst().strftime("%Y-%m-%d %H:%M:%S")
+                stop_loss_price = self.calculate_stop_loss_price(cost_price, current_price, False)
+
+                success = self._simulate_update_position(
+                    stock_code=stock_code,
+                    volume=volume,
+                    cost_price=cost_price,
+                    available=volume,
+                    current_price=current_price,
+                    profit_triggered=False,
+                    highest_price=current_price,
+                    open_date=open_date,
+                    stop_loss_price=stop_loss_price,
+                )
+
+                if success:
+                    config.SIMULATION_BALANCE -= market_value
+                    total_cost += market_value
+                    created += 1
+                    logger.info(
+                        f"[SIMULATION] {stock_code} 种子持仓创建成功: "
+                        f"数量={volume}, 成本=¥{cost_price:.2f}, 市值=¥{market_value:.2f}"
+                    )
+                else:
+                    logger.warning(f"[SIMULATION] {stock_code} 种子持仓创建失败")
+            except Exception as e:
+                logger.error(f"[SIMULATION] 种子持仓创建异常 {entry.get('stock_code', '?')}: {e}", exc_info=True)
+
+        if created > 0:
+            self._increment_data_version()
+            logger.info(
+                f"[SIMULATION] 种子持仓创建完成: {created}/{len(seed_list)} 只, "
+                f"总市值 ¥{total_cost:,.2f}, 剩余余额 ¥{config.SIMULATION_BALANCE:,.2f}"
+            )
+        else:
+            logger.warning("[SIMULATION] 种子持仓创建: 0 只成功")
+
     def _sync_real_positions_to_memory(self, real_positions_df):
         """将实盘持仓数据同步到内存数据库"""
         # 🔴 P0修复：添加线程锁保护，防止并发调用
@@ -536,7 +671,7 @@ class PositionManager:
                         if result:
                             # 如果存在，则更新持仓信息，但不修改open_date
                             profit_triggered = result[0] if result[0] is not None else False
-                            open_date = result[1] if result[1] is not None else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            open_date = result[1] if result[1] is not None else config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                             highest_price = result[2] if result[2] is not None else 0.0
                             stop_loss_price = result[3] if result[3] is not None else 0.0
                             base_cost_price = result[4] if result[4] is not None else None
@@ -564,7 +699,7 @@ class PositionManager:
                                 available=available,
                                 market_value=market_value,
                                 current_price=current_price,
-                                open_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                open_date=config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                             )
 
                         # 实盘持仓（无论新旧）都确保已订阅到 xtdata 实时推送。
@@ -876,7 +1011,7 @@ class PositionManager:
                         logger.info(f"SQLite同步：删除了 {deleted_count} 个过期的持仓记录")
 
                 if not memory_positions.empty:
-                    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    now = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                     update_count = 0
                     insert_count = 0
 
@@ -935,7 +1070,7 @@ class PositionManager:
                             # 插入新记录，使用当前日期作为 open_date
                             # available 字段在 SQLite 层不持久化（由实盘数据实时覆盖），
                             # INSERT 时固定写 0，防止过期快照在系统重启时被误读。
-                            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            current_date = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                             cursor.execute("""
                                 INSERT INTO positions (stock_code, stock_name, volume, available, cost_price, base_cost_price, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, last_update)
                                 VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1270,8 +1405,8 @@ class PositionManager:
                 'profit_triggered': False,
                 'profit_breakout_triggered': False,
                 'breakout_highest_price': 0.0,
-                'open_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'open_date': config.now_cst().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_update': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
             }
             
             for field, default_value in strategy_defaults.items():
@@ -1552,7 +1687,7 @@ class PositionManager:
 
 
             # 获取当前时间
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
 
             def _fmt_optional_price(value):
                 return f"{value:.2f}" if value is not None else "None"
@@ -1762,7 +1897,7 @@ class PositionManager:
             return {
                 'version': self.data_version,
                 'changed': self.data_changed,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': config.now_cst().isoformat()
             }
 
     def mark_data_consumed(self):
@@ -1796,16 +1931,16 @@ class PositionManager:
                     if isinstance(open_date_str, str):
                         open_date = datetime.strptime(open_date_str, '%Y-%m-%d %H:%M:%S')
                     else:
-                        open_date = datetime.now()
+                        open_date = config.now_cst()
                     
                     open_date_formatted = open_date.strftime('%Y-%m-%d')
                 except (ValueError, TypeError):
-                    open_date_formatted = datetime.now().strftime('%Y-%m-%d')
+                    open_date_formatted = config.now_cst().strftime('%Y-%m-%d')
 
                 # open_date_formatted 已在上方处理完成（避免解析失败导致未定义）
 
                 # Get today's date for getStockData
-                today_formatted = datetime.now().strftime('%Y-%m-%d')
+                today_formatted = config.now_cst().strftime('%Y-%m-%d')
 
                 # ===== 使用缓存的历史最高价（避免频繁调用行情接口）=====
                 highest_price = 0.0
@@ -1874,7 +2009,7 @@ class PositionManager:
                             WHERE stock_code = ?
                         """, (
                             round(highest_price, 2),
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            config.now_cst().strftime('%Y-%m-%d %H:%M:%S'),
                             stock_code
                         ))
                         self.memory_conn.commit()
@@ -1933,7 +2068,7 @@ class PositionManager:
                     # 安全处理open_date
                     open_date = position.get('open_date')
                     if open_date is None:
-                        open_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        open_date = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                     
                     # 获取最新价格
                     try:
@@ -2009,7 +2144,7 @@ class PositionManager:
                     'market_value': float(market_value),
                     'total_asset': total_asset,  # 添加总资产字段
                     'profit_loss': 0.0,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
                 }
 
             # 使用qmt_trader获取账户信息
@@ -2030,7 +2165,7 @@ class PositionManager:
                 'frozen_cash': float(account_df['冻结金额'].iloc[0]) if '冻结金额' in account_df.columns and not account_df['冻结金额'].empty else 0.0,
                 'market_value': float(account_df['持仓市值'].iloc[0]) if '持仓市值' in account_df.columns and not account_df['持仓市值'].empty else 0.0,
                 'total_asset': float(account_df['总资产'].iloc[0]) if '总资产' in account_df.columns and not account_df['总资产'].empty else 0.0,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'timestamp': config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
             }
             return account_info
         except Exception as e:
@@ -2887,8 +3022,8 @@ class PositionManager:
             logger.info(f"[模拟交易] 开始处理 {stock_code} 买入，数量: {buy_volume}, 价格: {buy_price:.2f}")
             
             # 记录交易到数据库
-            trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            trade_id = f"SIM_{datetime.now().strftime('%Y%m%d%H%M%S')}_{stock_code}_BUY"
+            trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
+            trade_id = f"SIM_{config.now_cst().strftime('%Y%m%d%H%M%S')}_{stock_code}_BUY"
             
             # 保存交易记录
             trade_saved = self._save_simulated_trade_record(
@@ -2946,7 +3081,7 @@ class PositionManager:
                 current_price = buy_price
                 profit_triggered = False
                 highest_price = buy_price
-                open_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # 新开仓时间
+                open_date = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')  # 新开仓时间
                 stock_name = self.data_manager.get_stock_name(stock_code)
                 # 新建仓：基准成本价=买入价格
                 base_cost_price = buy_price
@@ -3050,7 +3185,7 @@ class PositionManager:
                 p_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
             # 获取当前时间
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
 
             if open_date is None:
                 open_date = now
@@ -3144,8 +3279,8 @@ class PositionManager:
             logger.info(f"[模拟交易] 卖出前持仓：总数={current_volume}, 可用={current_available}, 成本价={current_cost_price:.2f}")
             
             # 记录交易到数据库
-            trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            trade_id = f"SIM_{datetime.now().strftime('%Y%m%d%H%M%S')}_{stock_code}_{sell_type}"
+            trade_time = config.now_cst().strftime('%Y-%m-%d %H:%M:%S')
+            trade_id = f"SIM_{config.now_cst().strftime('%Y%m%d%H%M%S')}_{stock_code}_{sell_type}"
             
             # 保存交易记录
             trade_saved = self._save_simulated_trade_record(
@@ -3415,7 +3550,7 @@ class PositionManager:
                     profit_ratio,
                     round(updated_highest_price, 2),
                     round(stop_loss_price, 2) if stop_loss_price else None,
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    config.now_cst().strftime('%Y-%m-%d %H:%M:%S'),
                     stock_code
                 ))
 
@@ -3750,22 +3885,18 @@ class PositionManager:
             return pd.DataFrame()
 
     def get_pending_signals(self):
-        """获取待处理的信号 - 增加时效性检查"""
+        """获取待处理的信号 - 增加时效性检查，就地清理过期信号避免替换dict丢信号"""
         with self.signal_lock:
-            current_time = datetime.now()
-            valid_signals = {}
-            
+            current_time = config.now_cst()
+            expired = []
             for stock_code, signal_data in self.latest_signals.items():
                 signal_timestamp = signal_data.get('timestamp', current_time)
-                # 信号有效期5分钟
-                if (current_time - signal_timestamp).total_seconds() < 300:
-                    valid_signals[stock_code] = signal_data
-                else:
-                    logger.debug(f"{stock_code} 信号已过期，自动清除")
-            
-            # 更新有效信号
-            self.latest_signals = valid_signals
-            return dict(valid_signals)
+                if (current_time - signal_timestamp).total_seconds() >= 300:
+                    expired.append(stock_code)
+            for stock_code in expired:
+                logger.debug(f"{stock_code} 信号已过期，自动清除")
+                self.latest_signals.pop(stock_code, None)
+            return dict(self.latest_signals)
     
     def mark_signal_processed(self, stock_code):
         """标记信号已处理 - 增加状态跟踪"""
@@ -3811,7 +3942,7 @@ class PositionManager:
                     self.latest_signals[stock_code] = {
                         'type': signal_type,
                         'info': signal_info,
-                        'timestamp': datetime.now()
+                        'timestamp': config.now_cst()
                     }
                     logger.info(f"🔔 {stock_code} 检测到信号: {signal_type},等待策略处理")
                 else:
@@ -4160,7 +4291,7 @@ class PositionManager:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE positions SET profit_triggered=1, last_update=? WHERE stock_code=?",
-                (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_code)
+                (config.now_cst().strftime('%Y-%m-%d %H:%M:%S'), stock_code)
             )
             conn.commit()
             conn.close()
@@ -4182,7 +4313,7 @@ class PositionManager:
             with self.pending_orders_lock:
                 self.pending_orders[stock_code] = {
                     'order_id': order_id,
-                    'submit_time': datetime.now(),
+                    'submit_time': config.now_cst(),
                     'signal_type': signal_type,
                     'signal_info': signal_info,
                     'stock_code': stock_code
@@ -4341,7 +4472,7 @@ class PositionManager:
                     submit_time = order_info['submit_time']
                     signal_type = order_info.get('signal_type')
                     timeout_minutes = self._get_pending_order_timeout_minutes(signal_type)
-                    elapsed_minutes = (datetime.now() - submit_time).total_seconds() / 60
+                    elapsed_minutes = (config.now_cst() - submit_time).total_seconds() / 60
 
                     # 检查是否超时
                     if elapsed_minutes >= timeout_minutes:
@@ -4373,7 +4504,7 @@ class PositionManager:
                 'timeout_minutes',
                 self._get_pending_order_timeout_minutes(signal_type)
             )
-            elapsed = (datetime.now() - submit_time).total_seconds() / 60
+            elapsed = (config.now_cst() - submit_time).total_seconds() / 60
 
             logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
                          f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={timeout_minutes}分钟)，"

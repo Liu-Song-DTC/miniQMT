@@ -43,7 +43,7 @@ class PreMarketSyncScheduler:
 
         返回: datetime对象
         """
-        now = datetime.now()
+        now = config.now_cst()
         target = now.replace(hour=self.sync_time[0], minute=self.sync_time[1],
                            second=0, microsecond=0)
 
@@ -107,7 +107,7 @@ class PreMarketSyncScheduler:
         # 1. 加载持久化的下次执行时间
         persisted_time = self.load_persisted_schedule()
 
-        now = datetime.now()
+        now = config.now_cst()
 
         # 2. 判断是否需要补偿执行
         if persisted_time and persisted_time < now:
@@ -145,7 +145,7 @@ class PreMarketSyncScheduler:
         # 持久化到数据库
         self.save_persisted_schedule(next_time)
 
-        delay = (next_time - datetime.now()).total_seconds()
+        delay = (next_time - config.now_cst()).total_seconds()
         logger.info(f"下次盘前同步: {next_time.strftime('%Y-%m-%d %H:%M:%S')} (倒计时{delay/3600:.1f}小时)")
 
         self.timer = threading.Timer(delay, self._sync_and_reschedule)
@@ -181,7 +181,7 @@ def perform_premarket_sync():
 
     start_time = time.time()
     results = {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': config.now_cst().isoformat(),
         'configs_synced': 0,
         'switches_synced': 0,
         'xtdata_reconnected': False,

@@ -268,6 +268,7 @@ class IndicatorCalculator:
                 return None
 
             close = np.array(data['close'].iloc[:, 0].values, dtype=float)
+            open_arr = np.array(data['open'].iloc[:, 0].values, dtype=float)
             high = np.array(data['high'].iloc[:, 0].values, dtype=float)
             low = np.array(data['low'].iloc[:, 0].values, dtype=float)
             volume = np.array(data['volume'].iloc[:, 0].values, dtype=float)
@@ -312,8 +313,12 @@ class IndicatorCalculator:
                 if avg_price > 0:
                     trend_slope = float(slope / avg_price)
 
+            prev_close_val = float(close[-2]) if len(close) >= 2 else float(close[-1])
+
             return {
                 'close': float(close[-1]),
+                'open': float(open_arr[-1]),
+                'prev_close': prev_close_val,
                 'boll_upper': float(upper[-1]),
                 'boll_mid': float(mid[-1]),
                 'boll_lower': float(lower[-1]),

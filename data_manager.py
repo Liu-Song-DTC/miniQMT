@@ -75,7 +75,7 @@ class MarketDataHealthTracker:
         return self._score_events(events)
 
     def snapshot(self):
-        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        generated_at = config.now_cst().strftime("%Y-%m-%d %H:%M:%S")
         with self._lock:
             keys = list(self._events.keys())
 
@@ -980,7 +980,7 @@ class DataManager:
         xt_start_date = self._format_xt_history_date(start_date)
         xt_end_date = self._format_xt_history_date(end_date)
         if not xt_start_date:
-            xt_start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d')
+            xt_start_date = (config.now_cst() - timedelta(days=90)).strftime('%Y%m%d')
 
         # xtdata 优先（QMT 客户端本地免费数据），失败后 fallback 到 Tushare/Mootdx
         if self.xt:
@@ -1108,7 +1108,7 @@ class DataManager:
                 
                 # 创建包含默认值的DataFrame
                 df = pd.DataFrame({
-                    'date': [datetime.now().strftime('%Y-%m-%d')],
+                    'date': [config.now_cst().strftime('%Y-%m-%d')],
                     'open': [0.0],
                     'high': [0.0],
                     'low': [0.0],
@@ -1144,7 +1144,7 @@ class DataManager:
 
         if not end_date:
             # 默认到今天
-            end_date = datetime.now().strftime('%Y%m%d')
+            end_date = config.now_cst().strftime('%Y%m%d')
 
         # 如果 start_date > end_date（数据已是最新），跳过无效下载
         if start_date and end_date and start_date > end_date:
@@ -1449,8 +1449,8 @@ class DataManager:
         ts_code = self._to_tushare_code(stock_code)
 
         # 日期格式转换
-        ts_start = start_date if start_date else (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
-        ts_end = end_date if end_date else datetime.now().strftime('%Y%m%d')
+        ts_start = start_date if start_date else (config.now_cst() - timedelta(days=365)).strftime('%Y%m%d')
+        ts_end = end_date if end_date else config.now_cst().strftime('%Y%m%d')
 
         import concurrent.futures
         start_ts = time.time()
@@ -2166,7 +2166,7 @@ class DataManager:
         
         if result and result[0]:
             latest_date = self._normalize_date_arg(result[0]) or result[0]
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = config.now_cst().strftime('%Y-%m-%d')
             if latest_date >= today:
                 logger.debug(f"{stock_code} 历史数据已最新(latest={latest_date})，跳过下载")
                 return

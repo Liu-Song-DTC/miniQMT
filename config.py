@@ -4,7 +4,15 @@
 """
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 北京时间 (UTC+8)，用于所有交易时间相关逻辑
+_CST = timezone(timedelta(hours=8))
+
+
+def now_cst():
+    """返回当前北京时间 datetime 对象，确保交易时间判断、会话起止时间等不受系统时区影响"""
+    return datetime.now(_CST)
 
 
 # ======================= .env fallback 加载 =======================
@@ -85,6 +93,8 @@ def _env_bool(name: str, default: bool) -> bool:
 # 模拟交易模式开关：环境变量 ENABLE_SIMULATION_MODE 优先（启动器控制），
 # 否则用源码默认 True（避免开发者本地误连实盘）。
 ENABLE_SIMULATION_MODE = _env_bool("ENABLE_SIMULATION_MODE", True)
+# 模拟模式是否从实盘导入持仓：True 时启动会短暂连接 QMT 拉取真实持仓写入内存DB，然后断开
+SIMULATION_IMPORT_REAL_POSITIONS = _env_bool("SIMULATION_IMPORT_REAL_POSITIONS", False)
 ENABLE_AUTO_OPERATION = True    # 全局自动操作总开关：关闭时自动策略不产生新交易动作
 ENABLE_AUTO_TRADING = True      # 非网格自动策略执行开关（不影响网格交易）
 ENABLE_ALLOW_BUY = True         # 是否允许买入操作
@@ -376,6 +386,14 @@ POSITION_UNIT = 35000  # 每次买入金额
 MAX_POSITION_VALUE = 70000  # 单只股票最大持仓金额
 MAX_TOTAL_POSITION_RATIO = 0.95  # 最大总持仓比例（占总资金）
 SIMULATION_BALANCE = 300000 # 模拟持仓
+
+# 模拟模式启动种子持仓：启动时自动创建这些模拟持仓，cost_price 填 0 则用 xtdata 实时价
+# 格式: [{"stock_code": "000001.SZ", "volume": 1000, "cost_price": 12.5}, ...]
+SIMULATION_SEED_POSITIONS = [
+    {"stock_code": "603026.SH", "volume": 1000, "cost_price": 0},
+    {"stock_code": "300657.SZ", "volume": 1000, "cost_price": 0},
+    {"stock_code": "603296.SH", "volume": 1000, "cost_price": 0},
+]
 
 # ======================= 补仓策略配置（止盈止损策略专用） =======================
 # 说明：此配置仅用于动态止盈止损策略的补仓功能，与网格交易策略无关
@@ -910,10 +928,10 @@ SWING_BUY_COOLDOWN = 120             # 买入冷却时间（秒）
 SWING_SELL_COOLDOWN = 120            # 卖出冷却时间（秒）
 SWING_MAX_DAILY_BUY_VOLUME_RATIO = 0.5   # 每日最大买入量占底仓比例
 SWING_MAX_DAILY_SELL_VOLUME_RATIO = 0.5  # 每日最大卖出量占底仓比例
-SWING_MIN_PROFIT_RATIO = 0.002       # 最小盈利要求（0.2%，扣除手续费后）
+SWING_MIN_PROFIT_RATIO = 0.005       # 最小盈利要求（0.5%，扣除手续费后留净利差）
 
 # 监控与控制
-SWING_MONITOR_INTERVAL = 15          # 摆动交易监控循环间隔（秒）
+SWING_MONITOR_INTERVAL = 10          # 摆动交易监控循环间隔（秒），模拟盘验证可设10s，实盘建议15-20s
 SWING_INDICATOR_CACHE_TTL = 60       # 指标缓存有效期（秒）
 SWING_CONSECUTIVE_FAILURE_LIMIT = 3  # 连续失败多少次后跳过该股票
 SWING_FAILURE_COOLDOWN = 300         # 连续失败后跳过时间（秒）
@@ -940,9 +958,9 @@ SWING_TREND_PERIOD = 20               # 趋势检测K线数量（5分钟线）
 SWING_TREND_SLOPE_THRESHOLD = 0.0008  # 斜率阈值（每根K线0.08%，约日化2%）
 # 趋势市顺向操作参数
 SWING_TREND_BUY_BOOST = 1             # 上升趋势买入阈值降低（更容易触发买入）
-SWING_TREND_SELL_SUPPRESS = 2         # 上升趋势卖出阈值提高（更难触发卖出）
+SWING_TREND_SELL_SUPPRESS = 1         # 上升趋势卖出阈值提高（模拟盘验证用保守值，实盘可上调）
 SWING_TREND_SELL_BOOST = 1            # 下降趋势卖出阈值降低
-SWING_TREND_BUY_SUPPRESS = 2          # 下降趋势买入阈值提高
+SWING_TREND_BUY_SUPPRESS = 2          # 下降趋势买入阈值提高（不再在下跌趋势中轻易买入）
 
 
 # ======================= 盘后全市场数据下载 =======================
