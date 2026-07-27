@@ -226,6 +226,48 @@ class IndicatorCalculator:
             logger.error(f"保存指标数据时出错: {str(e)}")
             self.conn.rollback()
 
+    @staticmethod
+    def _find_pivot_highs(close, lookback=5):
+        n = len(close)
+        pivots = []
+        for i in range(lookback, n - lookback):
+            left = close[i-lookback:i]
+            right = close[i+1:i+lookback+1]
+            if all(close[i] >= x for x in left) and all(close[i] >= x for x in right):
+                pivots.append({'price': float(close[i]), 'idx': i})
+        return pivots[-2:] if len(pivots) >= 2 else []
+
+    @staticmethod
+    def _find_pivot_lows(close, lookback=5):
+        n = len(close)
+        pivots = []
+        for i in range(lookback, n - lookback):
+            left = close[i-lookback:i]
+            right = close[i+1:i+lookback+1]
+            if all(close[i] <= x for x in left) and all(close[i] <= x for x in right):
+                pivots.append({'price': float(close[i]), 'idx': i})
+        return pivots[-2:] if len(pivots) >= 2 else []
+
+    @staticmethod
+    def _detect_bearish_divergence(close, rsi, macd_hist, lookback=5):
+        pivots = IndicatorCalculator._find_pivot_highs(close, lookback)
+        if len(pivots) < 2:
+            return False
+        prev, last = pivots
+        return last['price'] > prev['price'] and \
+            rsi[last['idx']] < rsi[prev['idx']] and \
+            macd_hist[last['idx']] < macd_hist[prev['idx']]
+
+    @staticmethod
+    def _detect_bullish_divergence(close, rsi, macd_hist, lookback=5):
+        pivots = IndicatorCalculator._find_pivot_lows(close, lookback)
+        if len(pivots) < 2:
+            return False
+        prev, last = pivots
+        return last['price'] < prev['price'] and \
+            rsi[last['idx']] > rsi[prev['idx']] and \
+            macd_hist[last['idx']] > macd_hist[prev['idx']]
+
     def calculate_intraday_indicators(self, stock_code, period=None, count=None):
         """
         计算日内技术指标（盘中高抛低吸用）
@@ -250,11 +292,15 @@ class IndicatorCalculator:
                 logger.warning(f"[{stock_code}] xtquant.xtdata 不可用，跳过日内指标计算")
                 return None
 
+            # 使用 start_time/end_time 替代 count（xtdata count 参数对日内数据不生效）
+            end_dt = config.now_cst().replace(hour=23, minute=59, second=59)
+            start_dt = end_dt - __import__('datetime').timedelta(days=10)
             data = xtdata.get_market_data(
                 field_list=['open', 'high', 'low', 'close', 'volume'],
                 stock_list=[stock_code],
                 period=period,
-                count=count,
+                start_time=start_dt.strftime('%Y%m%d%H%M%S'),
+                end_time=end_dt.strftime('%Y%m%d%H%M%S'),
                 dividend_type='front',
                 fill_data=True,
             )
@@ -267,11 +313,11 @@ class IndicatorCalculator:
                 logger.debug(f"[{stock_code}] 日内K线数据为空(盘后无新数据)")
                 return None
 
-            close = np.array(data['close'].iloc[:, 0].values, dtype=float)
-            open_arr = np.array(data['open'].iloc[:, 0].values, dtype=float)
-            high = np.array(data['high'].iloc[:, 0].values, dtype=float)
-            low = np.array(data['low'].iloc[:, 0].values, dtype=float)
-            volume = np.array(data['volume'].iloc[:, 0].values, dtype=float)
+            close = np.array(data['close'].iloc[0].values, dtype=float)
+            open_arr = np.array(data['open'].iloc[0].values, dtype=float)
+            high = np.array(data['high'].iloc[0].values, dtype=float)
+            low = np.array(data['low'].iloc[0].values, dtype=float)
+            volume = np.array(data['volume'].iloc[0].values, dtype=float)
 
             if len(close) < max(config.SWING_BOLL_PERIOD, config.SWING_RSI_PERIOD,
                                 config.SWING_MACD_SLOW + config.SWING_MACD_SIGNAL,
@@ -315,6 +361,34 @@ class IndicatorCalculator:
 
             prev_close_val = float(close[-2]) if len(close) >= 2 else float(close[-1])
 
+            # 1分钟K线快周期指标（用于精确确认和触发价）
+            close_1m = float(close[-1])
+            rsi_1m = float(rsi_series[-1])
+            macd_hist_1m = float(hist[-1])
+            prev_macd_hist_1m = float(hist[-2]) if len(hist) >= 2 else 0.0
+            if getattr(config, 'SWING_USE_1M_CONFIRMATION', False):
+                try:
+                    fast_period = getattr(config, 'SWING_KLINE_PERIOD_FAST', '1m')
+                    fast_count = getattr(config, 'SWING_INTRADAY_BARS_FAST', 240)
+                    data_1m = xtdata.get_market_data(
+                        field_list=['close'],
+                        stock_list=[stock_code],
+                        period=fast_period,
+                        count=fast_count,
+                        dividend_type='front',
+                        fill_data=True,
+                    )
+                    if data_1m is not None and not data_1m['close'].empty and data_1m['close'].shape[0] >= 20:
+                        c1 = np.array(data_1m['close'].iloc[:, 0].values, dtype=float)
+                        close_1m = float(c1[-1])
+                        r1 = RSI(c1, N=min(14, len(c1) - 2))
+                        rsi_1m = float(r1[-1]) if len(r1) > 0 else 50.0
+                        _, _, h1 = MACD(c1, SHORT=6, LONG=13, M=5)
+                        macd_hist_1m = float(h1[-1]) if len(h1) > 0 else 0.0
+                        prev_macd_hist_1m = float(h1[-2]) if len(h1) >= 2 else 0.0
+                except Exception:
+                    pass
+
             return {
                 'close': float(close[-1]),
                 'open': float(open_arr[-1]),
@@ -337,6 +411,14 @@ class IndicatorCalculator:
                 'prev_kdj_d': float(kdj_d[-2]) if len(kdj_d) >= 2 else 50.0,
                 'trend_slope': trend_slope,
                 'timestamp': datetime.now().isoformat(),
+                # 1分钟快周期
+                'close_1m': close_1m,
+                'rsi_1m': rsi_1m,
+                'macd_hist_1m': macd_hist_1m,
+                'prev_macd_hist_1m': prev_macd_hist_1m,
+                # Pivot 背离检测（标准5-bar pivot lookback，比较最近两次同向 pivot）
+                'div_bearish': self._detect_bearish_divergence(close, rsi_series, hist),
+                'div_bullish': self._detect_bullish_divergence(close, rsi_series, hist),
             }
 
         except Exception as e:

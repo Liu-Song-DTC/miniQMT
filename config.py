@@ -383,16 +383,16 @@ QMT_RPC_ALLOW_ORDER = _env_bool("QMT_RPC_ALLOW_ORDER", False)
 # ======================= 策略配置 =======================
 # 仓位管理
 POSITION_UNIT = 35000  # 每次买入金额
-MAX_POSITION_VALUE = 70000  # 单只股票最大持仓金额
+MAX_POSITION_VALUE = 150000  # 单只股票最大持仓金额
 MAX_TOTAL_POSITION_RATIO = 0.95  # 最大总持仓比例（占总资金）
 SIMULATION_BALANCE = 300000 # 模拟持仓
 
 # 模拟模式启动种子持仓：启动时自动创建这些模拟持仓，cost_price 填 0 则用 xtdata 实时价
 # 格式: [{"stock_code": "000001.SZ", "volume": 1000, "cost_price": 12.5}, ...]
 SIMULATION_SEED_POSITIONS = [
-    {"stock_code": "603026.SH", "volume": 1000, "cost_price": 0},
-    {"stock_code": "300657.SZ", "volume": 1000, "cost_price": 0},
-    {"stock_code": "603296.SH", "volume": 1000, "cost_price": 0},
+    {"stock_code": "300017.SZ", "volume": 1000, "cost_price": 0},   # 网宿科技
+    {"stock_code": "600489.SH", "volume": 1000, "cost_price": 0},   # 中金黄金
+    {"stock_code": "603296.SH", "volume": 1000, "cost_price": 0},   # 华勤技术
 ]
 
 # ======================= 补仓策略配置（止盈止损策略专用） =======================
@@ -425,8 +425,16 @@ ENABLE_STOP_LOSS_BUY = True  # 是否启用止损补仓功能
 # 统一的止损比例
 STOP_LOSS_RATIO = -0.075  # 固定止损比例：成本价下跌7.5%触发止损
 
+# ⭐ 加速下跌卖出策略（v3.8.0）
+# 在固定止损触发前，通过日内跌幅 + 破位检测提前卖出，减少亏损
+ENABLE_ACCELERATED_DECLINE_SELL = True   # 加速下跌卖出开关
+ACCELERATED_DECLINE_INTRADAY_DROP = -0.03  # 日内跌幅阈值（相对昨收，-3%触发）
+ACCELERATED_DECLINE_BREAK_PREV_LOW = True   # 是否要求跌破前日最低价（双重确认）
+ACCELERATED_DECLINE_MIN_VOLUME = 100        # 最小持仓数量，低于此数不触发
+
 # 动态止盈配置
-ENABLE_DYNAMIC_STOP_PROFIT = True  # 启用动态止盈功能
+ENABLE_DYNAMIC_STOP_PROFIT = True  # 启用动态止盈止损检测（止损不受ENABLE_TAKE_PROFIT影响）
+ENABLE_TAKE_PROFIT = False  # 止盈开关：True=止盈+止损，False=仅止损（不止盈）
 INITIAL_TAKE_PROFIT_RATIO = 0.06   # 首次止盈触发阈值：盈利6%时触发
 INITIAL_TAKE_PROFIT_PULLBACK_RATIO = 0.005  # 回撤比例：0.5%（可配置）
 INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = 0.6  # 首次止盈卖出比例
@@ -512,7 +520,7 @@ CONFIG_PARAM_RANGES = {
     "stockGainSellPencent": {"min": 1.0, "max": 100.0, "type": "float", "desc": "首次盈利平仓卖出比例(%)"},
     "stopLossBuy": {"min": 1.0, "max": 20.0, "type": "float", "desc": "补仓跌幅(%)"},
     "stockStopLoss": {"min": 1.0, "max": 20.0, "type": "float", "desc": "止损比例(%)"},
-    "singleStockMaxPosition": {"min": 10000, "max": 100000, "type": "float", "desc": "单只股票最大持仓"},
+    "singleStockMaxPosition": {"min": 10000, "max": 200000, "type": "float", "desc": "单只股票最大持仓"},
     "totalMaxPosition": {"min": 50000, "max": 1000000, "type": "float", "desc": "最大总持仓"},
     "connectPort": {"min": 1, "max": 65535, "type": "int", "desc": "连接端口"}
 }
@@ -782,7 +790,7 @@ SELL_ALERT_CONFIG = {
 # ⭐ 网格交易总开关（独立控制，与ENABLE_AUTO_TRADING互不影响）
 # - ENABLE_GRID_TRADING = True：启用网格交易检测和执行
 # - ENABLE_GRID_TRADING = False：完全禁用网格交易功能
-ENABLE_GRID_TRADING = True  # 启用后才能使用网格交易功能
+ENABLE_GRID_TRADING = False  # 已由摆动交易接管
 
 # 回调触发机制
 GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易
@@ -791,14 +799,12 @@ GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易
 GRID_LEVEL_COOLDOWN = 60  # 同一档位60秒内不重复触发
 
 # 成功买入后的最短间隔(秒) - 防止级联买入过快
-# 9:25开盘后若价格已低于下轨，连续跌穿多个档位会快速触发多次买入
-# 设为300(5分钟)可避免在极端开盘波动中过快消耗 max_investment
-GRID_BUY_COOLDOWN = 300  # 0=不限制(向后兼容默认值)；建议实盘设为 300
+# 60s的档位冷却已足够防止同一档位重复触发，120s全局冷却在快速下跌中不会错失低位档位
+GRID_BUY_COOLDOWN = 120  # 0=不限制(向后兼容默认值)
 
-# 成功卖出后的最短间隔(秒) - 防止价格在上轨附近震荡时级联触发多次卖出
-# 与 GRID_BUY_COOLDOWN 对称（A-4/B-5修复）：下单成功后立即记录冷却时间，
-# 即使 DB 写入失败，冷却保护依然有效，阻止重复下单。
-GRID_SELL_COOLDOWN = 300  # 0=不限制；建议实盘设为 300
+# 成功卖出后的最短间隔(秒) — 120s基础冷却 + 自适应减半(涨超2%时降至60s)
+# 下单成功后立即记录冷却时间，即使 DB 写入失败，冷却保护依然有效
+GRID_SELL_COOLDOWN = 120  # 0=不限制
 
 # 网格实盘委托运行期对账：成交/委托推送漏掉时，定期用券商当日委托兜底确认 pending 订单。
 GRID_ORDER_RECONCILE_INTERVAL = 15  # 秒；0=禁用运行期对账
@@ -885,16 +891,21 @@ def get_grid_default_config(position_market_value: float) -> dict:
 ENABLE_SWING_TRADING = True          # 盘中高抛低吸总开关
 
 # 日内K线数据
-SWING_KLINE_PERIOD = "5m"            # K线周期（5分钟）
-SWING_INTRADAY_BARS = 120            # 获取K线条数（120根5分线=10小时，覆盖全天）
+SWING_KLINE_PERIOD = "5m"            # 主K线周期（5分钟，趋势+信号打分）
+SWING_KLINE_PERIOD_FAST = "1m"       # 快K线周期（1分钟，精确确认+触发价）
+SWING_INTRADAY_BARS = 120            # 5分线条数（120根=10小时）
+SWING_INTRADAY_BARS_FAST = 240       # 1分线条数（240根=4小时，够算指标即可）
+SWING_USE_1M_CONFIRMATION = True     # 是否启用1分钟线确认（实盘推荐开启）
 
 # 多指标融合信号阈值（满分8分，>=阈值触发信号）
-SWING_BUY_SIGNAL_THRESHOLD = 3       # 买入信号分数阈值
+# 调优结论(2026-07-23): buy_th=2 sell_th=3 → 模拟8股回放 +1764 vs 默认 +1500
+#   buy_th=2 让 RSI超卖(2分)+布林下轨(1分)=3分 的组合更快触发
+SWING_BUY_SIGNAL_THRESHOLD = 2       # 买入信号分数阈值（v3.7.1: 3→2 调优）
 SWING_SELL_SIGNAL_THRESHOLD = 3      # 卖出信号分数阈值
 
 # 布林带参数
 SWING_BOLL_PERIOD = 20               # 布林带周期
-SWING_BOLL_STD = 1.8                 # 标准差倍数
+SWING_BOLL_STD = 2.0                 # 标准差倍数（标准值，减少假信号）
 
 # RSI参数
 SWING_RSI_PERIOD = 14                # RSI周期
@@ -916,8 +927,9 @@ SWING_VOLUME_MA_PERIOD = 20          # 成交量均线周期
 SWING_VOLUME_SPIKE_RATIO = 1.5       # 放量倍数阈值
 
 # 仓位管理
-SWING_BUY_VOLUME_RATIO = 0.3         # 单次买入占底仓的比例
-SWING_SELL_VOLUME_RATIO = 0.3        # 单次卖出占底仓的比例
+SWING_BUY_VOLUME_RATIO = 0.2         # 单次买入占底仓的比例（与卖出对称，循环自给）
+SWING_SELL_VOLUME_RATIO = 0.2        # 单次卖出占可卖底仓的比例（降为20%，避免单边行情过早清仓）
+SWING_MAX_BUY_ASSET_RATIO = 0.05     # 单次买入金额不超过总资产的5%（控制单票风险暴露）
 SWING_MIN_BUY_VOLUME = 100           # 最小买入股数
 SWING_MIN_SELL_VOLUME = 100          # 最小卖出股数
 
@@ -926,13 +938,15 @@ SWING_MAX_DAILY_BUYS = 3             # 每日最大买入次数
 SWING_MAX_DAILY_SELLS = 3            # 每日最大卖出次数
 SWING_BUY_COOLDOWN = 120             # 买入冷却时间（秒）
 SWING_SELL_COOLDOWN = 120            # 卖出冷却时间（秒）
-SWING_MAX_DAILY_BUY_VOLUME_RATIO = 0.5   # 每日最大买入量占底仓比例
-SWING_MAX_DAILY_SELL_VOLUME_RATIO = 0.5  # 每日最大卖出量占底仓比例
-SWING_MIN_PROFIT_RATIO = 0.005       # 最小盈利要求（0.5%，扣除手续费后留净利差）
+SWING_MAX_DAILY_BUY_VOLUME_RATIO = 1.0   # 每日最大买入量占底仓比例（100股底仓时=100股≥1手）
+SWING_MAX_DAILY_SELL_VOLUME_RATIO = 1.0  # 每日最大卖出量占底仓比例（100股底仓时=100股≥1手）
+SWING_MIN_PROFIT_RATIO = 0.01        # 最小盈利要求（1%，扣除手续费后留净利差）
+SWING_STOP_LOSS_ENABLED = True       # 是否启用摆动独立止损（以摆动入场均价为基准）
+SWING_STOP_LOSS_RATIO = -0.03       # 摆动止损比例（-3%，eg. 入场价10元→9.7元止损）
 
 # 监控与控制
 SWING_MONITOR_INTERVAL = 10          # 摆动交易监控循环间隔（秒），模拟盘验证可设10s，实盘建议15-20s
-SWING_INDICATOR_CACHE_TTL = 60       # 指标缓存有效期（秒）
+SWING_INDICATOR_CACHE_TTL = 30       # 指标缓存有效期（秒），实盘30s兼顾实时性与性能
 SWING_CONSECUTIVE_FAILURE_LIMIT = 3  # 连续失败多少次后跳过该股票
 SWING_FAILURE_COOLDOWN = 300         # 连续失败后跳过时间（秒）
 
@@ -957,10 +971,13 @@ SWING_INDEX_SCORE_ADJUST = 1          # 强弱修正每次调整的分数
 SWING_TREND_PERIOD = 20               # 趋势检测K线数量（5分钟线）
 SWING_TREND_SLOPE_THRESHOLD = 0.0008  # 斜率阈值（每根K线0.08%，约日化2%）
 # 趋势市顺向操作参数
-SWING_TREND_BUY_BOOST = 1             # 上升趋势买入阈值降低（更容易触发买入）
-SWING_TREND_SELL_SUPPRESS = 1         # 上升趋势卖出阈值提高（模拟盘验证用保守值，实盘可上调）
-SWING_TREND_SELL_BOOST = 1            # 下降趋势卖出阈值降低
-SWING_TREND_BUY_SUPPRESS = 2          # 下降趋势买入阈值提高（不再在下跌趋势中轻易买入）
+SWING_TREND_BUY_BOOST = 0             # 上升趋势买入阈值降低（0=不降，避免追高）
+SWING_TREND_SELL_SUPPRESS = 1         # 上升趋势卖出阈值提高（防止乱卖）
+SWING_TREND_SELL_BOOST = 1            # 下降趋势卖出阈值降低（更容易触发卖出）
+SWING_TREND_BUY_SUPPRESS = 1          # 下降趋势买入阈值提高（防止乱买）
+
+# 摆动交易与网格交易互斥：同一股票同一策略交易后N秒内另一策略不能操作
+SWING_GRID_MUTEX_SECONDS = 30         # 互斥窗口（秒），0=禁用
 
 
 # ======================= 盘后全市场数据下载 =======================

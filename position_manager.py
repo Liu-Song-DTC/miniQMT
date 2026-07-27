@@ -4,7 +4,7 @@
 """
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import threading
 import sys
@@ -144,6 +144,12 @@ class PositionManager:
         # 🔒 C2修复：添加内存数据库连接线程安全锁
         self.memory_conn_lock = threading.Lock()
         self.sync_lock = threading.RLock()  # 可重入锁（必须在 _sync_real_positions_to_memory 使用前初始化）
+
+        # 持仓数据版本控制（必须在 _import_real_positions / _seed_simulation 之前初始化）
+        self.data_version = 0
+        self.data_changed = False
+        self.version_lock = threading.Lock()
+
         self._create_memory_table()
         self._sync_db_to_memory()
 
@@ -151,11 +157,6 @@ class PositionManager:
         if (hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
                 and getattr(config, 'SIMULATION_IMPORT_REAL_POSITIONS', False)):
             self._import_real_positions_for_simulation()
-
-        # 模拟模式可选：从配置种子持仓创建模拟持仓
-        if (hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE
-                and getattr(config, 'SIMULATION_SEED_POSITIONS', None)):
-            self._seed_simulation_positions()
 
         # 添加模拟交易模式的提示日志
         if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
@@ -167,11 +168,6 @@ class PositionManager:
         self.positions_cache = None
         self.empty_real_position_count = 0
 
-        # 新增，持仓数据版本控制
-        self.data_version = 0
-        self.data_changed = False
-        self.version_lock = threading.Lock()
-
         # 新增：全量刷新控制 - 在这里添加缺失的属性
         self.last_full_refresh_time = 0
         self.full_refresh_interval = 60  # 1分钟全量刷新间隔
@@ -181,6 +177,9 @@ class PositionManager:
         # 行情缓存（用于最高价校准，避免频繁调用行情接口）
         self.history_high_cache = {}  # {stock_code: {'high': float, 'open_date': str, 'ts': float}}
         self.history_high_cache_ttl = 3600  # 1小时刷新一次
+
+        # 摆动/网格互斥：{stock_code: {'swing': ts, 'grid': ts}}
+        self._strategy_mutex = {}  # {stock_code: {'swing': ts, 'grid': ts}} 摆动/网格互斥
 
         # 新增：定期版本升级控制
         self.last_version_increment_time = time.time()
@@ -456,6 +455,34 @@ class PositionManager:
         """递增数据版本号（公开方法，供外部模块调用）"""
         self._increment_data_version()
 
+    def check_strategy_mutex(self, stock_code, caller: str) -> bool:
+        """检查摆动/网格互斥：返回True=允许交易，False=被拦截。
+        caller 为 'swing' 或 'grid'。
+        """
+        mutex_seconds = getattr(config, 'SWING_GRID_MUTEX_SECONDS', 0)
+        if mutex_seconds <= 0:
+            return True
+        other = 'grid' if caller == 'swing' else 'swing'
+        entry = self._strategy_mutex.get(stock_code)
+        if entry:
+            last_other = entry.get(other, 0)
+            if time.time() - last_other < mutex_seconds:
+                logger.info(f"[MUTEX] {stock_code} {caller}被{other}互斥拦截 "
+                            f"(距今{time.time() - last_other:.1f}s < {mutex_seconds}s)")
+                return False
+        return True
+
+    def set_strategy_mutex(self, stock_code, caller: str):
+        """记录策略交易时间，用于互斥检查"""
+        mutex_seconds = getattr(config, 'SWING_GRID_MUTEX_SECONDS', 0)
+        if mutex_seconds <= 0:
+            return
+        entry = self._strategy_mutex.get(stock_code)
+        if entry is None:
+            entry = {}
+            self._strategy_mutex[stock_code] = entry
+        entry[caller] = time.time()
+
     def _create_memory_table(self):
         """创建内存数据库表结构"""
         with self.memory_conn_lock:
@@ -642,6 +669,8 @@ class PositionManager:
                         stock_code = str(row['证券代码']) if row['证券代码'] is not None else None
                         if not stock_code:
                             continue  # 跳过无效数据
+                        # QMT 返回裸代码（如 600489），统一添加 .SH/.SZ 后缀
+                        stock_code = self.data_manager._to_tushare_code(stock_code)
 
                         # 安全提取并转换数值
                         try:
@@ -653,6 +682,9 @@ class PositionManager:
                             available = int(float(row['可用余额'])) if row['可用余额'] is not None else 0
                         except (ValueError, TypeError):
                             available = 0
+                        # 模拟模式下不受 QMT 锁仓限制，可用 = 总持仓
+                        if config.ENABLE_SIMULATION_MODE:
+                            available = volume
 
                         try:
                             cost_price = float(row['成本价']) if row['成本价'] is not None else 0.0
@@ -2571,9 +2603,11 @@ class PositionManager:
                 logger.error(f"{stock_code} 止损计算出错: {stop_calc_error}")
                 return None, None
             
-            # 5. 检查止盈逻辑（如果启用动态止盈功能）
+            # 5. 检查止盈逻辑（如果关闭止盈开关则跳过）
             if not config.ENABLE_DYNAMIC_STOP_PROFIT:
                 return None, None
+            if not getattr(config, 'ENABLE_TAKE_PROFIT', True):
+                return None, None  # 止盈已关闭，但止损仍生效（止损在止盈之前检查）
             
             # 计算利润率
             profit_ratio = (current_price - cost_price) / cost_price
@@ -3930,6 +3964,121 @@ class PositionManager:
                 logger.warning(f"清除 {count} 个待处理信号{f'（原因: {reason}）' if reason else ''}: {list(self.latest_signals.keys())}")
                 self.latest_signals.clear()
 
+    def _check_accelerated_decline_monitor(self, stock_code, current_price):
+        """
+        持仓监控线程中的加速下跌检测（每3秒一次，比策略线程更快）。
+        条件满足时直接执行卖出，不经过 latest_signals 队列。
+
+        触发条件：
+        1. 日内跌幅（相对昨收）超过 ACCELERATED_DECLINE_INTRADAY_DROP（默认 -3%）
+        2. 现价跌破前日最低价（双重确认）
+        3. 持仓处于亏损状态
+        """
+        if not config.ENABLE_ACCELERATED_DECLINE_SELL:
+            return False
+        if not config.ENABLE_AUTO_TRADING:
+            return False
+
+        try:
+            position = self.get_position(stock_code)
+            if not position:
+                return False
+
+            volume = int(position.get('volume', 0))
+            available = int(position.get('available', volume))
+            sell_volume = min(volume, available) if available > 0 else volume
+            if sell_volume < config.ACCELERATED_DECLINE_MIN_VOLUME:
+                return False
+
+            cost_price = float(position.get('cost_price', 0))
+            if cost_price > 0 and current_price >= cost_price:
+                return False
+
+            # 获取昨日行情
+            try:
+                import xtquant.xtdata as xt
+                _xt_ok = True
+            except ImportError:
+                _xt_ok = False
+
+            yesterday_str = (config.now_cst() - timedelta(days=1)).strftime('%Y%m%d')
+            prev_close = None
+            prev_low = None
+
+            if _xt_ok:
+                try:
+                    prev_data = xt.get_market_data(
+                        field_list=['close', 'low'],
+                        stock_list=[stock_code],
+                        period='1d',
+                        start_time=yesterday_str,
+                        end_time=yesterday_str
+                    )
+                    if isinstance(prev_data, dict) and len(prev_data) > 0:
+                        cs = prev_data.get('close')
+                        ls = prev_data.get('low')
+                        if cs is not None and len(cs) > 0:
+                            prev_close = float(cs.iloc[0])
+                        if ls is not None and len(ls) > 0:
+                            prev_low = float(ls.iloc[0])
+                except Exception:
+                    pass
+
+            if prev_close is None or prev_close <= 0:
+                try:
+                    dm = get_data_manager()
+                    hist = dm.get_historical_data(stock_code, '1d', 10)
+                    if hist is not None and len(hist) >= 2:
+                        row = hist.iloc[-2]
+                        prev_close = float(row['close'])
+                        prev_low = float(row['low'])
+                except Exception:
+                    pass
+
+            if prev_close is None or prev_close <= 0:
+                return False
+
+            intraday_drop = (current_price - prev_close) / prev_close
+            if intraday_drop > config.ACCELERATED_DECLINE_INTRADAY_DROP:
+                return False
+
+            if config.ACCELERATED_DECLINE_BREAK_PREV_LOW:
+                if prev_low is not None and current_price >= prev_low:
+                    return False
+
+            profit_ratio = (current_price - cost_price) / cost_price if cost_price > 0 else 0
+            prev_low_str = f"{prev_low:.2f}" if prev_low else 'N/A'
+
+            logger.warning(
+                f"[监控-加速下跌] {stock_code} 触发！昨收={prev_close:.2f} 前低={prev_low_str} "
+                f"现价={current_price:.2f} 日内跌幅={intraday_drop*100:.2f}% 持仓亏损={profit_ratio*100:.2f}%"
+            )
+
+            if config.ENABLE_SIMULATION_MODE:
+                success = self.simulate_sell_position(
+                    stock_code=stock_code,
+                    sell_volume=sell_volume,
+                    sell_price=current_price,
+                    sell_type='full'
+                )
+            else:
+                # 实盘走交易执行器
+                from trading_executor import get_trading_executor
+                te = get_trading_executor()
+                result = te.sell_stock(stock_code, sell_volume, price_type=5, strategy='accelerated_decline')
+                success = bool(result)
+
+            if success:
+                logger.warning(f"[监控-加速下跌] {stock_code} 卖出成功: {sell_volume}股 @ {current_price:.2f}")
+                return True
+            else:
+                logger.error(f"[监控-加速下跌] {stock_code} 卖出失败 vol={sell_volume} avail={available}")
+                return False
+
+        except Exception as e:
+            logger.error(f"[监控-加速下跌] {stock_code} 异常: {e}")
+            return False
+
     def _detect_and_enqueue_dynamic_signal(self, stock_code, current_price):
         """检测动态止盈止损信号并写入 latest_signals（含开关门控）。
 
@@ -4199,6 +4348,12 @@ class PositionManager:
                         # 网格交易独立检测并直接执行，不进入 latest_signals/strategy 动态止盈链路。
                         if self.grid_manager and config.ENABLE_GRID_TRADING:
                             try:
+                                # 每5分钟自动补齐新持仓的网格会话
+                                now = time.time()
+                                if now - getattr(self, '_last_grid_ensure_time', 0) >= 300:
+                                    self._last_grid_ensure_time = now
+                                    self.grid_manager.ensure_all_positions_have_grid_sessions()
+
                                 grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
                                 if grid_signal:
                                     grid_signal_type = f"grid_{grid_signal['signal_type'].lower()}"
@@ -4210,6 +4365,13 @@ class PositionManager:
                                         logger.warning(f"[GRID] {stock_code} 网格交易执行失败: {grid_signal_type}")
                             except Exception as e:
                                 logger.error(f"[GRID] {stock_code} 网格信号检测/执行异常: {e}")
+
+                        # ⭐ 加速下跌检测（监控线程每3秒执行，比策略线程更早触发）
+                        if config.ENABLE_ACCELERATED_DECLINE_SELL:
+                            try:
+                                self._check_accelerated_decline_monitor(stock_code, current_price)
+                            except Exception as e:
+                                logger.error(f"[监控-加速下跌] {stock_code} 异常: {e}")
 
                     # 更新最高价（如果当前价格更高,使用已获取的价格）
                     try:

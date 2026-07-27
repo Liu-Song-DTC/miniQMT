@@ -8,11 +8,20 @@
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 import threading
 import time
 import json
+
+_CST = timezone(timedelta(hours=8))
+
+
+def _to_cst_aware(dt: datetime) -> datetime:
+    """将DB解析出的datetime统一转为CST aware，避免与config.now_cst()比较时出错"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_CST)
+    return dt
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import config
@@ -593,7 +602,7 @@ class GridTradingManager:
                 # 格式化时间：只显示到秒
                 if end_time_str:
                     try:
-                        end_time_dt = datetime.fromisoformat(end_time_str)
+                        end_time_dt = _to_cst_aware(datetime.fromisoformat(end_time_str))
                         end_time_display = end_time_dt.strftime('%Y-%m-%d %H:%M:%S')
                     except (ValueError, TypeError) as fmt_err:
                         logger.debug(f"[GRID] 时间格式化失败: {fmt_err}")
@@ -619,7 +628,7 @@ class GridTradingManager:
                 try:
                     # 1. 检查会话是否已过期
                     # BUG FIX: 使用session_dict而不是session_data
-                    end_time = datetime.fromisoformat(session_dict['end_time'])
+                    end_time = _to_cst_aware(datetime.fromisoformat(session_dict['end_time']))
                     if config.now_cst() > end_time:
                         # 先更新数据库状态
                         self.db.stop_grid_session(session_id, 'expired')
@@ -680,7 +689,7 @@ class GridTradingManager:
                         total_sell_amount=session_dict['total_sell_amount'],
                         total_buy_volume=session_dict.get('total_buy_volume', 0),
                         total_sell_volume=session_dict.get('total_sell_volume', 0),
-                        start_time=datetime.fromisoformat(session_dict['start_time']),
+                        start_time=_to_cst_aware(datetime.fromisoformat(session_dict['start_time'])),
                         end_time=end_time
                     )
 
@@ -898,9 +907,9 @@ class GridTradingManager:
     def _pending_age_seconds(self, pending: dict, now: datetime) -> float:
         created_at = pending.get('created_at')
         if isinstance(created_at, datetime):
-            return (now - created_at).total_seconds()
+            return (now - _to_cst_aware(created_at)).total_seconds()
         try:
-            return (now - datetime.fromisoformat(str(created_at))).total_seconds()
+            return (now - _to_cst_aware(datetime.fromisoformat(str(created_at)))).total_seconds()
         except Exception:
             return float('inf')
 
@@ -2715,6 +2724,10 @@ class GridTradingManager:
             if not config.ENABLE_SIMULATION_MODE and getattr(config, 'GRID_ENABLE_PRICE_LIMIT_GUARD', True):
                 tradable_result = self._check_tradable(stock_code, signal_type, latest_price)
 
+            # 摆动/网格互斥检查
+            if stock_code and not self.position_manager.check_strategy_mutex(stock_code, 'grid'):
+                return False
+
             with self.lock:
                 stock_code = signal['stock_code']
                 session = self.sessions.get(self._normalize_code(stock_code))
@@ -2765,6 +2778,7 @@ class GridTradingManager:
                 self.submitting_grid_orders[plan['submit_id']] = plan
 
             # 真正下单发生在锁外，避免QMT卡顿阻塞网格状态机。
+            self.position_manager.set_strategy_mutex(stock_code, 'grid')
             if config.ENABLE_SIMULATION_MODE:
                 trade_id = f"GRID_SIM_{plan['side']}_{int(time.time()*1000)}"
                 result = trade_id
@@ -2871,6 +2885,58 @@ class GridTradingManager:
                             self._complete_stop_if_no_open_orders_unlocked(session_for_reset.id)
             except Exception as reset_err:
                 logger.warning(f"[GRID] execute_grid_trade: 异常路径重置追踪器失败(可忽略): {reset_err}")
+
+    def ensure_all_positions_have_grid_sessions(self):
+        """确保所有持仓股票都有活跃网格会话，没有则自动创建（风险等级=稳健型）。"""
+        try:
+            import pandas as pd
+            positions = self.position_manager.get_all_positions()
+            if positions is None:
+                return
+            if isinstance(positions, pd.DataFrame):
+                if positions.empty:
+                    return
+                positions = positions.to_dict('records')
+            if not positions:
+                return
+
+            with self.lock:
+                existing_stocks = {s.stock_code for s in self.sessions.values() if s.status == 'active'}
+
+            created = 0
+            for pos in positions:
+                stock_code = pos.get('stock_code', '')
+                volume = int(pos.get('volume', 0))
+                if not stock_code or volume <= 0:
+                    continue
+                norm = self._normalize_code(stock_code)
+                if norm in existing_stocks:
+                    continue
+
+                current_price = pos.get('current_price', 0) or 0
+                if current_price <= 0:
+                    continue
+
+                position_value = volume * current_price
+                max_investment = max(position_value * 0.5, 10000)
+
+                try:
+                    result = self.start_grid_session(stock_code, {
+                        'center_price': current_price,
+                        'max_investment': max_investment,
+                        'risk_level': 'moderate',
+                        'duration_days': 7,
+                    })
+                    if result is not None and getattr(result, 'id', None):
+                        created += 1
+                        logger.info(f"[GRID] 自动创建网格会话: {stock_code} center={current_price:.2f} max_invest={max_investment:.0f}")
+                except Exception as e:
+                    logger.warning(f"[GRID] 自动创建 {stock_code} 网格失败: {e}")
+
+            if created > 0:
+                logger.info(f"[GRID] 自动补齐 {created} 个网格会话")
+        except Exception as e:
+            logger.error(f"[GRID] ensure_all_positions_have_grid_sessions 失败: {e}")
             return False
 
     def _execute_grid_buy(self, session: GridSession, signal: dict) -> bool:
