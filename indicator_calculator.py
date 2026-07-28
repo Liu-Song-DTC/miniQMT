@@ -268,6 +268,69 @@ class IndicatorCalculator:
             rsi[last['idx']] > rsi[prev['idx']] and \
             macd_hist[last['idx']] > macd_hist[prev['idx']]
 
+    # ========== 市场结构检测（SwingPoints 风格）==========
+
+    @staticmethod
+    def detect_market_structure(close):
+        """检测当日价格市场结构：HH/HL=上升趋势, LH/LL=下降趋势
+
+        只在最近 ~1 天（48 根 5m K线）内检测 pivot，避免跨天干扰。
+        """
+        n_total = len(close)
+        n_window = min(48, n_total)
+        recent = close[-n_window:]
+        n = len(recent)
+        offset = n_total - n
+        lookback = 5
+
+        if n < lookback * 3:
+            return {'trend': 'range', 'new_swing': None}
+
+        all_highs = []
+        for i in range(lookback, n - lookback):
+            left = recent[i-lookback:i]
+            right = recent[i+1:i+lookback+1]
+            if all(recent[i] >= x for x in left) and all(recent[i] >= x for x in right):
+                all_highs.append({'price': float(recent[i]), 'idx': i + offset})
+
+        all_lows = []
+        for i in range(lookback, n - lookback):
+            left = recent[i-lookback:i]
+            right = recent[i+1:i+lookback+1]
+            if all(recent[i] <= x for x in left) and all(recent[i] <= x for x in right):
+                all_lows.append({'price': float(recent[i]), 'idx': i + offset})
+
+        if len(all_highs) < 2 or len(all_lows) < 2:
+            return {'trend': 'range', 'new_swing': None}
+
+        h1, h2 = all_highs[-2], all_highs[-1]
+        l1, l2 = all_lows[-2], all_lows[-1]
+
+        current_idx = n_total - 1
+        new_swing = None
+
+        if h2['price'] > h1['price'] and l2['price'] > l1['price']:
+            trend = 'up'
+            # HL 刚形成（最近 2 根 K 线内）→ 买入信号
+            if l2['idx'] >= current_idx - 2:
+                new_swing = 'HL'
+        elif h2['price'] < h1['price'] and l2['price'] < l1['price']:
+            trend = 'down'
+            # LH 刚形成 → 卖出信号
+            if h2['idx'] >= current_idx - 2:
+                new_swing = 'LH'
+        else:
+            trend = 'range'
+
+        return {
+            'trend': trend,
+            'new_swing': new_swing,
+            'last_high': h2['price'],
+            'last_low': l2['price'],
+            'prev_high': h1['price'],
+            'prev_low': l1['price'],
+        }
+
     def calculate_intraday_indicators(self, stock_code, period=None, count=None):
         """
         计算日内技术指标（盘中高抛低吸用）
@@ -419,6 +482,8 @@ class IndicatorCalculator:
                 # Pivot 背离检测（标准5-bar pivot lookback，比较最近两次同向 pivot）
                 'div_bearish': self._detect_bearish_divergence(close, rsi_series, hist),
                 'div_bullish': self._detect_bullish_divergence(close, rsi_series, hist),
+                # 市场结构检测（HH/HL/LH/LL）
+                'structure': self.detect_market_structure(close),
             }
 
         except Exception as e:

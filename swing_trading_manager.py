@@ -503,25 +503,53 @@ class SwingTradingManager:
 
         return False
 
-    def _get_fused_signal(self, stock_code, indicators: dict) -> Optional[dict]:
-        """多指标融合 + 趋势自适应，返回信号或 None"""
-        if indicators is None:
+    def _get_fused_signal(self, stock_code, indicators_5m: dict) -> Optional[dict]:
+        """5m 定趋势方向 + 1m 找买卖点"""
+        if indicators_5m is None:
             return None
 
-        buy_score, buy_details = self._score_buy_signal(indicators)
-        sell_score, sell_details = self._score_sell_signal(indicators)
+        # === 5分钟线：只判断趋势方向 ===
+        slope = indicators_5m.get('trend_slope', 0)
+        structure = indicators_5m.get('structure', {})
+        struct_trend = structure.get('trend', 'range') if structure else 'range'
+        new_swing = structure.get('new_swing') if structure else None
 
-        # 趋势识别
-        slope = indicators.get('trend_slope', 0)
-        threshold = config.SWING_TREND_SLOPE_THRESHOLD
-        if slope > threshold:
-            trend = 'up'
-        elif slope < -threshold:
-            trend = 'down'
+        # 趋势优先用市场结构（HH/HL=up, LH/LL=down），否则用斜率
+        if struct_trend != 'range':
+            trend = struct_trend
         else:
-            trend = 'range'
+            threshold = config.SWING_TREND_SLOPE_THRESHOLD
+            if slope > threshold:
+                trend = 'up'
+            elif slope < -threshold:
+                trend = 'down'
+            else:
+                trend = 'range'
 
-        # 趋势自适应阈值
+        # === 双确认：1m 打分 + 5m 打分同时达标才执行 ===
+        indicators_1m = self._get_cached_indicators_1m(stock_code)
+        buy_score_5m, buy_det_5m = self._score_buy_signal(indicators_5m)
+        sell_score_5m, sell_det_5m = self._score_sell_signal(indicators_5m)
+
+        if indicators_1m is not None:
+            buy_score_1m, buy_det_1m = self._score_buy_signal(indicators_1m)
+            sell_score_1m, sell_det_1m = self._score_sell_signal(indicators_1m)
+            # 1m 主打分（用于触发时机），5m 做确认分
+            buy_score = buy_score_1m
+            sell_score = sell_score_1m
+            buy_details = buy_det_1m
+            sell_details = sell_det_1m
+            trigger_price = indicators_1m.get('close', indicators_5m['close'])
+        else:
+            buy_score = buy_score_5m
+            sell_score = sell_score_5m
+            buy_details = buy_det_5m
+            sell_details = sell_det_5m
+            trigger_price = indicators_5m.get('close_1m', indicators_5m['close'])
+            buy_score_1m = buy_score_5m
+            sell_score_1m = sell_score_5m
+
+        # 趋势自适应阈值（5m 趋势控制 1m 信号的门槛）
         if trend == 'up':
             effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD - config.SWING_TREND_BUY_BOOST
             effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD + config.SWING_TREND_SELL_SUPPRESS
@@ -532,37 +560,42 @@ class SwingTradingManager:
             effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD
             effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD
 
-        # 节流 INFO 日志：仅当接近阈值(差1分)或超过时才记录
-        near_buy = buy_score >= effective_buy_threshold - 1
-        near_sell = sell_score >= effective_sell_threshold - 1
-        if near_buy or near_sell:
-            logger.info(f"[{stock_code}] 趋势={trend} 买入={buy_score}/{effective_buy_threshold} "
-                        f"{buy_details}, 卖出={sell_score}/{effective_sell_threshold} {sell_details}, "
-                        f"现价={indicators['close']:.2f}")
-        else:
-            logger.debug(f"[{stock_code}] 趋势={trend}(斜率={slope:.6f}) "
-                         f"买入={buy_score}/{effective_buy_threshold} {buy_details}, "
-                         f"卖出={sell_score}/{effective_sell_threshold} {sell_details}")
+        # 5m 结构信号加权（5m 结构 + 1m 指标分离打分已包含，这里是结构趋势共振）
+        if new_swing == 'HL':
+            buy_score += 3
+            buy_details.append(f"5m结构HL")
+        if new_swing == 'LH':
+            sell_score += 3
+            sell_details.append(f"5m结构LH")
 
-        if buy_score >= effective_buy_threshold:
-            # 急跌保护：连续大阴线时不买入，等待价格企稳
-            if self._is_in_freefall(indicators):
-                logger.info(f"[{stock_code}] 买入信号被急跌保护拦截 "
-                            f"(score={buy_score}, 价格仍在快速下跌，等待企稳)")
+        # 日志
+        src = '1m' if indicators_1m is not None else '5m'
+        if buy_score >= effective_buy_threshold - 1 or sell_score >= effective_sell_threshold - 1:
+            logger.info(f"[{stock_code}] 趋势={trend}[{src}] 买入={buy_score}/{effective_buy_threshold} "
+                        f"{buy_details}, 卖出={sell_score}/{effective_sell_threshold} {sell_details}, "
+                        f"现价={indicators_5m['close']:.2f}")
+        else:
+            logger.debug(f"[{stock_code}] 趋势={trend}[{src}] 买入={buy_score}/{effective_buy_threshold} "
+                         f"卖出={sell_score}/{effective_sell_threshold}")
+
+        # 信号判断：1m 过线 + 5m 也过线（双确认）
+        buy_1m_ok = indicators_1m is None or buy_score_1m >= effective_buy_threshold
+        sell_1m_ok = indicators_1m is None or sell_score_1m >= effective_sell_threshold
+
+        if buy_score >= effective_buy_threshold and buy_score_5m >= effective_buy_threshold:
+            if self._is_in_freefall(indicators_5m):
                 return None
-            trigger_price = indicators.get('close_1m', indicators['close'])
             return {
                 'direction': 'buy',
                 'confidence': buy_score,
-                'details': buy_details + [f'趋势:{trend}'],
+                'details': buy_details + [f'趋势:{trend}', '1m+5m双确认'],
                 'price': trigger_price,
             }
-        elif sell_score >= effective_sell_threshold:
-            trigger_price = indicators.get('close_1m', indicators['close'])
+        elif sell_score >= effective_sell_threshold and sell_score_5m >= effective_sell_threshold:
             return {
                 'direction': 'sell',
                 'confidence': sell_score,
-                'details': sell_details + [f'趋势:{trend}'],
+                'details': sell_details + [f'趋势:{trend}', '1m+5m双确认'],
                 'price': trigger_price,
             }
 
@@ -798,6 +831,14 @@ class SwingTradingManager:
                     return False, "全部为当日买入(T+1锁定)"
             else:
                 sellable_base = total_volume
+
+            # 防倒T：卖出价必须覆盖入场价+手续费
+            if session.swing_entry_price > 0:
+                current_price = float(position.get('current_price', 0)) if position else 0
+                fee_rate = getattr(config, 'SWING_MIN_PROFIT_RATIO', 0.001)
+                min_sell = session.swing_entry_price * (1 + fee_rate)
+                if current_price > 0 and current_price < min_sell:
+                    return False, f"防倒T(现价{current_price:.2f}<保本{min_sell:.2f},手续费{fee_rate*100:.1f}%)"
 
             if available < config.SWING_MIN_SELL_VOLUME:
                 return False, f"可用股数不足({available}<{config.SWING_MIN_SELL_VOLUME})"
