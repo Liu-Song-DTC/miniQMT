@@ -46,7 +46,7 @@ DEFAULT_PARAMS = {
     'SWING_VOLUME_SPIKE_RATIO': 1.5,
     'SWING_BUY_SIGNAL_THRESHOLD': 3,
     'SWING_SELL_SIGNAL_THRESHOLD': 3,
-    'SWING_TREND_PERIOD': 20,
+    'SWING_TREND_PERIOD': 10,
     'SWING_TREND_SLOPE_THRESHOLD': 0.0008,
     'SWING_TREND_BUY_BOOST': 1,
     'SWING_TREND_SELL_SUPPRESS': 1,
@@ -56,8 +56,8 @@ DEFAULT_PARAMS = {
     'SWING_SELL_COOLDOWN': 120,
     'SWING_MAX_DAILY_BUYS': 3,
     'SWING_MAX_DAILY_SELLS': 3,
-    'SWING_BUY_AMOUNT': 10000,
-    'SWING_SELL_AMOUNT': 10000,
+    'SWING_BUY_AMOUNT': 15000,
+    'SWING_SELL_AMOUNT': 15000,
     'SWING_MAX_HOLDINGS': 5,
     'SWING_MIN_BUY_VOLUME': 100,
     'SWING_MIN_SELL_VOLUME': 100,
@@ -173,6 +173,29 @@ def _detect_bearish(close, rsi, macd_hist, lookback=5):
         rsi[last['idx']] < rsi[prev['idx']] and \
         macd_hist[last['idx']] < macd_hist[prev['idx']]
 
+def _detect_structure(close, lookback=5):
+    """简化版市场结构检测：识别最近一次 HH/HL/LH/LL 转折"""
+    if len(close) < lookback * 4:
+        return {'trend': 'range', 'new_swing': None}
+    # 找最近两个 swing 点
+    pivots_high = _find_pivot_highs(close, lookback)
+    pivots_low = _find_pivot_lows(close, lookback)
+    result = {'trend': 'range', 'new_swing': None}
+    if len(pivots_high) >= 2 and len(pivots_low) >= 2:
+        h1, h0 = pivots_high[-2], pivots_high[-1]
+        l1, l0 = pivots_low[-2], pivots_low[-1]
+        if h0['price'] > h1['price'] and l0['price'] > l1['price']:
+            result['trend'] = 'up'
+            result['new_swing'] = 'HL' if h0['idx'] < l0['idx'] else 'HH'
+        elif h0['price'] < h1['price'] and l0['price'] < l1['price']:
+            result['trend'] = 'down'
+            result['new_swing'] = 'LH' if h0['idx'] < l0['idx'] else 'LL'
+        elif h0['idx'] > l0['idx'] and h0['price'] > h1['price'] and l0['idx'] < h0['idx']:
+            result['new_swing'] = 'HL'
+        elif l0['idx'] > h0['idx'] and l0['price'] < l1['price'] and h0['idx'] < l0['idx']:
+            result['new_swing'] = 'LH'
+    return result
+
 def _detect_bullish(close, rsi, macd_hist, lookback=5):
     pivots = _find_pivot_lows(close, lookback)
     if len(pivots) < 2: return False
@@ -222,7 +245,7 @@ def _calc_vwap(high, low, close, volume):
 def apply_slippage(price, direction, volume, slippage_bps=5.0, min_tick=0.01):
     """买入加滑点（实际成交价更高），卖出减滑点（实际成交价更低）"""
     if slippage_bps <= 0: return price
-    slip = price * slippage_bps / 10000.0
+    slip = price * slippage_bps / 15000.0
     slip = max(slip, min_tick)
     if direction == 'buy': return price + slip
     else: return price - slip
@@ -318,6 +341,8 @@ def calc_indicators(close, open_, high, low, volume, params, close_1m_arr=None):
         'minus_di': float(mdi_vals[-1]) if not np.isnan(mdi_vals[-1]) else 0.0,
         # P1: VWAP
         'vwap': float(vwap_vals[-1]) if not np.isnan(vwap_vals[-1]) else float(close[-1]),
+        # 市场结构（简化版：5-bar pivot检测 HH/HL/LH/LL）
+        'structure': _detect_structure(close),
     }
 
 
@@ -330,7 +355,10 @@ def score_buy(indicators, params):
     boll_lower = indicators['boll_lower']
 
     if boll_lower > 0 and price <= boll_lower * 1.005:
-        score += 1; details.append(f"触及下轨({price:.2f}<={boll_lower:.2f})")
+        score += 2; details.append(f"触及下轨({price:.2f}<={boll_lower:.2f})")
+    # 底背离：pivot价格新低，RSI拒绝新低
+    if indicators.get('div_bullish', False):
+        score += 2; details.append("RSI底背离(pivot确认)")
     if rsi < params['SWING_RSI_OVERSOLD']:
         score += 2; details.append(f"RSI超卖({rsi:.1f}<{params['SWING_RSI_OVERSOLD']})")
     if rsi < params['SWING_RSI_OVERSOLD'] - 5:
@@ -392,7 +420,10 @@ def score_sell(indicators, params):
     boll_upper = indicators['boll_upper']
 
     if boll_upper > 0 and price >= boll_upper * 0.995:
-        score += 1; details.append(f"触及上轨({price:.2f}>={boll_upper:.2f})")
+        score += 2; details.append(f"触及上轨({price:.2f}>={boll_upper:.2f})")
+    # 顶背离：pivot价格新高，RSI拒绝新高
+    if indicators.get('div_bearish', False):
+        score += 2; details.append("RSI顶背离(pivot确认)")
     if rsi > params['SWING_RSI_OVERBOUGHT']:
         score += 2; details.append(f"RSI超买({rsi:.1f}>{params['SWING_RSI_OVERBOUGHT']})")
     if rsi > params['SWING_RSI_OVERBOUGHT'] + 5:
@@ -530,6 +561,15 @@ def replay(path, params, verbose=True, path_1m=None):
 
         b_score, b_det = score_buy(ind, params)
         s_score, s_det = score_sell(ind, params)
+
+        # 市场结构信号加权（与实盘一致：HL +3买入分, LH +3卖出分）
+        structure = ind.get('structure', {})
+        new_swing = structure.get('new_swing') if structure else None
+        if new_swing == 'HL':
+            b_score += 3; b_det.append('5m结构HL')
+        if new_swing == 'LH':
+            s_score += 3; s_det.append('5m结构LH')
+
         trend, buy_th, sell_th = get_effective_thresholds(ind['trend_slope'], params)
         price = ind.get('close_1m', ind['close'])
 
@@ -824,9 +864,9 @@ def calc_metrics(trades, df, base_volume, params):
     # 初始权益（首笔交易前的底仓市值）
     first_bar = trades[0]['bar']
     ref_bar = max(0, first_bar - 1)
-    initial_equity = base_volume * closes[ref_bar] if base_volume > 0 and closes[ref_bar] > 0 else 100000.0
+    initial_equity = base_volume * closes[ref_bar] if base_volume > 0 and closes[ref_bar] > 0 else 150000.0
     if initial_equity <= 0:
-        initial_equity = 100000.0
+        initial_equity = 150000.0
 
     # 回报率
     return_pct = total_pnl / initial_equity * 100
@@ -879,7 +919,7 @@ def calc_metrics(trades, df, base_volume, params):
             # 从 tag 中提取滑点差额
             price = t['price']; volume = t['volume']
             # 逆向计算理论价格
-            bps = params.get('SLIPPAGE_BPS', 5.0) / 10000.0
+            bps = params.get('SLIPPAGE_BPS', 5.0) / 15000.0
             if t['direction'] == 'BUY':
                 theo_price = price / (1 + bps)
             else:

@@ -649,6 +649,23 @@ class SwingTradingManager:
             effective_buy_threshold = config.SWING_BUY_SIGNAL_THRESHOLD
             effective_sell_threshold = config.SWING_SELL_SIGNAL_THRESHOLD
 
+        # 1m 微趋势 vs 5m 主趋势分歧检测：提前感知方向切换
+        if indicators_1m is not None:
+            slope_1m = indicators_1m.get('trend_slope', 0)
+            th = config.SWING_TREND_SLOPE_THRESHOLD
+            if slope_1m > th:
+                trend_1m = 'up'
+            elif slope_1m < -th:
+                trend_1m = 'down'
+            else:
+                trend_1m = 'range'
+            # 5m 看多但 1m 转空 → 可能是趋势反转开始，收紧买入门槛
+            if trend == 'up' and trend_1m == 'down':
+                effective_buy_threshold += 1
+            # 5m 看空但 1m 转多 → 可能是反弹开始，收紧卖出门槛
+            elif trend == 'down' and trend_1m == 'up':
+                effective_sell_threshold += 1
+
         # 5m 结构信号加权（5m 结构 + 1m 指标分离打分已包含，这里是结构趋势共振）
         if new_swing == 'HL':
             buy_score += 3

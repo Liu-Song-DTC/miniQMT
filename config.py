@@ -927,8 +927,8 @@ SWING_VOLUME_MA_PERIOD = 20          # 成交量均线周期
 SWING_VOLUME_SPIKE_RATIO = 1.5       # 放量倍数阈值
 
 # 仓位管理
-SWING_BUY_AMOUNT = 10000             # 每笔固定买入金额，按股价向上取整到100股
-SWING_SELL_AMOUNT = 10000            # 每笔固定卖出金额，按股价向上取整到100股（不超过可卖持仓）
+SWING_BUY_AMOUNT = 15000             # 每笔固定买入金额，按股价向上取整到100股
+SWING_SELL_AMOUNT = 15000            # 每笔固定卖出金额，按股价向上取整到100股（不超过可卖持仓）
 SWING_MIN_BUY_VOLUME = 100           # 最小买入股数
 SWING_MIN_SELL_VOLUME = 100          # 最小卖出股数
 SWING_MAX_HOLDINGS = 5               # 最多同时持有多少只摆动交易股票
@@ -965,7 +965,7 @@ SWING_INDEX_STRONG_THRESHOLD = 0.01   # 个股强于大盘1%（同期涨幅差�
 SWING_INDEX_SCORE_ADJUST = 1          # 强弱修正每次调整的分数
 
 # -------- 个股趋势识别（区分震荡/趋势市，自适应操作方向）--------
-SWING_TREND_PERIOD = 20               # 趋势检测K线数量（5分钟线）
+SWING_TREND_PERIOD = 10               # 趋势检测K线数量（5分钟线，50分钟窗口）
 SWING_TREND_SLOPE_THRESHOLD = 0.0008  # 斜率阈值（每根K线0.08%，约日化2%）
 # 趋势市顺向操作参数
 SWING_TREND_BUY_BOOST = 0             # 上升趋势买入阈值降低（0=不降，避免追高）
