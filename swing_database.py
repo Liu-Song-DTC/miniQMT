@@ -114,6 +114,14 @@ class SwingDatabase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def load_all_sessions(self):
+        """加载全部 session（不限日期），用于启动时恢复白名单"""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM swing_sessions WHERE enabled=1 AND base_volume_start > 0"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     def save_trade(self, trade_record):
         cursor = self.conn.cursor()
         cursor.execute('''

@@ -30,7 +30,7 @@ import utils
 
 # 获取logger
 logger = get_logger("web_server")
-webpage_dir = 'web1.0'
+webpage_dir = 'web2.0/dist'
 RELEASE_VERSION_PLACEHOLDER = '%MINIQMT_RELEASE_VERSION%'
 
 
@@ -397,9 +397,11 @@ def index():
     try:
         with open(index_path, 'r', encoding='utf-8') as f:
             html = f.read()
+        # web1.0: 版本号注入 script.js；web2.0: 直接使用 Vite 构建产物
         script_path = os.path.join(web_dir, 'script.js')
-        version = str(int(os.path.getmtime(script_path)))
-        html = html.replace('src="script.js"', f'src="script.js?v={version}"')
+        if os.path.exists(script_path):
+            version = str(int(os.path.getmtime(script_path)))
+            html = html.replace('src="script.js"', f'src="script.js?v={version}"')
         html = html.replace(RELEASE_VERSION_PLACEHOLDER, get_release_version())
         resp = make_response(html)
         resp.headers['Content-Type'] = 'text/html; charset=utf-8'
@@ -411,10 +413,20 @@ def index():
 
 @app.route('/<path:filename>')
 def serve_static(filename):
-    """Serve static files from the 'web' directory"""
+    """Serve static files from the 'web' directory; SPA fallback for client-side routes"""
+    web_dir = os.path.join(os.path.dirname(__file__), webpage_dir)
+    # API 路径不处理（由其他路由负责）
+    if filename.startswith('api/'):
+        from flask import abort as flask_abort
+        flask_abort(404)
     if filename == 'index.html':
         return index()
-    return send_from_directory(os.path.join(os.path.dirname(__file__), webpage_dir), filename)
+    # 静态资源直接返回；不存在则回退到 index.html（SPA 客户端路由）
+    file_path = os.path.join(web_dir, filename)
+    if os.path.isfile(file_path):
+        return send_from_directory(web_dir, filename)
+    # SPA fallback: 非静态资源路径 → index.html
+    return index()
 
 @app.route('/api/connection/status', methods=['GET'])
 def connection_status():
@@ -3032,8 +3044,8 @@ def get_swing_config():
             'macd_slow': config.SWING_MACD_SLOW,
             'macd_signal': config.SWING_MACD_SIGNAL,
             'volume_spike_ratio': config.SWING_VOLUME_SPIKE_RATIO,
-            'buy_volume_ratio': config.SWING_BUY_VOLUME_RATIO,
-            'sell_volume_ratio': config.SWING_SELL_VOLUME_RATIO,
+            'buy_amount': config.SWING_BUY_AMOUNT,
+            'sell_ratio': config.SWING_SELL_RATIO,
             'max_daily_buys': config.SWING_MAX_DAILY_BUYS,
             'max_daily_sells': config.SWING_MAX_DAILY_SELLS,
             'buy_cooldown': config.SWING_BUY_COOLDOWN,

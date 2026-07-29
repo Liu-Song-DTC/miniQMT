@@ -4018,9 +4018,9 @@ class PositionManager:
                         cs = prev_data.get('close')
                         ls = prev_data.get('low')
                         if cs is not None and len(cs) > 0:
-                            prev_close = float(cs.iloc[0])
+                            prev_close = float(cs.iloc[0, 0])
                         if ls is not None and len(ls) > 0:
-                            prev_low = float(ls.iloc[0])
+                            prev_low = float(ls.iloc[0, 0])
                 except Exception:
                     pass
 

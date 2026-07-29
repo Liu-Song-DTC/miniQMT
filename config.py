@@ -927,19 +927,15 @@ SWING_VOLUME_MA_PERIOD = 20          # 成交量均线周期
 SWING_VOLUME_SPIKE_RATIO = 1.5       # 放量倍数阈值
 
 # 仓位管理
-SWING_BUY_VOLUME_RATIO = 0.2         # 单次买入占底仓的比例（与卖出对称，循环自给）
-SWING_SELL_VOLUME_RATIO = 0.2        # 单次卖出占可卖底仓的比例（降为20%，避免单边行情过早清仓）
-SWING_MAX_BUY_ASSET_RATIO = 0.05     # 单次买入金额不超过总资产的5%（控制单票风险暴露）
+SWING_BUY_AMOUNT = 10000             # 每笔固定买入金额，按股价向上取整到100股
+SWING_SELL_RATIO = 0.25              # 每笔卖出占可卖持仓的比例
 SWING_MIN_BUY_VOLUME = 100           # 最小买入股数
 SWING_MIN_SELL_VOLUME = 100          # 最小卖出股数
 
-# 风控限制
 SWING_MAX_DAILY_BUYS = 3             # 每日最大买入次数
 SWING_MAX_DAILY_SELLS = 3            # 每日最大卖出次数
 SWING_BUY_COOLDOWN = 120             # 买入冷却时间（秒）
 SWING_SELL_COOLDOWN = 120            # 卖出冷却时间（秒）
-SWING_MAX_DAILY_BUY_VOLUME_RATIO = 1.0   # 每日最大买入量占底仓比例（100股底仓时=100股≥1手）
-SWING_MAX_DAILY_SELL_VOLUME_RATIO = 1.0  # 每日最大卖出量占底仓比例（100股底仓时=100股≥1手）
 SWING_MIN_PROFIT_RATIO = 0.01        # 最小盈利要求（1%，扣除手续费后留净利差）
 SWING_STOP_LOSS_ENABLED = True       # 是否启用摆动独立止损（以摆动入场均价为基准）
 SWING_STOP_LOSS_RATIO = -0.03       # 摆动止损比例（-3%，eg. 入场价10元→9.7元止损）
