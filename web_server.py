@@ -3045,7 +3045,7 @@ def get_swing_config():
             'macd_signal': config.SWING_MACD_SIGNAL,
             'volume_spike_ratio': config.SWING_VOLUME_SPIKE_RATIO,
             'buy_amount': config.SWING_BUY_AMOUNT,
-            'sell_ratio': config.SWING_SELL_RATIO,
+            'sell_amount': config.SWING_SELL_AMOUNT,
             'max_daily_buys': config.SWING_MAX_DAILY_BUYS,
             'max_daily_sells': config.SWING_MAX_DAILY_SELLS,
             'buy_cooldown': config.SWING_BUY_COOLDOWN,

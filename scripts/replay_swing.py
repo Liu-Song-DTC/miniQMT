@@ -57,7 +57,8 @@ DEFAULT_PARAMS = {
     'SWING_MAX_DAILY_BUYS': 3,
     'SWING_MAX_DAILY_SELLS': 3,
     'SWING_BUY_AMOUNT': 10000,
-    'SWING_SELL_RATIO': 0.25,
+    'SWING_SELL_AMOUNT': 10000,
+    'SWING_MAX_HOLDINGS': 5,
     'SWING_MIN_BUY_VOLUME': 100,
     'SWING_MIN_SELL_VOLUME': 100,
     'SWING_MIN_PROFIT_RATIO': 0.01,
@@ -559,9 +560,9 @@ def replay(path, params, verbose=True, path_1m=None):
         if params.get('SWING_STOP_LOSS_ENABLED', True) and swing_entry_price > 0:
             stop_loss_ratio = params.get('SWING_STOP_LOSS_RATIO', -0.03)
             if price < swing_entry_price * (1 + stop_loss_ratio):
-                sell_vol = max(int(base_volume * params['SWING_SELL_RATIO']),
-                               params['SWING_MIN_SELL_VOLUME'])
-                sell_vol = int(round(sell_vol / 100)) * 100
+                sell_vol = int(params['SWING_SELL_AMOUNT'] / price / 100) * 100 + 100
+                if sell_vol < params['SWING_MIN_SELL_VOLUME']:
+                    sell_vol = params['SWING_MIN_SELL_VOLUME']
                 if sell_vol >= params['SWING_MIN_SELL_VOLUME']:
                     exec_price = apply_slippage(price, 'sell', sell_vol,
                                                 params.get('SLIPPAGE_BPS', 5.0))
@@ -596,9 +597,9 @@ def replay(path, params, verbose=True, path_1m=None):
                 if price <= stop_price:
                     triggered = True  # 追踪止损
             if triggered:
-                sell_vol = max(int(base_volume * params['SWING_SELL_RATIO']),
-                               params['SWING_MIN_SELL_VOLUME'])
-                sell_vol = int(round(sell_vol / 100)) * 100
+                sell_vol = int(params['SWING_SELL_AMOUNT'] / price / 100) * 100 + 100
+                if sell_vol < params['SWING_MIN_SELL_VOLUME']:
+                    sell_vol = params['SWING_MIN_SELL_VOLUME']
                 if sell_vol >= params['SWING_MIN_SELL_VOLUME']:
                     exec_price = apply_slippage(price, 'sell', sell_vol,
                                                 params.get('SLIPPAGE_BPS', 5.0))
@@ -666,12 +667,13 @@ def replay(path, params, verbose=True, path_1m=None):
         # 尝试卖出信号
         elif s_score >= sell_th:
             sell_cd_bars = _dynamic_cooldown_bars(params['SWING_SELL_COOLDOWN'], trend, ind.get('adx', 20))
-            sellable_base_current = base_volume  # offline: T+1 not applicable
+            sellable_base_current = base_volume + today_buy_volume - today_sell_volume
             if (today_sell_count < params['SWING_MAX_DAILY_SELLS']
                     and i - last_sell_bar >= sell_cd_bars):
-                sell_vol = int(sellable_base_current * params['SWING_SELL_RATIO'] / 100) * 100
+                sell_vol = int(params['SWING_SELL_AMOUNT'] / price / 100) * 100 + 100
                 if sell_vol < params['SWING_MIN_SELL_VOLUME']:
                     sell_vol = params['SWING_MIN_SELL_VOLUME']
+                sell_vol = min(sell_vol, sellable_base_current)
 
                 # 最小盈利检查
                 entry = swing_entry_price if swing_entry_price > 0 else float(c[min_bars])
@@ -720,7 +722,7 @@ def print_report(bar_log, trades, df, params):
     print(f"  买入阈值: {params['SWING_BUY_SIGNAL_THRESHOLD']} | 卖出阈值: {params['SWING_SELL_SIGNAL_THRESHOLD']}")
     print(f"  买入冷却: {params['SWING_BUY_COOLDOWN']}s | 卖出冷却: {params['SWING_SELL_COOLDOWN']}s")
     print(f"  单日最大: 买{params['SWING_MAX_DAILY_BUYS']}次 | 卖{params['SWING_MAX_DAILY_SELLS']}次")
-    print(f"  买入金额: {params['SWING_BUY_AMOUNT']:,} | 卖出比例: {params['SWING_SELL_RATIO']*100:.0f}%")
+    print(f"  买入金额: {params['SWING_BUY_AMOUNT']:,} | 卖出金额: {params['SWING_SELL_AMOUNT']:,}")
     features_on = []
     if params.get('TRAILING_STOP_ENABLED', True): features_on.append('移动止盈')
     if params.get('USE_VWAP', True): features_on.append('VWAP')
@@ -965,7 +967,7 @@ def main():
         'max_buys': 'SWING_MAX_DAILY_BUYS',
         'max_sells': 'SWING_MAX_DAILY_SELLS',
         'buy_amount': 'SWING_BUY_AMOUNT',
-        'sell_ratio': 'SWING_SELL_RATIO',
+        'sell_amount': 'SWING_SELL_AMOUNT',
         'min_profit': 'SWING_MIN_PROFIT_RATIO',
         'rsi_oversold': 'SWING_RSI_OVERSOLD',
         'rsi_overbought': 'SWING_RSI_OVERBOUGHT',

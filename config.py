@@ -928,9 +928,10 @@ SWING_VOLUME_SPIKE_RATIO = 1.5       # 放量倍数阈值
 
 # 仓位管理
 SWING_BUY_AMOUNT = 10000             # 每笔固定买入金额，按股价向上取整到100股
-SWING_SELL_RATIO = 0.25              # 每笔卖出占可卖持仓的比例
+SWING_SELL_AMOUNT = 10000            # 每笔固定卖出金额，按股价向上取整到100股（不超过可卖持仓）
 SWING_MIN_BUY_VOLUME = 100           # 最小买入股数
 SWING_MIN_SELL_VOLUME = 100          # 最小卖出股数
+SWING_MAX_HOLDINGS = 5               # 最多同时持有多少只摆动交易股票
 
 SWING_MAX_DAILY_BUYS = 3             # 每日最大买入次数
 SWING_MAX_DAILY_SELLS = 3            # 每日最大卖出次数

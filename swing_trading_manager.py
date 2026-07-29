@@ -857,7 +857,20 @@ class SwingTradingManager:
                     return False, f"买入冷却中 (还需{int(config.SWING_BUY_COOLDOWN - elapsed)}s)"
 
         position = self.position_manager.get_position(stock_code)
-        has_position = position is not None
+        has_position = position is not None and int(position.get('volume', 0)) > 0
+
+        # 持仓数量上限：无持仓股票买入前，检查是否已达最大持仓数
+        if not has_position and getattr(config, 'SWING_MAX_HOLDINGS', 0) > 0:
+            holding_count = 0
+            with self.lock:
+                for code, sess in self.sessions.items():
+                    if not sess.enabled:
+                        continue
+                    pos = self.position_manager.get_position(code)
+                    if pos and int(pos.get('volume', 0)) > 0:
+                        holding_count += 1
+            if holding_count >= config.SWING_MAX_HOLDINGS:
+                return False, f"已达最大持仓数({config.SWING_MAX_HOLDINGS})，当前持有{holding_count}只"
 
         if has_position:
             current_value = float(position.get('market_value', 0))
@@ -925,8 +938,13 @@ class SwingTradingManager:
             if available < config.SWING_MIN_SELL_VOLUME:
                 return False, f"可用股数不足({available}<{config.SWING_MIN_SELL_VOLUME})"
 
-            # 固定比例 × 可卖持仓，取整到100股
-            sell_volume = int(sellable_base * config.SWING_SELL_RATIO / 100) * 100
+            # 固定金额 ÷ 当前价 → 向上取整100股，不超过可卖持仓
+            current_price = float(position.get('current_price', 0))
+            if current_price > 0:
+                sell_volume = int(config.SWING_SELL_AMOUNT / current_price / 100) * 100 + 100
+            else:
+                sell_volume = config.SWING_MIN_SELL_VOLUME
+            sell_volume = min(sell_volume, sellable_base)
             if sell_volume < config.SWING_MIN_SELL_VOLUME:
                 sell_volume = config.SWING_MIN_SELL_VOLUME
             sell_volume = min(sell_volume, available, sellable_base)
@@ -1074,9 +1092,10 @@ class SwingTradingManager:
                 sellable_base = total_volume
             else:
                 sellable_base = total_volume - session.floating_volume
-            desired = sellable_base * config.SWING_SELL_RATIO
-            sell_volume = max(int(desired), config.SWING_MIN_SELL_VOLUME)
-            sell_volume = int(round(sell_volume / 100)) * 100
+            # 固定金额 ÷ 触发价 → 向上取整100股，不超过可卖持仓
+            sell_volume = int(config.SWING_SELL_AMOUNT / trigger_price / 100) * 100 + 100
+            if sell_volume < config.SWING_MIN_SELL_VOLUME:
+                sell_volume = config.SWING_MIN_SELL_VOLUME
             sell_volume = min(sell_volume, available, sellable_base)
 
         if sell_volume < config.SWING_MIN_SELL_VOLUME:
@@ -1198,8 +1217,8 @@ class SwingTradingManager:
                 sellable = available
             else:
                 sellable = min(available, session.base_volume)
-            # 止损只卖摆动相关的仓位，最多卖底仓的 SWING_SELL_VOLUME_RATIO（和正常卖出一致）
-            sell_volume = min(sellable, int(session.base_volume * config.SWING_SELL_RATIO))
+            # 止损按固定金额卖出
+            sell_volume = min(sellable, int(config.SWING_SELL_AMOUNT / current_price / 100) * 100 + 100)
             sell_volume = max(sell_volume, config.SWING_MIN_SELL_VOLUME)
             sell_volume = int(round(sell_volume / 100)) * 100
             sell_volume = min(sell_volume, sellable)
